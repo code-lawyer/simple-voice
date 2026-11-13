@@ -13,6 +13,8 @@ add_library(voiceime_core STATIC
   src/utf8.cpp
   src/lexicon.cpp
   src/segmenter.cpp
+  src/vad.cpp
+  src/resample.cpp
   third_party/sqlite/sqlite3.c)
 target_include_directories(voiceime_core PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -25,6 +27,15 @@ else()
   set_source_files_properties(third_party/sqlite/sqlite3.c PROPERTIES COMPILE_OPTIONS -w)
 endif()
 
-add_executable(voiceime_tests tests/main.cpp tests/utf8_test.cpp tests/lexicon_test.cpp tests/segmenter_test.cpp)
+add_executable(voiceime_tests tests/main.cpp tests/utf8_test.cpp tests/lexicon_test.cpp tests/segmenter_test.cpp tests/vad_test.cpp)
 target_link_libraries(voiceime_tests PRIVATE voiceime_core)
 target_include_directories(voiceime_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+if(MINGW)
+  get_filename_component(MINGW_BIN ${CMAKE_CXX_COMPILER} DIRECTORY)
+  foreach(runtime_dll libstdc++-6.dll libgcc_s_seh-1.dll libwinpthread-1.dll)
+    add_custom_command(TARGET voiceime_tests POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${MINGW_BIN}/${runtime_dll}"
+        $<TARGET_FILE_DIR:voiceime_tests>)
+  endforeach()
+endif()
