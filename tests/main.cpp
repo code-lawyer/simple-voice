@@ -8,6 +8,8 @@ void CutsANameIntoTokensWithPinyin();
 void SilenceAfterSpeechEndpointsAt500ms();
 void SixtySecondsForcesEndpoint();
 void Resample48kTo16kKeepsDuration();
+void SessionKeepsDraftUntilFinalThenEnterCommitsFinal();
+void EscapeAndRestartDoNotCommit();
 
 int main(int argc, char** argv) {
   const Test tests[] = {
@@ -19,6 +21,8 @@ int main(int argc, char** argv) {
       {"vad.SilenceAfterSpeechEndpointsAt500ms", SilenceAfterSpeechEndpointsAt500ms},
       {"vad.SixtySecondsForcesEndpoint", SixtySecondsForcesEndpoint},
       {"vad.Resample48kTo16kKeepsDuration", Resample48kTo16kKeepsDuration},
+      {"session.SessionKeepsDraftUntilFinalThenEnterCommitsFinal", SessionKeepsDraftUntilFinalThenEnterCommitsFinal},
+      {"session.EscapeAndRestartDoNotCommit", EscapeAndRestartDoNotCommit},
   };
   return RunTests(argc, argv, tests, sizeof(tests) / sizeof(tests[0]));
 }
