@@ -34,9 +34,11 @@ add_executable(voiceime_tests tests/main.cpp tests/utf8_test.cpp tests/lexicon_t
 target_link_libraries(voiceime_tests PRIVATE voiceime_core)
 target_include_directories(voiceime_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
 
-add_executable(voiceime_engine src/engine_main.cpp src/confirm_box.cpp)
+add_executable(voiceime_engine src/engine_main.cpp src/confirm_box.cpp src/sherpa_recognizer.cpp)
 target_link_libraries(voiceime_engine PRIVATE voiceime_core ole32 uuid user32 gdi32 shell32)
 target_compile_definitions(voiceime_engine PRIVATE _WIN32_WINNT=0x0601)
+include(cmake/sherpa.cmake)
+voiceime_use_sherpa(voiceime_engine)
 
 function(voiceime_copy_runtime target)
   if(MINGW)

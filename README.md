@@ -16,4 +16,12 @@ build\voiceime_tests.exe
 
 ## 模型
 
-语音模型到实现计划的 Task 8 才下载。当前测试不需要模型文件。
+`tools\download_models.ps1` 下载 sherpa-onnx v2.0.1 的 Windows x64 动态库，以及三个本地中文模型：
+
+- `models/streaming/` 流式 Zipformer CTC，给确认框里的草稿
+- `models/final/` 非流式 Zipformer CTC，停口后的定稿
+- `models/punct/` 标点
+
+权重和 SDK 不进 git。2025 年 CTC 权重的许可以各模型目录里的说明为准。引擎不上传、不保存音频。
+
+三个目录缺一个时，`build\voiceime_engine.exe` 打印缺少的路径，退出码 2。`build\voiceime_engine.exe --fake` 不加载模型。

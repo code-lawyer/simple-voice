@@ -1,6 +1,7 @@
 #include "segmenter.hpp"
 
 #include "cppjieba/Jieba.hpp"
+#include "utf8.hpp"
 
 #include <cstdlib>
 #include <fstream>
@@ -244,4 +245,10 @@ std::vector<Token> Segmenter::Cut(const std::string& text) const {
     tokens.push_back(Token{word, PinyinOf(word, impl_->pinyin)});
   }
   return tokens;
+}
+
+void Segmenter::Remember(const std::string& text) {
+  const int count = CodePointCount(text);
+  if (count < 2 || count > 8) return;
+  impl_->jieba.InsertUserWord(text, 100000000);
 }

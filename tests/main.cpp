@@ -5,6 +5,7 @@ void FirstSentenceAndSingleCountDoNotReplace();
 void PreferredHomophoneReplacesOnlySamePinyin();
 void ExpiredEntriesDropOut();
 void CutsANameIntoTokensWithPinyin();
+void RememberKeepsAUserWord();
 void SilenceAfterSpeechEndpointsAt500ms();
 void SixtySecondsForcesEndpoint();
 void Resample48kTo16kKeepsDuration();
@@ -20,6 +21,7 @@ int main(int argc, char** argv) {
       {"lexicon.PreferredHomophoneReplacesOnlySamePinyin", PreferredHomophoneReplacesOnlySamePinyin},
       {"lexicon.ExpiredEntriesDropOut", ExpiredEntriesDropOut},
       {"segmenter.CutsANameIntoTokensWithPinyin", CutsANameIntoTokensWithPinyin},
+      {"segmenter.RememberKeepsAUserWord", RememberKeepsAUserWord},
       {"vad.SilenceAfterSpeechEndpointsAt500ms", SilenceAfterSpeechEndpointsAt500ms},
       {"vad.SixtySecondsForcesEndpoint", SixtySecondsForcesEndpoint},
       {"vad.Resample48kTo16kKeepsDuration", Resample48kTo16kKeepsDuration},

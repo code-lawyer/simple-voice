@@ -26,3 +26,21 @@ void CutsANameIntoTokensWithPinyin() {
   CHECK(joined == text);
   CHECK(any_pinyin);
 }
+
+void RememberKeepsAUserWord() {
+  Segmenter seg(JiebaDictDir());
+  const std::string word = "杉客明";
+  bool whole = false;
+  for (const auto& token : seg.Cut(word)) {
+    if (token.text == word) whole = true;
+  }
+  CHECK(!whole);
+  seg.Remember(word);
+  seg.Remember("明");
+  seg.Remember("杉客明杉客明杉客明");
+  whole = false;
+  for (const auto& token : seg.Cut(word)) {
+    if (token.text == word) whole = true;
+  }
+  CHECK(whole);
+}

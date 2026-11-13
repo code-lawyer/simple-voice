@@ -4,6 +4,7 @@
 #include "resample.hpp"
 #include "segmenter.hpp"
 #include "session.hpp"
+#include "sherpa_recognizer.hpp"
 #include "vad.hpp"
 
 #include "ipc.hpp"
@@ -133,6 +134,25 @@ std::string DictDir() {
   return "";
 }
 
+std::string ModelDir() {
+  if (GetFileAttributesA("models\\streaming") != INVALID_FILE_ATTRIBUTES ||
+      GetFileAttributesA("models/streaming") != INVALID_FILE_ATTRIBUTES) {
+    return "models";
+  }
+  wchar_t exe[MAX_PATH];
+  GetModuleFileNameW(nullptr, exe, MAX_PATH);
+  std::wstring path(exe);
+  const auto slash = path.find_last_of(L"\\/");
+  if (slash != std::wstring::npos) path.resize(slash);
+  if (GetFileAttributesW((path + L"\\models\\streaming").c_str()) != INVALID_FILE_ATTRIBUTES) {
+    return WideToUtf8(path + L"\\models");
+  }
+  if (GetFileAttributesW((path + L"\\..\\models\\streaming").c_str()) != INVALID_FILE_ATTRIBUTES) {
+    return WideToUtf8(path + L"\\..\\models");
+  }
+  return "models";
+}
+
 class FakeRecognizer : public Recognizer {
  public:
   void AcceptAudio(const std::int16_t*, std::size_t count) override {
@@ -156,7 +176,7 @@ class FakeRecognizer : public Recognizer {
 
 class Engine {
  public:
-  int Run();
+  int Run(bool fake);
 
  private:
   LRESULT OnMessage(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam);
@@ -194,8 +214,7 @@ class Engine {
   }
 };
 
-int Engine::Run() {
-  recognizer_ = std::make_unique<FakeRecognizer>();
+int Engine::Run(bool fake) {
   const std::wstring data = [] {
     wchar_t buffer[MAX_PATH];
     const DWORD count = GetEnvironmentVariableW(L"LOCALAPPDATA", buffer, MAX_PATH);
@@ -207,11 +226,18 @@ int Engine::Run() {
   lexicon_ = std::make_unique<Lexicon>(WideToUtf8(data + L"\\lexicon.sqlite"));
   const std::string dict = DictDir();
   if (!dict.empty()) segmenter_ = std::make_unique<Segmenter>(dict);
+  if (fake) {
+    recognizer_ = std::make_unique<FakeRecognizer>();
+    std::fprintf(stderr, "voiceime_engine --fake\n");
+  } else {
+    recognizer_ = MakeSherpaRecognizer(ModelDir(), segmenter_.get(), lexicon_.get());
+    if (!recognizer_) return 2;
+    std::fprintf(stderr, "voiceime_engine\n");
+  }
 
   if (!box_.Create(GetModuleHandleW(nullptr), &Engine::Hook, this)) return 1;
   AddTray();
   pipe_thread_ = std::thread([this] { PipeMain(); });
-  std::fprintf(stderr, "voiceime_engine --fake\n");
 
   MSG message;
   while (GetMessageW(&message, nullptr, 0, 0) > 0) {
@@ -486,10 +512,6 @@ int main(int argc, char** argv) {
   for (int i = 1; i < argc; ++i) {
     if (std::strcmp(argv[i], "--fake") == 0) fake = true;
   }
-  if (!fake) {
-    std::fprintf(stderr, "missing models\n");
-    return 2;
-  }
   Engine engine;
-  return engine.Run();
+  return engine.Run(fake);
 }
