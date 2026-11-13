@@ -4,6 +4,7 @@
 #include "resample.hpp"
 #include "segmenter.hpp"
 #include "session.hpp"
+#include "settings.hpp"
 #include "sherpa_recognizer.hpp"
 #include "vad.hpp"
 
@@ -40,6 +41,8 @@ constexpr UINT kPartialMessage = WM_APP + 2;
 constexpr UINT kEndpointMessage = WM_APP + 3;
 constexpr UINT kTrayMessage = WM_APP + 4;
 constexpr UINT kQuitCommand = 1;
+constexpr UINT kRecordCommand = 2;
+constexpr UINT kRecentBase = 100;
 const GUID kFloatFormat = {0x00000003, 0x0000, 0x0010, {0x80, 0x00, 0x00, 0xAA, 0x00, 0x38, 0x9B, 0x71}};
 
 std::wstring Utf8ToWide(const std::string& utf8) {
@@ -213,6 +216,10 @@ class Engine {
   void ClientLoop(HANDLE pipe);
   void AddTray();
   void RemoveTray();
+  void BeginRecordHotkey();
+  void CloseRecord();
+  void ApplyRecordedHotkey(int modifiers, int vk);
+  LRESULT OnRecord(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam);
   bool WriteClient(const Message& message);
   void RequestCaret();
   void PublishCommit();
@@ -239,6 +246,10 @@ class Engine {
   std::mutex inbox_mu_;
   std::deque<Message> inbox_;
   bool tray_added_ = false;
+  Settings settings_{DefaultHotkey()};
+  std::string config_path_;
+  std::vector<std::string> recent_menu_;
+  HWND record_hwnd_ = nullptr;
   bool caret_known_ = false;
   Rect caret_{0, 0, 0, 0};
   Rect window_rect_{0, 0, 0, 0};
@@ -248,6 +259,7 @@ class Engine {
   static LRESULT Hook(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam, void* self) {
     return static_cast<Engine*>(self)->OnMessage(hwnd, message, wparam, lparam);
   }
+  static LRESULT CALLBACK RecordProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam);
 };
 
 int Engine::Run(bool fake) {
@@ -265,6 +277,8 @@ int Engine::Run(bool fake) {
     return dir;
   }();
   lexicon_ = std::make_unique<Lexicon>(WideToUtf8(data + L"\\lexicon.sqlite"));
+  config_path_ = WideToUtf8(data + L"\\config.json");
+  settings_ = LoadSettings(config_path_);
   const std::string dict = DictDir();
   if (!dict.empty()) segmenter_ = std::make_unique<Segmenter>(dict);
   if (fake) {
@@ -287,6 +301,7 @@ int Engine::Run(bool fake) {
     DispatchMessageW(&message);
   }
 
+  CloseRecord();
   stop_pipe_ = true;
   if (write_event_ != nullptr) SetEvent(write_event_);
   {
@@ -328,6 +343,92 @@ void Engine::RemoveTray() {
   icon.uID = 1;
   Shell_NotifyIconW(NIM_DELETE, &icon);
   tray_added_ = false;
+}
+
+void Engine::BeginRecordHotkey() {
+  if (record_hwnd_ != nullptr) {
+    SetForegroundWindow(record_hwnd_);
+    return;
+  }
+  WNDCLASSW window_class{};
+  window_class.lpfnWndProc = RecordProc;
+  window_class.hInstance = GetModuleHandleW(nullptr);
+  window_class.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
+  window_class.lpszClassName = L"VoiceImeHotkey";
+  RegisterClassW(&window_class);
+  const std::wstring title = Utf8ToWide("按下新的快捷键");
+  record_hwnd_ = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW, L"VoiceImeHotkey", title.c_str(),
+                                  WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_VISIBLE, 240, 240, 360, 140, nullptr,
+                                  nullptr, GetModuleHandleW(nullptr), this);
+  if (record_hwnd_ != nullptr) SetForegroundWindow(record_hwnd_);
+}
+
+void Engine::CloseRecord() {
+  if (record_hwnd_ == nullptr) return;
+  HWND hwnd = record_hwnd_;
+  record_hwnd_ = nullptr;
+  DestroyWindow(hwnd);
+}
+
+void Engine::ApplyRecordedHotkey(int modifiers, int vk) {
+  const Hotkey next{modifiers, vk};
+  if (!HotkeyAccepted(next)) {
+    CloseRecord();
+    return;
+  }
+  settings_.hotkey = next;
+  SaveSettings(config_path_, settings_);
+  CloseRecord();
+}
+
+LRESULT CALLBACK Engine::RecordProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
+  if (message == WM_NCCREATE) {
+    const auto* created = reinterpret_cast<CREATESTRUCTW*>(lparam);
+    SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(created->lpCreateParams));
+    return DefWindowProcW(hwnd, message, wparam, lparam);
+  }
+  auto* self = reinterpret_cast<Engine*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+  if (self == nullptr) return DefWindowProcW(hwnd, message, wparam, lparam);
+  return self->OnRecord(hwnd, message, wparam, lparam);
+}
+
+LRESULT Engine::OnRecord(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
+  if (message == WM_KEYDOWN || message == WM_SYSKEYDOWN) {
+    const int vk = static_cast<int>(wparam);
+    if (vk == VK_SHIFT || vk == VK_LSHIFT || vk == VK_RSHIFT || vk == VK_CONTROL || vk == VK_LCONTROL ||
+        vk == VK_RCONTROL || vk == VK_MENU || vk == VK_LMENU || vk == VK_RMENU) {
+      return 0;
+    }
+    if (vk == VK_ESCAPE) {
+      CloseRecord();
+      return 0;
+    }
+    int modifiers = 0;
+    if ((GetKeyState(VK_CONTROL) & 0x8000) != 0) modifiers |= 1;
+    if ((GetKeyState(VK_MENU) & 0x8000) != 0) modifiers |= 2;
+    if ((GetKeyState(VK_SHIFT) & 0x8000) != 0) modifiers |= 4;
+    ApplyRecordedHotkey(modifiers, vk);
+    return 0;
+  }
+  if (message == WM_PAINT) {
+    PAINTSTRUCT paint;
+    HDC dc = BeginPaint(hwnd, &paint);
+    RECT rect{};
+    GetClientRect(hwnd, &rect);
+    const std::wstring text = Utf8ToWide("按下新的快捷键。Esc 取消。");
+    DrawTextW(dc, text.c_str(), static_cast<int>(text.size()), &rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    EndPaint(hwnd, &paint);
+    return 0;
+  }
+  if (message == WM_CLOSE) {
+    CloseRecord();
+    return 0;
+  }
+  if (message == WM_DESTROY) {
+    if (record_hwnd_ == hwnd) record_hwnd_ = nullptr;
+    return 0;
+  }
+  return DefWindowProcW(hwnd, message, wparam, lparam);
 }
 
 void Engine::UpdateBox() {
@@ -490,8 +591,22 @@ LRESULT Engine::OnMessage(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
   }
   if (message == kTrayMessage && (lparam == WM_RBUTTONUP || lparam == WM_LBUTTONUP)) {
     HMENU menu = CreatePopupMenu();
-    const std::wstring quit = Utf8ToWide("退出");
-    AppendMenuW(menu, MF_STRING, kQuitCommand, quit.c_str());
+    HMENU recent = CreatePopupMenu();
+    recent_menu_.clear();
+    if (lexicon_) {
+      for (const Entry& entry : lexicon_->Recent(20)) {
+        if (recent_menu_.size() >= 20) break;
+        recent_menu_.push_back(entry.text);
+        AppendMenuW(recent, MF_STRING, kRecentBase + static_cast<UINT>(recent_menu_.size() - 1),
+                    Utf8ToWide(entry.text).c_str());
+      }
+    }
+    if (recent_menu_.empty()) {
+      AppendMenuW(recent, MF_STRING | MF_GRAYED, kRecentBase, Utf8ToWide("（空）").c_str());
+    }
+    AppendMenuW(menu, MF_STRING, kRecordCommand, Utf8ToWide("设置快捷键").c_str());
+    AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(recent), Utf8ToWide("最近记住的词").c_str());
+    AppendMenuW(menu, MF_STRING, kQuitCommand, Utf8ToWide("退出").c_str());
     POINT point;
     GetCursorPos(&point);
     SetForegroundWindow(hwnd);
@@ -499,9 +614,20 @@ LRESULT Engine::OnMessage(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
     DestroyMenu(menu);
     return 0;
   }
-  if (message == WM_COMMAND && LOWORD(wparam) == kQuitCommand) {
-    DestroyWindow(hwnd);
-    return 0;
+  if (message == WM_COMMAND) {
+    const UINT id = LOWORD(wparam);
+    if (id == kQuitCommand) {
+      DestroyWindow(hwnd);
+      return 0;
+    }
+    if (id == kRecordCommand) {
+      BeginRecordHotkey();
+      return 0;
+    }
+    if (lexicon_ != nullptr && id >= kRecentBase && id < kRecentBase + recent_menu_.size()) {
+      lexicon_->Delete(recent_menu_[id - kRecentBase]);
+      return 0;
+    }
   }
   if (message == WM_DESTROY) {
     RemoveTray();

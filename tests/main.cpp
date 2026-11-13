@@ -15,6 +15,9 @@ void MissingCaretGoesToBottomRight();
 void DecodeWaitsForAFullFrame();
 void EnterAndCaretRoundTrip();
 void TsfFactoryExportsTheVoiceImeClass();
+void MissingSettingsUseCtrlAltSpace();
+void SaveSettingsWritesTheDefaultJson();
+void ReservedOrEmptyHotkeyIsRejected();
 
 int main(int argc, char** argv) {
   const Test tests[] = {
@@ -33,6 +36,9 @@ int main(int argc, char** argv) {
       {"ipc.DecodeWaitsForAFullFrame", DecodeWaitsForAFullFrame},
       {"ipc.EnterAndCaretRoundTrip", EnterAndCaretRoundTrip},
       {"tsf.TsfFactoryExportsTheVoiceImeClass", TsfFactoryExportsTheVoiceImeClass},
+      {"settings.MissingSettingsUseCtrlAltSpace", MissingSettingsUseCtrlAltSpace},
+      {"settings.SaveSettingsWritesTheDefaultJson", SaveSettingsWritesTheDefaultJson},
+      {"settings.ReservedOrEmptyHotkeyIsRejected", ReservedOrEmptyHotkeyIsRejected},
   };
   return RunTests(argc, argv, tests, sizeof(tests) / sizeof(tests[0]));
 }
