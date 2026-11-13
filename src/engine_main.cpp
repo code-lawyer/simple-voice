@@ -20,10 +20,12 @@
 #include <audioclient.h>
 #include <mmreg.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <ctime>
 #include <deque>
 #include <memory>
 #include <mutex>
@@ -107,15 +109,16 @@ Rect ForegroundClient() {
   return Rect{origin.x, origin.y, rect.right, rect.bottom};
 }
 
-bool ReadExact(HANDLE pipe, void* data, DWORD size) {
-  auto* bytes = static_cast<char*>(data);
-  DWORD got_total = 0;
-  while (got_total < size) {
-    DWORD got = 0;
-    if (!ReadFile(pipe, bytes + got_total, size - got_total, &got, nullptr) || got == 0) return false;
-    got_total += got;
-  }
-  return true;
+bool WriteAll(HANDLE pipe, const std::string& bytes) {
+  if (bytes.empty()) return true;
+  OVERLAPPED overlap{};
+  overlap.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+  if (overlap.hEvent == nullptr) return false;
+  DWORD wrote = 0;
+  BOOL ok = WriteFile(pipe, bytes.data(), static_cast<DWORD>(bytes.size()), &wrote, &overlap);
+  if (!ok && GetLastError() == ERROR_IO_PENDING) ok = GetOverlappedResult(pipe, &overlap, &wrote, TRUE);
+  CloseHandle(overlap.hEvent);
+  return ok == TRUE && wrote == bytes.size();
 }
 
 std::string DictDir() {
@@ -174,6 +177,25 @@ class FakeRecognizer : public Recognizer {
   std::size_t samples_ = 0;
 };
 
+class EngineLock {
+ public:
+  EngineLock() {
+    handle_ = CreateMutexW(nullptr, FALSE, L"Local\\VoiceImeEngine");
+    if (handle_ == nullptr) return;
+    const DWORD waited = WaitForSingleObject(handle_, 0);
+    owned_ = waited == WAIT_OBJECT_0 || waited == WAIT_ABANDONED;
+  }
+  ~EngineLock() {
+    if (owned_) ReleaseMutex(handle_);
+    if (handle_ != nullptr) CloseHandle(handle_);
+  }
+  bool owned() const { return owned_; }
+
+ private:
+  HANDLE handle_ = nullptr;
+  bool owned_ = false;
+};
+
 class Engine {
  public:
   int Run(bool fake);
@@ -188,8 +210,13 @@ class Engine {
   void UpdateBox();
   void CaptureMain();
   void PipeMain();
+  void ClientLoop(HANDLE pipe);
   void AddTray();
   void RemoveTray();
+  bool WriteClient(const Message& message);
+  void RequestCaret();
+  void PublishCommit();
+  void PublishFinal(const std::string& final_text);
 
   ConfirmBox box_;
   Session session_;
@@ -202,10 +229,19 @@ class Engine {
   std::atomic<bool> stop_capture_{false};
   std::atomic<bool> stop_pipe_{false};
   HANDLE wake_ = nullptr;
-  HANDLE pipe_ = INVALID_HANDLE_VALUE;
+  HANDLE listen_pipe_ = INVALID_HANDLE_VALUE;
+  HANDLE active_pipe_ = INVALID_HANDLE_VALUE;
+  std::vector<HANDLE> clients_;
+  std::vector<std::thread> client_threads_;
+  std::mutex write_mu_;
+  HANDLE write_event_ = nullptr;
+  std::vector<std::pair<HANDLE, std::string>> outgoing_;
   std::mutex inbox_mu_;
   std::deque<Message> inbox_;
   bool tray_added_ = false;
+  bool caret_known_ = false;
+  Rect caret_{0, 0, 0, 0};
+  Rect window_rect_{0, 0, 0, 0};
   std::string mic_error_;
   std::atomic<bool> partial_posted_{false};
 
@@ -215,6 +251,11 @@ class Engine {
 };
 
 int Engine::Run(bool fake) {
+  EngineLock instance_lock;
+  if (!instance_lock.owned()) {
+    std::fprintf(stderr, "voiceime_engine already running\n");
+    return 0;
+  }
   const std::wstring data = [] {
     wchar_t buffer[MAX_PATH];
     const DWORD count = GetEnvironmentVariableW(L"LOCALAPPDATA", buffer, MAX_PATH);
@@ -237,6 +278,7 @@ int Engine::Run(bool fake) {
 
   if (!box_.Create(GetModuleHandleW(nullptr), &Engine::Hook, this)) return 1;
   AddTray();
+  write_event_ = CreateEventW(nullptr, TRUE, FALSE, nullptr);
   pipe_thread_ = std::thread([this] { PipeMain(); });
 
   MSG message;
@@ -246,9 +288,21 @@ int Engine::Run(bool fake) {
   }
 
   stop_pipe_ = true;
-  if (pipe_ != INVALID_HANDLE_VALUE) CancelIoEx(pipe_, nullptr);
+  if (write_event_ != nullptr) SetEvent(write_event_);
+  {
+    std::lock_guard<std::mutex> lock(write_mu_);
+    if (listen_pipe_ != INVALID_HANDLE_VALUE) CancelIoEx(listen_pipe_, nullptr);
+    for (HANDLE client : clients_) CancelIoEx(client, nullptr);
+  }
   StopCapture();
   if (pipe_thread_.joinable()) pipe_thread_.join();
+  for (std::thread& client : client_threads_) {
+    if (client.joinable()) client.join();
+  }
+  if (write_event_ != nullptr) {
+    CloseHandle(write_event_);
+    write_event_ = nullptr;
+  }
   RemoveTray();
   return 0;
 }
@@ -282,7 +336,62 @@ void Engine::UpdateBox() {
     return;
   }
   const std::string text = mic_error_.empty() ? session_.box_text() : mic_error_;
-  box_.ShowText(text, Rect{0, 0, 0, 0}, ForegroundClient());
+  Rect caret{0, 0, 0, 0};
+  Rect window = ForegroundClient();
+  if (caret_known_) {
+    const bool both_zero = caret_.x == 0 && caret_.y == 0 && caret_.w == 0 && caret_.h == 0 && window_rect_.x == 0 &&
+                            window_rect_.y == 0 && window_rect_.w == 0 && window_rect_.h == 0;
+    if (!both_zero) {
+      caret = caret_;
+      window = window_rect_;
+    }
+  }
+  box_.ShowText(text, caret, window);
+}
+
+bool Engine::WriteClient(const Message& message) {
+  std::lock_guard<std::mutex> lock(write_mu_);
+  HANDLE target = active_pipe_;
+  if (target == INVALID_HANDLE_VALUE && !clients_.empty()) target = clients_.back();
+  if (target == INVALID_HANDLE_VALUE || write_event_ == nullptr) return false;
+  outgoing_.emplace_back(target, Encode(message));
+  SetEvent(write_event_);
+  return true;
+}
+
+void Engine::RequestCaret() {
+  Message query;
+  query.type = MsgType::QueryCaret;
+  WriteClient(query);
+}
+
+void Engine::PublishCommit() {
+  std::string commit;
+  std::string stored;
+  const bool has_commit = session_.TakeCommit(&commit);
+  const bool has_store = session_.TakeLexiconWrite(&stored);
+  if (has_commit) {
+    Message done;
+    done.type = MsgType::CommitDone;
+    done.text = commit;
+    WriteClient(done);
+  }
+  if (!has_store || !lexicon_) return;
+  std::vector<Token> tokens;
+  if (segmenter_) {
+    segmenter_->Remember(stored);
+    tokens = segmenter_->Cut(stored);
+    for (const Token& token : tokens) segmenter_->Remember(token.text);
+  }
+  lexicon_->Commit(stored, tokens, static_cast<std::int64_t>(std::time(nullptr)));
+}
+
+void Engine::PublishFinal(const std::string& final_text) {
+  session_.OnFinal(final_text);
+  std::fprintf(stderr, "final: %s\n", final_text.c_str());
+  PublishCommit();
+  if (session_.phase() != Phase::Idle) RequestCaret();
+  UpdateBox();
 }
 
 void Engine::StartCapture() {
@@ -320,17 +429,28 @@ void Engine::OnEndpoint() {
   if (capture_thread_.joinable()) capture_thread_.join();
   if (session_.phase() != Phase::Listening) return;
   session_.OnSpeechEnded();
-  const std::string final_text = recognizer_->Finalize();
-  session_.OnFinal(final_text);
-  std::fprintf(stderr, "final: %s\n", final_text.c_str());
-  UpdateBox();
+  PublishFinal(recognizer_->Finalize());
 }
 
 void Engine::OnPipe(const Message& message) {
+  if (message.type == MsgType::Caret) {
+    caret_known_ = true;
+    caret_ = Rect{message.caret_x, message.caret_y, message.caret_w, message.caret_h};
+    window_rect_ = Rect{message.window_x, message.window_y, message.window_w, message.window_h};
+    UpdateBox();
+    return;
+  }
+  if (message.type == MsgType::Enter) {
+    session_.Enter();
+    PublishCommit();
+    UpdateBox();
+    return;
+  }
   if (message.type == MsgType::Cancel) {
     StopCapture();
     session_.Escape();
     mic_error_.clear();
+    caret_known_ = false;
     UpdateBox();
     return;
   }
@@ -338,16 +458,15 @@ void Engine::OnPipe(const Message& message) {
   if (session_.phase() == Phase::Listening) {
     StopCapture();
     session_.Hotkey();
-    const std::string final_text = recognizer_->Finalize();
-    session_.OnFinal(final_text);
-    std::fprintf(stderr, "final: %s\n", final_text.c_str());
-    UpdateBox();
+    PublishFinal(recognizer_->Finalize());
     return;
   }
   if (session_.phase() == Phase::Finalizing) return;
   recognizer_->Reset();
+  caret_known_ = false;
   session_.Hotkey();
   StartCapture();
+  RequestCaret();
   UpdateBox();
 }
 
@@ -392,41 +511,131 @@ LRESULT Engine::OnMessage(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
   return DefWindowProcW(hwnd, message, wparam, lparam);
 }
 
-void Engine::PipeMain() {
-  while (!stop_pipe_) {
-    HANDLE pipe = CreateNamedPipeW(L"\\\\.\\pipe\\VoiceIme", PIPE_ACCESS_DUPLEX,
-                                    PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS, 1,
-                                    65536, 65536, 0, nullptr);
-    if (pipe == INVALID_HANDLE_VALUE) return;
-    pipe_ = pipe;
-    const BOOL connected = ConnectNamedPipe(pipe, nullptr) ? TRUE : (GetLastError() == ERROR_PIPE_CONNECTED);
-    if (!connected || stop_pipe_) {
-      CloseHandle(pipe);
-      pipe_ = INVALID_HANDLE_VALUE;
-      if (stop_pipe_) return;
-      continue;
+void Engine::ClientLoop(HANDLE pipe) {
+  OVERLAPPED overlap{};
+  overlap.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+  std::string buffer;
+  auto take_outgoing = [this, pipe] {
+    std::vector<std::string> mine;
+    std::lock_guard<std::mutex> lock(write_mu_);
+    for (auto it = outgoing_.begin(); it != outgoing_.end();) {
+      if (it->first == pipe) {
+        mine.push_back(std::move(it->second));
+        it = outgoing_.erase(it);
+      } else {
+        ++it;
+      }
     }
-    while (!stop_pipe_) {
-      unsigned char header[4];
-      if (!ReadExact(pipe, header, 4)) break;
-      const std::uint32_t length = static_cast<std::uint32_t>(header[0]) | (static_cast<std::uint32_t>(header[1]) << 8) |
-                                   (static_cast<std::uint32_t>(header[2]) << 16) | (static_cast<std::uint32_t>(header[3]) << 24);
-      if (length < 1 || length > (1u << 20)) break;
-      std::string frame(4u + length, '\0');
-      std::memcpy(frame.data(), header, 4);
-      if (!ReadExact(pipe, frame.data() + 4, length)) break;
+    if (outgoing_.empty() && write_event_ != nullptr) ResetEvent(write_event_);
+    return mine;
+  };
+  auto deliver = [this, pipe](std::string& pending) {
+    for (;;) {
       Message decoded;
       std::size_t used = 0;
-      if (!Decode(frame, &decoded, &used)) continue;
+      if (!Decode(pending, &decoded, &used)) break;
+      pending.erase(0, used);
+      {
+        std::lock_guard<std::mutex> lock(write_mu_);
+        active_pipe_ = pipe;
+      }
       {
         std::lock_guard<std::mutex> lock(inbox_mu_);
         inbox_.push_back(std::move(decoded));
       }
       PostMessageW(box_.hwnd(), kPipeMessage, 0, 0);
     }
-    DisconnectNamedPipe(pipe);
-    CloseHandle(pipe);
-    pipe_ = INVALID_HANDLE_VALUE;
+  };
+  while (!stop_pipe_ && overlap.hEvent != nullptr) {
+    const std::vector<std::string> mine = take_outgoing();
+    if (!mine.empty()) {
+      bool failed = false;
+      for (const std::string& bytes : mine) {
+        if (!WriteAll(pipe, bytes)) failed = true;
+      }
+      if (failed || stop_pipe_) break;
+      continue;
+    }
+    ResetEvent(overlap.hEvent);
+    char chunk[4096];
+    DWORD got = 0;
+    const BOOL ok = ReadFile(pipe, chunk, sizeof(chunk), &got, &overlap);
+    if (!ok && GetLastError() == ERROR_IO_PENDING) {
+      HANDLE waits[2] = {overlap.hEvent, write_event_};
+      const DWORD which = WaitForMultipleObjects(write_event_ == nullptr ? 1 : 2, waits, FALSE, INFINITE);
+      if (stop_pipe_ || which == WAIT_OBJECT_0 + 1) {
+        CancelIoEx(pipe, &overlap);
+        DWORD partial = 0;
+        if (GetOverlappedResult(pipe, &overlap, &partial, TRUE) && partial > 0) {
+          buffer.append(chunk, chunk + partial);
+          deliver(buffer);
+        }
+        if (stop_pipe_) break;
+        continue;
+      }
+      if (!GetOverlappedResult(pipe, &overlap, &got, FALSE) || got == 0) break;
+    } else if (!ok || got == 0) {
+      break;
+    }
+    buffer.append(chunk, chunk + got);
+    deliver(buffer);
+  }
+  if (overlap.hEvent != nullptr) CloseHandle(overlap.hEvent);
+  {
+    std::lock_guard<std::mutex> lock(write_mu_);
+    if (active_pipe_ == pipe) active_pipe_ = INVALID_HANDLE_VALUE;
+    clients_.erase(std::remove(clients_.begin(), clients_.end(), pipe), clients_.end());
+  }
+  DisconnectNamedPipe(pipe);
+  CloseHandle(pipe);
+}
+
+void Engine::PipeMain() {
+  while (!stop_pipe_) {
+    HANDLE pipe = CreateNamedPipeW(L"\\\\.\\pipe\\VoiceIme", PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED,
+                                    PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
+                                    PIPE_UNLIMITED_INSTANCES, 65536, 65536, 0, nullptr);
+    if (pipe == INVALID_HANDLE_VALUE) {
+      if (stop_pipe_) return;
+      Sleep(100);
+      continue;
+    }
+    {
+      std::lock_guard<std::mutex> lock(write_mu_);
+      listen_pipe_ = pipe;
+    }
+    OVERLAPPED connect{};
+    connect.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    BOOL connected = FALSE;
+    if (connect.hEvent != nullptr) {
+      connected = ConnectNamedPipe(pipe, &connect);
+      if (!connected) {
+        const DWORD error = GetLastError();
+        if (error == ERROR_IO_PENDING) {
+          while (!stop_pipe_ && WaitForSingleObject(connect.hEvent, 200) == WAIT_TIMEOUT) {
+          }
+          DWORD unused = 0;
+          connected = !stop_pipe_ && GetOverlappedResult(pipe, &connect, &unused, FALSE);
+        } else if (error == ERROR_PIPE_CONNECTED) {
+          connected = TRUE;
+        }
+      }
+      CloseHandle(connect.hEvent);
+    }
+    {
+      std::lock_guard<std::mutex> lock(write_mu_);
+      if (listen_pipe_ == pipe) listen_pipe_ = INVALID_HANDLE_VALUE;
+    }
+    if (!connected || stop_pipe_) {
+      CloseHandle(pipe);
+      if (stop_pipe_) return;
+      continue;
+    }
+    {
+      std::lock_guard<std::mutex> lock(write_mu_);
+      clients_.push_back(pipe);
+    }
+    client_threads_.emplace_back([this, pipe] { ClientLoop(pipe); });
   }
 }
 

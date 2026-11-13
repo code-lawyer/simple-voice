@@ -13,6 +13,8 @@ void SessionKeepsDraftUntilFinalThenEnterCommitsFinal();
 void EscapeAndRestartDoNotCommit();
 void MissingCaretGoesToBottomRight();
 void DecodeWaitsForAFullFrame();
+void EnterAndCaretRoundTrip();
+void TsfFactoryExportsTheVoiceImeClass();
 
 int main(int argc, char** argv) {
   const Test tests[] = {
@@ -29,6 +31,8 @@ int main(int argc, char** argv) {
       {"session.EscapeAndRestartDoNotCommit", EscapeAndRestartDoNotCommit},
       {"place.MissingCaretGoesToBottomRight", MissingCaretGoesToBottomRight},
       {"ipc.DecodeWaitsForAFullFrame", DecodeWaitsForAFullFrame},
+      {"ipc.EnterAndCaretRoundTrip", EnterAndCaretRoundTrip},
+      {"tsf.TsfFactoryExportsTheVoiceImeClass", TsfFactoryExportsTheVoiceImeClass},
   };
   return RunTests(argc, argv, tests, sizeof(tests) / sizeof(tests[0]));
 }

@@ -28,6 +28,11 @@ std::string Encode(const Message& message) {
     body.assign(8, '\0');
     WriteLe32(body, 0, static_cast<std::uint32_t>(message.key_mod));
     WriteLe32(body, 4, static_cast<std::uint32_t>(message.key_vk));
+  } else if (message.type == MsgType::Caret) {
+    body.assign(32, '\0');
+    const int values[] = {message.caret_x, message.caret_y, message.caret_w, message.caret_h,
+                           message.window_x, message.window_y, message.window_w, message.window_h};
+    for (int i = 0; i < 8; ++i) WriteLe32(body, static_cast<std::size_t>(i) * 4, static_cast<std::uint32_t>(values[i]));
   } else {
     body = message.text;
   }
@@ -51,6 +56,11 @@ bool Decode(std::string_view bytes, Message* out, std::size_t* consumed) {
     if (body.size() != 8) return false;
     message.key_mod = static_cast<int>(ReadLe32(body, 0));
     message.key_vk = static_cast<int>(ReadLe32(body, 4));
+  } else if (message.type == MsgType::Caret) {
+    if (body.size() != 32) return false;
+    int* values[] = {&message.caret_x, &message.caret_y, &message.caret_w, &message.caret_h,
+                      &message.window_x, &message.window_y, &message.window_w, &message.window_h};
+    for (int i = 0; i < 8; ++i) *values[i] = static_cast<int>(ReadLe32(body, static_cast<std::size_t>(i) * 4));
   } else {
     message.text.assign(body.data(), body.size());
   }

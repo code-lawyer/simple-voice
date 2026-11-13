@@ -30,7 +30,7 @@ else()
   set_source_files_properties(third_party/sqlite/sqlite3.c PROPERTIES COMPILE_OPTIONS -w)
 endif()
 
-add_executable(voiceime_tests tests/main.cpp tests/utf8_test.cpp tests/lexicon_test.cpp tests/segmenter_test.cpp tests/vad_test.cpp tests/session_test.cpp tests/place_test.cpp tests/ipc_test.cpp)
+add_executable(voiceime_tests tests/main.cpp tests/utf8_test.cpp tests/lexicon_test.cpp tests/segmenter_test.cpp tests/vad_test.cpp tests/session_test.cpp tests/place_test.cpp tests/ipc_test.cpp tests/tsf_load_test.cpp)
 target_link_libraries(voiceime_tests PRIVATE voiceime_core)
 target_include_directories(voiceime_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
 
@@ -53,3 +53,19 @@ function(voiceime_copy_runtime target)
 endfunction()
 voiceime_copy_runtime(voiceime_tests)
 voiceime_copy_runtime(voiceime_engine)
+
+# The text service is loaded into other processes. Those hosts do not search
+# next to this DLL for libstdc++, so the runtime is linked in.
+add_library(voiceime_tsf SHARED src/tsf_main.cpp src/tsf_service.cpp src/ipc.cpp)
+set_target_properties(voiceime_tsf PROPERTIES PREFIX "" OUTPUT_NAME "voiceime_tsf")
+target_link_libraries(voiceime_tsf PRIVATE ole32 oleaut32 uuid user32 gdi32 "-Wl,-Bstatic" "-Wl,--whole-archive" "-lwinpthread" "-Wl,--no-whole-archive" "-Wl,-Bdynamic")
+target_include_directories(voiceime_tsf PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_compile_definitions(voiceime_tsf PRIVATE _WIN32_WINNT=0x0601)
+target_link_options(voiceime_tsf PRIVATE -static-libstdc++ -static-libgcc)
+add_dependencies(voiceime_tests voiceime_tsf)
+
+add_executable(voiceime_register src/register_ime.cpp)
+target_link_libraries(voiceime_register PRIVATE ole32 uuid advapi32 "-Wl,-Bstatic" "-Wl,--whole-archive" "-lwinpthread" "-Wl,--no-whole-archive" "-Wl,-Bdynamic")
+target_include_directories(voiceime_register PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_compile_definitions(voiceime_register PRIVATE _WIN32_WINNT=0x0601)
+target_link_options(voiceime_register PRIVATE -static-libstdc++ -static-libgcc)
