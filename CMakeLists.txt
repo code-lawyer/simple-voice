@@ -33,12 +33,21 @@ endif()
 add_executable(voiceime_tests tests/main.cpp tests/utf8_test.cpp tests/lexicon_test.cpp tests/segmenter_test.cpp tests/vad_test.cpp tests/session_test.cpp tests/place_test.cpp tests/ipc_test.cpp)
 target_link_libraries(voiceime_tests PRIVATE voiceime_core)
 target_include_directories(voiceime_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
-if(MINGW)
-  get_filename_component(MINGW_BIN ${CMAKE_CXX_COMPILER} DIRECTORY)
-  foreach(runtime_dll libstdc++-6.dll libgcc_s_seh-1.dll libwinpthread-1.dll)
-    add_custom_command(TARGET voiceime_tests POST_BUILD
-      COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${MINGW_BIN}/${runtime_dll}"
-        $<TARGET_FILE_DIR:voiceime_tests>)
-  endforeach()
-endif()
+
+add_executable(voiceime_engine src/engine_main.cpp src/confirm_box.cpp)
+target_link_libraries(voiceime_engine PRIVATE voiceime_core ole32 uuid user32 gdi32 shell32)
+target_compile_definitions(voiceime_engine PRIVATE _WIN32_WINNT=0x0601)
+
+function(voiceime_copy_runtime target)
+  if(MINGW)
+    get_filename_component(MINGW_BIN ${CMAKE_CXX_COMPILER} DIRECTORY)
+    foreach(runtime_dll libstdc++-6.dll libgcc_s_seh-1.dll libwinpthread-1.dll)
+      add_custom_command(TARGET ${target} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+          "${MINGW_BIN}/${runtime_dll}"
+          $<TARGET_FILE_DIR:${target}>)
+    endforeach()
+  endif()
+endfunction()
+voiceime_copy_runtime(voiceime_tests)
+voiceime_copy_runtime(voiceime_engine)
