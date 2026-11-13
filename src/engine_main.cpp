@@ -39,6 +39,8 @@ namespace {
 constexpr UINT kPipeMessage = WM_APP + 1;
 constexpr UINT kPartialMessage = WM_APP + 2;
 constexpr UINT kEndpointMessage = WM_APP + 3;
+constexpr UINT kFinalMessage = WM_APP + 5;
+constexpr UINT kAnnounceMessage = WM_APP + 6;
 constexpr UINT kTrayMessage = WM_APP + 4;
 constexpr UINT kQuitCommand = 1;
 constexpr UINT kRecordCommand = 2;
@@ -221,8 +223,12 @@ class Engine {
   void ApplyRecordedHotkey(int modifiers, int vk);
   LRESULT OnRecord(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam);
   bool WriteClient(const Message& message);
+  void Broadcast(const Message& message);
+  void PublishPhase();
   void RequestCaret();
   void PublishCommit();
+  void StoreLexicon();
+  void BeginFinalize();
   void PublishFinal(const std::string& final_text);
 
   ConfirmBox box_;
@@ -233,6 +239,9 @@ class Engine {
   std::unique_ptr<Segmenter> segmenter_;
   std::thread capture_thread_;
   std::thread pipe_thread_;
+  std::thread finalize_thread_;
+  int finalize_generation_ = 0;
+  std::string pending_insert_;
   std::atomic<bool> stop_capture_{false};
   std::atomic<bool> stop_pipe_{false};
   HANDLE wake_ = nullptr;
@@ -244,7 +253,7 @@ class Engine {
   HANDLE write_event_ = nullptr;
   std::vector<std::pair<HANDLE, std::string>> outgoing_;
   std::mutex inbox_mu_;
-  std::deque<Message> inbox_;
+  std::deque<std::pair<HANDLE, Message>> inbox_;
   bool tray_added_ = false;
   Settings settings_{DefaultHotkey()};
   std::string config_path_;
@@ -301,6 +310,7 @@ int Engine::Run(bool fake) {
     DispatchMessageW(&message);
   }
 
+  ++finalize_generation_;
   CloseRecord();
   stop_pipe_ = true;
   if (write_event_ != nullptr) SetEvent(write_event_);
@@ -310,6 +320,7 @@ int Engine::Run(bool fake) {
     for (HANDLE client : clients_) CancelIoEx(client, nullptr);
   }
   StopCapture();
+  if (finalize_thread_.joinable()) finalize_thread_.join();
   if (pipe_thread_.joinable()) pipe_thread_.join();
   for (std::thread& client : client_threads_) {
     if (client.joinable()) client.join();
@@ -376,8 +387,11 @@ void Engine::ApplyRecordedHotkey(int modifiers, int vk) {
     CloseRecord();
     return;
   }
-  settings_.hotkey = next;
-  SaveSettings(config_path_, settings_);
+  Settings updated = settings_;
+  updated.hotkey = next;
+  SaveSettings(config_path_, updated);
+  const Settings loaded = LoadSettings(config_path_);
+  if (loaded.hotkey.modifiers == next.modifiers && loaded.hotkey.vk == next.vk) settings_ = loaded;
   CloseRecord();
 }
 
@@ -460,24 +474,30 @@ bool Engine::WriteClient(const Message& message) {
   return true;
 }
 
+void Engine::Broadcast(const Message& message) {
+  std::lock_guard<std::mutex> lock(write_mu_);
+  if (write_event_ == nullptr) return;
+  const std::string bytes = Encode(message);
+  for (HANDLE client : clients_) outgoing_.emplace_back(client, bytes);
+  if (!clients_.empty()) SetEvent(write_event_);
+}
+
+void Engine::PublishPhase() {
+  Message phase;
+  phase.type = MsgType::Phase;
+  phase.text = std::to_string(static_cast<int>(session_.phase()));
+  Broadcast(phase);
+}
+
 void Engine::RequestCaret() {
   Message query;
   query.type = MsgType::QueryCaret;
-  WriteClient(query);
+  Broadcast(query);
 }
 
-void Engine::PublishCommit() {
-  std::string commit;
+void Engine::StoreLexicon() {
   std::string stored;
-  const bool has_commit = session_.TakeCommit(&commit);
-  const bool has_store = session_.TakeLexiconWrite(&stored);
-  if (has_commit) {
-    Message done;
-    done.type = MsgType::CommitDone;
-    done.text = commit;
-    WriteClient(done);
-  }
-  if (!has_store || !lexicon_) return;
+  if (!session_.TakeLexiconWrite(&stored) || !lexicon_) return;
   std::vector<Token> tokens;
   if (segmenter_) {
     segmenter_->Remember(stored);
@@ -487,12 +507,43 @@ void Engine::PublishCommit() {
   lexicon_->Commit(stored, tokens, static_cast<std::int64_t>(std::time(nullptr)));
 }
 
+void Engine::PublishCommit() {
+  std::string commit;
+  if (!session_.TakeCommit(&commit)) return;
+  pending_insert_ = commit;
+  Message done;
+  done.type = MsgType::CommitDone;
+  done.text = commit;
+  if (!WriteClient(done)) {
+    session_.RestorePending(pending_insert_);
+    pending_insert_.clear();
+    PublishPhase();
+  }
+}
+
+void Engine::BeginFinalize() {
+  if (session_.phase() == Phase::Listening) session_.OnSpeechEnded();
+  if (session_.phase() != Phase::Finalizing) return;
+  if (finalize_thread_.joinable()) return;
+  const int generation = ++finalize_generation_;
+  PublishPhase();
+  finalize_thread_ = std::thread([this, generation] {
+    std::string text = recognizer_ ? recognizer_->Finalize() : std::string();
+    auto* held = new std::string(std::move(text));
+    if (box_.hwnd() == nullptr ||
+        !PostMessageW(box_.hwnd(), kFinalMessage, static_cast<WPARAM>(generation), reinterpret_cast<LPARAM>(held))) {
+      delete held;
+    }
+  });
+}
+
 void Engine::PublishFinal(const std::string& final_text) {
   session_.OnFinal(final_text);
   std::fprintf(stderr, "final: %s\n", final_text.c_str());
   PublishCommit();
   if (session_.phase() != Phase::Idle) RequestCaret();
   UpdateBox();
+  PublishPhase();
 }
 
 void Engine::StartCapture() {
@@ -527,13 +578,24 @@ void Engine::OnPartial() {
 }
 
 void Engine::OnEndpoint() {
-  if (capture_thread_.joinable()) capture_thread_.join();
+  StopCapture();
   if (session_.phase() != Phase::Listening) return;
-  session_.OnSpeechEnded();
-  PublishFinal(recognizer_->Finalize());
+  BeginFinalize();
+  UpdateBox();
 }
 
 void Engine::OnPipe(const Message& message) {
+  if (message.type == MsgType::InsertAck) {
+    if (message.text == "ok") {
+      StoreLexicon();
+    } else if (!pending_insert_.empty()) {
+      session_.RestorePending(pending_insert_);
+    }
+    pending_insert_.clear();
+    UpdateBox();
+    PublishPhase();
+    return;
+  }
   if (message.type == MsgType::Caret) {
     caret_known_ = true;
     caret_ = Rect{message.caret_x, message.caret_y, message.caret_w, message.caret_h};
@@ -542,43 +604,79 @@ void Engine::OnPipe(const Message& message) {
     return;
   }
   if (message.type == MsgType::Enter) {
+    if (session_.phase() == Phase::Listening) {
+      session_.Enter();
+      StopCapture();
+      BeginFinalize();
+      UpdateBox();
+      PublishPhase();
+      return;
+    }
     session_.Enter();
     PublishCommit();
     UpdateBox();
+    PublishPhase();
     return;
   }
   if (message.type == MsgType::Cancel) {
+    ++finalize_generation_;
     StopCapture();
+    if (finalize_thread_.joinable()) finalize_thread_.join();
     session_.Escape();
+    pending_insert_.clear();
     mic_error_.clear();
     caret_known_ = false;
     UpdateBox();
+    PublishPhase();
     return;
   }
   if (message.type != MsgType::StartListen) return;
   if (session_.phase() == Phase::Listening) {
     StopCapture();
     session_.Hotkey();
-    PublishFinal(recognizer_->Finalize());
+    BeginFinalize();
+    UpdateBox();
     return;
   }
   if (session_.phase() == Phase::Finalizing) return;
+  if (finalize_thread_.joinable()) finalize_thread_.join();
   recognizer_->Reset();
   caret_known_ = false;
   session_.Hotkey();
   StartCapture();
   RequestCaret();
   UpdateBox();
+  PublishPhase();
 }
 
 LRESULT Engine::OnMessage(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
   if (message == kPipeMessage) {
-    std::deque<Message> local;
+    std::deque<std::pair<HANDLE, Message>> local;
     {
       std::lock_guard<std::mutex> lock(inbox_mu_);
       local.swap(inbox_);
     }
-    for (const Message& item : local) OnPipe(item);
+    for (const auto& item : local) {
+      {
+        std::lock_guard<std::mutex> lock(write_mu_);
+        if (item.first != INVALID_HANDLE_VALUE) active_pipe_ = item.first;
+      }
+      OnPipe(item.second);
+    }
+    return 0;
+  }
+  if (message == kAnnounceMessage) {
+    PublishPhase();
+    return 0;
+  }
+  if (message == kFinalMessage) {
+    auto* text = reinterpret_cast<std::string*>(lparam);
+    const int generation = static_cast<int>(wparam);
+    if (finalize_thread_.joinable()) finalize_thread_.join();
+    if (text != nullptr) {
+      if (generation == finalize_generation_ && session_.phase() == Phase::Finalizing) PublishFinal(*text);
+      delete text;
+    }
     return 0;
   }
   if (message == kPartialMessage) {
@@ -638,6 +736,7 @@ LRESULT Engine::OnMessage(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
 }
 
 void Engine::ClientLoop(HANDLE pipe) {
+  PostMessageW(box_.hwnd(), kAnnounceMessage, 0, 0);
   OVERLAPPED overlap{};
   overlap.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
   std::string buffer;
@@ -662,12 +761,8 @@ void Engine::ClientLoop(HANDLE pipe) {
       if (!Decode(pending, &decoded, &used)) break;
       pending.erase(0, used);
       {
-        std::lock_guard<std::mutex> lock(write_mu_);
-        active_pipe_ = pipe;
-      }
-      {
         std::lock_guard<std::mutex> lock(inbox_mu_);
-        inbox_.push_back(std::move(decoded));
+        inbox_.emplace_back(pipe, std::move(decoded));
       }
       PostMessageW(box_.hwnd(), kPipeMessage, 0, 0);
     }

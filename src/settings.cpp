@@ -1,6 +1,8 @@
 #include "settings.hpp"
 
-#include <fstream>
+#include "utf8.hpp"
+
+#include <cstdio>
 #include <string>
 
 namespace {
@@ -60,13 +62,19 @@ bool HotkeyAccepted(Hotkey hotkey) {
   if (alt && hotkey.vk == 0x09) return false;
   if (alt && hotkey.vk == 0x73) return false;
   if (ctrl && alt && hotkey.vk == 0x2E) return false;
+  const bool function_key = hotkey.vk >= 0x70 && hotkey.vk <= 0x87;
+  if (hotkey.modifiers == 0 && !function_key) return false;
   return true;
 }
 
 Settings LoadSettings(const std::string& path) {
-  std::ifstream in(path, std::ios::binary);
-  if (!in) return Settings{DefaultHotkey()};
-  const std::string json((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  FILE* file = _wfopen(Utf8ToWide(path).c_str(), L"rb");
+  if (file == nullptr) return Settings{DefaultHotkey()};
+  std::string json;
+  char buffer[4096];
+  std::size_t got = 0;
+  while ((got = std::fread(buffer, 1, sizeof(buffer), file)) > 0) json.append(buffer, got);
+  std::fclose(file);
   bool mod_ok = false;
   bool vk_ok = false;
   const int modifiers = NumberAfter(json, "modifiers", &mod_ok);
@@ -78,7 +86,10 @@ Settings LoadSettings(const std::string& path) {
 }
 
 void SaveSettings(const std::string& path, Settings settings) {
-  std::ofstream out(path, std::ios::binary | std::ios::trunc);
-  if (!out) return;
-  out << "{\"modifiers\":" << settings.hotkey.modifiers << ",\"vk\":" << settings.hotkey.vk << "}";
+  FILE* file = _wfopen(Utf8ToWide(path).c_str(), L"wb");
+  if (file == nullptr) return;
+  const std::string json = "{\"modifiers\":" + std::to_string(settings.hotkey.modifiers) +
+                            ",\"vk\":" + std::to_string(settings.hotkey.vk) + "}";
+  std::fwrite(json.data(), 1, json.size(), file);
+  std::fclose(file);
 }

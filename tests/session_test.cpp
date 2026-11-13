@@ -19,6 +19,36 @@ void SessionKeepsDraftUntilFinalThenEnterCommitsFinal() {
   CHECK(!s.mic_open());
 }
 
+void EnterDuringListeningCommitsTheFinalNotTheDraft() {
+  Session s;
+  s.Hotkey();
+  s.OnDraft("草稿");
+  s.Enter();
+  s.OnSpeechEnded();
+  s.OnFinal("定稿。");
+  std::string committed;
+  CHECK(s.TakeCommit(&committed));
+  CHECK(committed == "定稿。");
+  CHECK(s.phase() == Phase::Idle);
+}
+
+void RejectedInsertRestoresThePendingFinal() {
+  Session s;
+  s.Hotkey();
+  s.OnSpeechEnded();
+  s.OnFinal("定稿。");
+  s.Enter();
+  std::string text;
+  CHECK(s.TakeCommit(&text));
+  CHECK(text == "定稿。");
+  s.RestorePending(text);
+  CHECK(s.phase() == Phase::Pending);
+  CHECK(s.box_text() == "定稿。");
+  std::string ignored;
+  CHECK(!s.TakeCommit(&ignored));
+  CHECK(!s.TakeLexiconWrite(&ignored));
+}
+
 void EscapeAndRestartDoNotCommit() {
   Session s;
   s.Hotkey();

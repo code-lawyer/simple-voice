@@ -40,6 +40,15 @@ void PreferredHomophoneReplacesOnlySamePinyin() {
   CHECK(lex.Apply("张山到了", {{"张山", "zhang shan"}, {"到了", "dao le"}}, 2000) == "张山到了");
 }
 
+void PunctuationDoesNotBlockARepeatedSentence() {
+  Lexicon lex(TempDb());
+  const char* sentence = "明天下午三点在会议室见客户";
+  std::vector<Token> tokens = {{"明天", "ming tian"}, {"。", ""}, {"客户", "ke hu"}};
+  lex.Commit(sentence, tokens, 1000);
+  lex.Commit(sentence, tokens, 2000);
+  CHECK(lex.Apply("明天。客户", tokens, 2000) == sentence);
+}
+
 void ExpiredEntriesDropOut() {
   Lexicon lex(TempDb());
   const auto day = 86400LL;

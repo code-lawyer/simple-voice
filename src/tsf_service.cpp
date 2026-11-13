@@ -4,6 +4,7 @@
 
 #include "hotkey.hpp"
 #include "ipc.hpp"
+#include "register_status.hpp"
 
 #include <msctf.h>
 #include <oleauto.h>
@@ -103,7 +104,7 @@ class VoiceService : public ITfTextInputProcessor {
   HRESULT STDMETHODCALLTYPE Activate(ITfThreadMgr* manager, TfClientId client_id) override;
   HRESULT STDMETHODCALLTYPE Deactivate() override;
 
-  HRESULT OnKey(ITfContext* context, WPARAM vk, WINBOOL* eaten, bool down);
+  HRESULT OnKey(ITfContext* context, WPARAM vk, LPARAM lparam, WINBOOL* eaten, bool down);
   HRESULT OnKeyUp(WPARAM vk, WINBOOL* eaten, bool down);
   void OnForeground(bool foreground) { foreground_ = foreground; }
 
@@ -130,14 +131,14 @@ class VoiceService : public ITfTextInputProcessor {
       owner_->OnForeground(foreground == TRUE);
       return S_OK;
     }
-    HRESULT STDMETHODCALLTYPE OnTestKeyDown(ITfContext* context, WPARAM vk, LPARAM, WINBOOL* eaten) override {
-      return owner_->OnKey(context, vk, eaten, false);
+    HRESULT STDMETHODCALLTYPE OnTestKeyDown(ITfContext* context, WPARAM vk, LPARAM lparam, WINBOOL* eaten) override {
+      return owner_->OnKey(context, vk, lparam, eaten, false);
     }
     HRESULT STDMETHODCALLTYPE OnTestKeyUp(ITfContext*, WPARAM vk, LPARAM, WINBOOL* eaten) override {
       return owner_->OnKeyUp(vk, eaten, false);
     }
-    HRESULT STDMETHODCALLTYPE OnKeyDown(ITfContext* context, WPARAM vk, LPARAM, WINBOOL* eaten) override {
-      return owner_->OnKey(context, vk, eaten, true);
+    HRESULT STDMETHODCALLTYPE OnKeyDown(ITfContext* context, WPARAM vk, LPARAM lparam, WINBOOL* eaten) override {
+      return owner_->OnKey(context, vk, lparam, eaten, true);
     }
     HRESULT STDMETHODCALLTYPE OnKeyUp(ITfContext*, WPARAM vk, LPARAM, WINBOOL* eaten) override {
       return owner_->OnKeyUp(vk, eaten, true);
@@ -294,7 +295,6 @@ class VoiceService : public ITfTextInputProcessor {
   std::mutex write_mu_;
   std::vector<std::string> outgoing_;
   bool stop_reader_ = false;
-  bool launched_ = false;
 };
 
 bool VoiceService::DocumentAcceptsText(ITfContext* context) const {
@@ -349,8 +349,10 @@ bool VoiceService::WriteClient(const Message& message) {
 }
 
 void VoiceService::LaunchEngine() {
-  if (launched_) return;
-  launched_ = true;
+  HANDLE mutex = OpenMutexW(SYNCHRONIZE, FALSE, L"Local\\VoiceImeEngine");
+  const bool running = mutex != nullptr;
+  if (mutex != nullptr) CloseHandle(mutex);
+  if (!ShouldLaunchEngine(running)) return;
   wchar_t module_path[MAX_PATH];
   const DWORD count = GetModuleFileNameW(VoiceImeModule(), module_path, MAX_PATH);
   if (count == 0 || count >= MAX_PATH) return;
@@ -415,15 +417,22 @@ ITfContext* VoiceService::FocusContext() const {
 }
 
 void VoiceService::HandleCommit(const std::wstring& text) {
-  active_ = false;
+  bool inserted = false;
   ITfContext* context = FocusContext();
-  if (context == nullptr) return;
-  InsertSession session;
-  session.context = context;
-  session.text = text;
-  HRESULT session_hr = E_FAIL;
-  context->RequestEditSession(client_id_, &session, TF_ES_SYNC | TF_ES_READWRITE, &session_hr);
-  context->Release();
+  if (context != nullptr) {
+    InsertSession session;
+    session.context = context;
+    session.text = text;
+    HRESULT session_hr = E_FAIL;
+    context->RequestEditSession(client_id_, &session, TF_ES_SYNC | TF_ES_READWRITE, &session_hr);
+    inserted = SUCCEEDED(session_hr);
+    context->Release();
+  }
+  if (inserted) active_ = false;
+  Message ack;
+  ack.type = MsgType::InsertAck;
+  ack.text = inserted ? "ok" : "fail";
+  WriteClient(ack);
 }
 
 void VoiceService::HandleCaret() {
@@ -451,7 +460,6 @@ void VoiceService::HandleCaret() {
 }
 
 void VoiceService::ReadLoop() {
-  LaunchEngine();
   auto deliver = [this](std::string& pending) {
     for (;;) {
       Message message;
@@ -460,12 +468,15 @@ void VoiceService::ReadLoop() {
       pending.erase(0, used);
       if (message.type == MsgType::CommitDone && host_ != nullptr) {
         PostMessageW(host_, kCommitMessage, 0, reinterpret_cast<LPARAM>(new std::wstring(Utf8ToWide(message.text))));
-      } else if (message.type == MsgType::QueryCaret && host_ != nullptr) {
+      } else if (message.type == MsgType::Phase) {
+        active_ = !message.text.empty() && message.text != "0";
+      } else if (message.type == MsgType::QueryCaret && host_ != nullptr && foreground_) {
         PostMessageW(host_, kCaretMessage, 0, 0);
       }
     }
   };
   while (stop_event_ != nullptr && WaitForSingleObject(stop_event_, 0) != WAIT_OBJECT_0) {
+    LaunchEngine();
     // One thread owns the handle. A synchronous read and write on the same
     // pipe deadlock, so the UI thread only queues bytes and this loop writes them.
     HANDLE pipe = CreateFileW(L"\\\\.\\pipe\\VoiceIme", GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING,
@@ -641,13 +652,17 @@ HRESULT VoiceService::Deactivate() {
   return S_OK;
 }
 
-HRESULT VoiceService::OnKey(ITfContext* context, WPARAM vk, WINBOOL* eaten, bool down) {
+HRESULT VoiceService::OnKey(ITfContext* context, WPARAM vk, LPARAM lparam, WINBOOL* eaten, bool down) {
   if (eaten != nullptr) *eaten = FALSE;
   if (!foreground_ || !DocumentAcceptsText(context)) return S_OK;
   const bool hotkey = HotkeyDown(vk);
   const bool enter = active_ && vk == VK_RETURN;
   const bool escape = active_ && vk == VK_ESCAPE;
   if (!hotkey && !enter && !escape) return S_OK;
+  if (IsKeyRepeat(static_cast<unsigned int>(lparam))) {
+    if (eaten != nullptr) *eaten = TRUE;
+    return S_OK;
+  }
   if (!down) {
     std::lock_guard<std::mutex> lock(write_mu_);
     if (eaten != nullptr) *eaten = pipe_ != INVALID_HANDLE_VALUE ? TRUE : FALSE;

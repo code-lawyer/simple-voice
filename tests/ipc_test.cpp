@@ -18,6 +18,24 @@ void DecodeWaitsForAFullFrame() {
   CHECK(DefaultHotkey().vk == 0x20);
 }
 
+void PhaseAndInsertAckRoundTrip() {
+  Message phase;
+  phase.type = MsgType::Phase;
+  phase.text = "1";
+  Message out;
+  std::size_t used = 0;
+  CHECK(Decode(Encode(phase), &out, &used));
+  CHECK(out.type == MsgType::Phase);
+  CHECK(out.text == "1");
+
+  Message ack;
+  ack.type = MsgType::InsertAck;
+  ack.text = "fail";
+  CHECK(Decode(Encode(ack), &out, &used));
+  CHECK(out.type == MsgType::InsertAck);
+  CHECK(out.text == "fail");
+}
+
 void EnterAndCaretRoundTrip() {
   Message enter;
   enter.type = MsgType::Enter;

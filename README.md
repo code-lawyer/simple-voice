@@ -28,6 +28,6 @@ build\voiceime_tests.exe
 
 ## 注册
 
-`build\voiceime_register.exe` 把「语音输入法」写进当前用户的 TSF 注册表，指向 `build\voiceime_tsf.dll` 的全路径，并尝试写 HKLM。HKLM 被拒绝时打印 `hklm denied`，当前用户的项仍然保留，语言栏列表不会改。HKLM 写成功后才会调用 `InstallLayoutOrTip`。卸掉：`build\voiceime_register.exe --unregister`。
+`build\voiceime_register.exe` 需要管理员权限。它写入 HKCU 和 HKLM，HKLM 成功后才调用 `InstallLayoutOrTip`，语言栏里才会出现「语音输入法」。HKLM 写失败时打印 `hklm denied`，退出码是 1，当前用户的项仍然保留。卸掉同样需要管理员：`build\voiceime_register.exe --unregister`，机器项删不掉时退出码是 1。
 
-切换到「语音输入法」后，默认 Ctrl+Alt+Space 开麦。确认框里的字按回车才写入正文，Esc 放弃。引擎是同目录的 `voiceime_engine.exe`，第一次激活输入法时启动。快捷键文件是 `%LOCALAPPDATA%\VoiceIme\config.json`，没有这个文件就用默认键。
+切换到「语音输入法」后，默认 Ctrl+Alt+Space 开麦。确认框里的字按回车才写入正文，Esc 放弃。正在听的时候按回车会等定稿，插入的是定稿。引擎是同目录的 `voiceime_engine.exe`。托盘退出之后，下次激活输入法会再把它拉起来。快捷键文件是 `%LOCALAPPDATA%\VoiceIme\config.json`，没有这个文件就用默认键。托盘可以录新的快捷键，也可以删除最近记住的词。单独的字母、空格、回车、Esc 和系统保留组合不会替换原来的键。

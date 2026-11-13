@@ -1,5 +1,35 @@
 #include "utf8.hpp"
 
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+
+std::wstring Utf8ToWide(std::string_view utf8) {
+  if (utf8.empty()) return L"";
+  const int count = MultiByteToWideChar(CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()), nullptr, 0);
+  std::wstring wide(count > 0 ? count : 0, L'\0');
+  if (count > 0) MultiByteToWideChar(CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()), wide.data(), count);
+  return wide;
+}
+
+std::string WideToUtf8(std::wstring_view wide) {
+  if (wide.empty()) return "";
+  const int count = WideCharToMultiByte(CP_UTF8, 0, wide.data(), static_cast<int>(wide.size()), nullptr, 0, nullptr, nullptr);
+  std::string utf8(count > 0 ? count : 0, '\0');
+  if (count > 0) {
+    WideCharToMultiByte(CP_UTF8, 0, wide.data(), static_cast<int>(wide.size()), utf8.data(), count, nullptr, nullptr);
+  }
+  return utf8;
+}
+
+bool FileExistsUtf8(std::string_view path) {
+  const std::wstring wide = Utf8ToWide(path);
+  if (wide.empty()) return false;
+  return GetFileAttributesW(wide.c_str()) != INVALID_FILE_ATTRIBUTES;
+}
+
 int CodePointCount(std::string_view utf8) {
   int count = 0;
   for (std::size_t i = 0; i < utf8.size();) {

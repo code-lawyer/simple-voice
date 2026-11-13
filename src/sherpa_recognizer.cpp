@@ -2,6 +2,7 @@
 
 #include "lexicon.hpp"
 #include "segmenter.hpp"
+#include "utf8.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -32,24 +33,23 @@ std::string JoinPath(const std::string& dir, const std::string& name) {
   return dir + "\\" + name;
 }
 
-bool Exists(const std::string& path) {
-  return GetFileAttributesA(path.c_str()) != INVALID_FILE_ATTRIBUTES;
-}
+bool Exists(const std::string& path) { return FileExistsUtf8(path); }
 
 std::string FindOnnx(const std::string& dir) {
   const std::string preferred = JoinPath(dir, "model.int8.onnx");
   if (Exists(preferred)) return preferred;
-  const std::string pattern = JoinPath(dir, "*.onnx");
-  WIN32_FIND_DATAA data{};
-  HANDLE found = FindFirstFileA(pattern.c_str(), &data);
+  const std::wstring pattern = Utf8ToWide(JoinPath(dir, "*.onnx"));
+  WIN32_FIND_DATAW data{};
+  HANDLE found = FindFirstFileW(pattern.c_str(), &data);
   std::string int8;
   std::string any;
   if (found != INVALID_HANDLE_VALUE) {
     do {
-      const std::string path = JoinPath(dir, data.cFileName);
+      const std::string name = WideToUtf8(data.cFileName);
+      const std::string path = JoinPath(dir, name);
       if (any.empty()) any = path;
-      if (int8.empty() && std::string(data.cFileName).find("int8") != std::string::npos) int8 = path;
-    } while (FindNextFileA(found, &data));
+      if (int8.empty() && name.find("int8") != std::string::npos) int8 = path;
+    } while (FindNextFileW(found, &data));
     FindClose(found);
   }
   if (!int8.empty()) return int8;

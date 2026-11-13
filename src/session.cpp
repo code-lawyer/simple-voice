@@ -49,7 +49,7 @@ void Session::OnFinal(std::string punctuated) {
 }
 
 void Session::Enter() {
-  if (phase_ == Phase::Finalizing) {
+  if (phase_ == Phase::Listening || phase_ == Phase::Finalizing) {
     enter_during_final_ = true;
     return;
   }
@@ -60,6 +60,16 @@ void Session::Enter() {
   box_.clear();
   phase_ = Phase::Idle;
   mic_open_ = false;
+}
+
+void Session::RestorePending(std::string text) {
+  phase_ = Phase::Pending;
+  mic_open_ = false;
+  enter_during_final_ = false;
+  commit_ready_ = false;
+  lexicon_ready_ = false;
+  committed_.clear();
+  box_ = std::move(text);
 }
 
 void Session::Escape() {

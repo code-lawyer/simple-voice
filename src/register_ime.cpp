@@ -1,3 +1,4 @@
+#include "register_status.hpp"
 #include "tsf_service.hpp"
 
 #include <objbase.h>
@@ -93,10 +94,12 @@ bool WriteTree(HKEY root, const std::wstring& dll) {
   return ok;
 }
 
-void DeleteTree(HKEY root) {
+bool DeleteTree(HKEY root) {
   const std::wstring clsid = GuidText(CLSID_VoiceIme);
-  RegDeleteTreeW(root, (L"Software\\Classes\\CLSID\\" + clsid).c_str());
-  RegDeleteTreeW(root, (L"Software\\Microsoft\\CTF\\TIP\\" + clsid).c_str());
+  const LSTATUS classes = RegDeleteTreeW(root, (L"Software\\Classes\\CLSID\\" + clsid).c_str());
+  const LSTATUS tip = RegDeleteTreeW(root, (L"Software\\Microsoft\\CTF\\TIP\\" + clsid).c_str());
+  auto gone = [](LSTATUS status) { return status == ERROR_SUCCESS || status == ERROR_FILE_NOT_FOUND; };
+  return gone(classes) && gone(tip);
 }
 
 void InstallLayout(bool uninstall) {
@@ -116,15 +119,15 @@ int main(int argc, char** argv) {
   const std::wstring dll = DllPath();
   if (uninstall) {
     InstallLayout(true);
-    DeleteTree(HKEY_CURRENT_USER);
-    DeleteTree(HKEY_LOCAL_MACHINE);
+    const bool hkcu = DeleteTree(HKEY_CURRENT_USER);
+    const bool hklm = DeleteTree(HKEY_LOCAL_MACHINE);
     std::printf("unregistered\n");
-    return 0;
+    return UnregisterExitCode(hkcu && hklm);
   }
   const bool hkcu = WriteTree(HKEY_CURRENT_USER, dll);
   if (!hkcu) {
     std::printf("hkcu failed\n");
-    return 1;
+    return RegisterExitCode(false, false);
   }
   std::printf("hkcu ok\n");
   const bool hklm = WriteTree(HKEY_LOCAL_MACHINE, dll);
@@ -137,5 +140,5 @@ int main(int argc, char** argv) {
     std::printf("hklm denied\n");
   }
   std::printf("dll %s\n", WideToUtf8(dll).c_str());
-  return 0;
+  return RegisterExitCode(hkcu, hklm);
 }

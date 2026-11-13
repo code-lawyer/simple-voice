@@ -18,6 +18,14 @@ void TsfFactoryExportsTheVoiceImeClass();
 void MissingSettingsUseCtrlAltSpace();
 void SaveSettingsWritesTheDefaultJson();
 void ReservedOrEmptyHotkeyIsRejected();
+void DeadEngineIsStartedAgain();
+void RepeatedHotkeyIsNotANewPress();
+void RegisterRequiresTheMachineKey();
+void SettingsRoundTripOnANonAsciiPath();
+void EnterDuringListeningCommitsTheFinalNotTheDraft();
+void RejectedInsertRestoresThePendingFinal();
+void PunctuationDoesNotBlockARepeatedSentence();
+void PhaseAndInsertAckRoundTrip();
 
 int main(int argc, char** argv) {
   const Test tests[] = {
@@ -39,6 +47,14 @@ int main(int argc, char** argv) {
       {"settings.MissingSettingsUseCtrlAltSpace", MissingSettingsUseCtrlAltSpace},
       {"settings.SaveSettingsWritesTheDefaultJson", SaveSettingsWritesTheDefaultJson},
       {"settings.ReservedOrEmptyHotkeyIsRejected", ReservedOrEmptyHotkeyIsRejected},
+      {"settings.DeadEngineIsStartedAgain", DeadEngineIsStartedAgain},
+      {"settings.RepeatedHotkeyIsNotANewPress", RepeatedHotkeyIsNotANewPress},
+      {"settings.RegisterRequiresTheMachineKey", RegisterRequiresTheMachineKey},
+      {"settings.SettingsRoundTripOnANonAsciiPath", SettingsRoundTripOnANonAsciiPath},
+      {"session.EnterDuringListeningCommitsTheFinalNotTheDraft", EnterDuringListeningCommitsTheFinalNotTheDraft},
+      {"session.RejectedInsertRestoresThePendingFinal", RejectedInsertRestoresThePendingFinal},
+      {"lexicon.PunctuationDoesNotBlockARepeatedSentence", PunctuationDoesNotBlockARepeatedSentence},
+      {"ipc.PhaseAndInsertAckRoundTrip", PhaseAndInsertAckRoundTrip},
   };
   return RunTests(argc, argv, tests, sizeof(tests) / sizeof(tests[0]));
 }

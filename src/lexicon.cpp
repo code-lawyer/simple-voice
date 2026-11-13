@@ -24,6 +24,7 @@ void Exec(sqlite3* db, const char* sql) {
 std::string JoinPinyin(const std::vector<Token>& tokens) {
   std::string joined;
   for (const Token& token : tokens) {
+    if (token.pinyin.empty()) continue;
     if (!joined.empty()) joined.push_back(' ');
     joined += token.pinyin;
   }
@@ -176,12 +177,8 @@ std::string Lexicon::Apply(const std::string& recognized, const std::vector<Toke
   }
   sqlite3_finalize(query);
 
-  bool full_ok = !tokens.empty();
-  for (const Token& token : tokens) {
-    if (token.pinyin.empty()) full_ok = false;
-  }
-  if (full_ok) {
-    const std::string full = JoinPinyin(tokens);
+  const std::string full = JoinPinyin(tokens);
+  if (!full.empty()) {
     const Row* best = nullptr;
     for (const Row& row : rows) {
       if (row.kind != "phrase" || row.pinyin != full) continue;

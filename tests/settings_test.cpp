@@ -1,5 +1,8 @@
 #include "harness.hpp"
+#include "hotkey.hpp"
+#include "register_status.hpp"
 #include "settings.hpp"
+#include "utf8.hpp"
 
 #include <cstdio>
 #include <fstream>
@@ -49,6 +52,39 @@ void ReservedOrEmptyHotkeyIsRejected() {
   CHECK(!HotkeyAccepted(Hotkey{2, 0x09}));
   CHECK(!HotkeyAccepted(Hotkey{2, 0x73}));
   CHECK(!HotkeyAccepted(Hotkey{1 | 2, 0x2E}));
+  CHECK(!HotkeyAccepted(Hotkey{0, 0x20}));
+  CHECK(!HotkeyAccepted(Hotkey{0, 0x41}));
+  CHECK(!HotkeyAccepted(Hotkey{0, 0x08}));
+  CHECK(!HotkeyAccepted(Hotkey{0, 0x09}));
   CHECK(HotkeyAccepted(DefaultHotkey()));
   CHECK(HotkeyAccepted(Hotkey{0, 0x77}));
+}
+
+void DeadEngineIsStartedAgain() {
+  CHECK(ShouldLaunchEngine(false));
+  CHECK(!ShouldLaunchEngine(true));
+}
+
+void RepeatedHotkeyIsNotANewPress() {
+  CHECK(IsKeyRepeat(0x40000000u));
+  CHECK(!IsKeyRepeat(0));
+}
+
+void RegisterRequiresTheMachineKey() {
+  CHECK(RegisterExitCode(true, true) == 0);
+  CHECK(RegisterExitCode(true, false) == 1);
+  CHECK(RegisterExitCode(false, false) == 1);
+  CHECK(UnregisterExitCode(true) == 0);
+  CHECK(UnregisterExitCode(false) == 1);
+}
+
+void SettingsRoundTripOnANonAsciiPath() {
+  const std::string path = "build/设置-hotkey.json";
+  std::remove(path.c_str());
+  SaveSettings(path, Settings{Hotkey{1, 0x70}});
+  const Settings s = LoadSettings(path);
+  CHECK(s.hotkey.modifiers == 1);
+  CHECK(s.hotkey.vk == 0x70);
+  CHECK(FileExistsUtf8(path));
+  std::remove(path.c_str());
 }

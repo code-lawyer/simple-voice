@@ -14,6 +14,7 @@ class Session {
   void OnSpeechEnded();
   void OnFinal(std::string punctuated);
   void Enter();
+  void RestorePending(std::string text);
   void Escape();
   bool TakeCommit(std::string* text);
   bool TakeLexiconWrite(std::string* text);
