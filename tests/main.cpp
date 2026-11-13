@@ -10,6 +10,8 @@ void SixtySecondsForcesEndpoint();
 void Resample48kTo16kKeepsDuration();
 void SessionKeepsDraftUntilFinalThenEnterCommitsFinal();
 void EscapeAndRestartDoNotCommit();
+void MissingCaretGoesToBottomRight();
+void DecodeWaitsForAFullFrame();
 
 int main(int argc, char** argv) {
   const Test tests[] = {
@@ -23,6 +25,8 @@ int main(int argc, char** argv) {
       {"vad.Resample48kTo16kKeepsDuration", Resample48kTo16kKeepsDuration},
       {"session.SessionKeepsDraftUntilFinalThenEnterCommitsFinal", SessionKeepsDraftUntilFinalThenEnterCommitsFinal},
       {"session.EscapeAndRestartDoNotCommit", EscapeAndRestartDoNotCommit},
+      {"place.MissingCaretGoesToBottomRight", MissingCaretGoesToBottomRight},
+      {"ipc.DecodeWaitsForAFullFrame", DecodeWaitsForAFullFrame},
   };
   return RunTests(argc, argv, tests, sizeof(tests) / sizeof(tests[0]));
 }

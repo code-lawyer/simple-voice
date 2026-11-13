@@ -16,6 +16,8 @@ add_library(voiceime_core STATIC
   src/vad.cpp
   src/resample.cpp
   src/session.cpp
+  src/place.cpp
+  src/ipc.cpp
   third_party/sqlite/sqlite3.c)
 target_include_directories(voiceime_core PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -28,7 +30,7 @@ else()
   set_source_files_properties(third_party/sqlite/sqlite3.c PROPERTIES COMPILE_OPTIONS -w)
 endif()
 
-add_executable(voiceime_tests tests/main.cpp tests/utf8_test.cpp tests/lexicon_test.cpp tests/segmenter_test.cpp tests/vad_test.cpp tests/session_test.cpp)
+add_executable(voiceime_tests tests/main.cpp tests/utf8_test.cpp tests/lexicon_test.cpp tests/segmenter_test.cpp tests/vad_test.cpp tests/session_test.cpp tests/place_test.cpp tests/ipc_test.cpp)
 target_link_libraries(voiceime_tests PRIVATE voiceime_core)
 target_include_directories(voiceime_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
 if(MINGW)

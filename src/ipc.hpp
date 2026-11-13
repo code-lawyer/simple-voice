@@ -1,0 +1,27 @@
+#pragma once
+
+#include <cstddef>
+#include <cstdint>
+#include <string>
+#include <string_view>
+
+enum class MsgType : std::uint8_t {
+  StartListen = 1,
+  Cancel = 2,
+  Draft = 3,
+  Final = 4,
+  CommitDone = 5,
+  ListRecent = 6,
+  DeleteEntry = 7,
+  SetHotkey = 8,
+};
+
+struct Message {
+  MsgType type = MsgType::Draft;
+  std::string text;
+  int key_mod = 0;
+  int key_vk = 0;
+};
+
+std::string Encode(const Message& message);
+bool Decode(std::string_view bytes, Message* out, std::size_t* consumed);
