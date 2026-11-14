@@ -30,6 +30,11 @@ ITfDisplayAttributeProvider : public IUnknown {
 };
 #endif
 
+// MinGW's msctf.h omits this Windows SDK macro. The SDK value is 0.
+#ifndef TF_INVALID_EDIT_COOKIE
+#define TF_INVALID_EDIT_COOKIE ((TfEditCookie)0)
+#endif
+
 namespace {
 
 constexpr UINT kCommitMessage = WM_APP + 1;
@@ -317,7 +322,10 @@ class VoiceService : public ITfTextInputProcessor {
 
   HRESULT OnKey(ITfContext* context, WPARAM vk, LPARAM lparam, WINBOOL* eaten, bool down);
   HRESULT OnKeyUp(ITfContext* context, WPARAM vk, WINBOOL* eaten, bool down);
-  void OnForeground(bool foreground) { foreground_ = foreground; }
+  void OnForeground(bool foreground) {
+    foreground_ = foreground;
+    if (!foreground) bar_.Hide();
+  }
 
   void ReadLoop();
   void HandleCommit(const std::wstring& text);
@@ -547,7 +555,7 @@ class VoiceService : public ITfTextInputProcessor {
   void CommitComposition(TfEditCookie cookie, ITfContext* context, const std::wstring& text);
   void CancelComposition(TfEditCookie cookie);
   void ReleaseCompositionPointer();
-  void OnCompositionTerminated();
+  void OnCompositionTerminated(TfEditCookie cookie, ITfComposition* composition);
   void ShowCandidates(ITfContext* context);
   void SyncAfterRime(ITfContext* context);
   void CancelFocusComposition();
@@ -969,8 +977,9 @@ HRESULT VoiceService::Deactivate() {
   return S_OK;
 }
 
-HRESULT STDMETHODCALLTYPE VoiceService::CompositionSink::OnCompositionTerminated(TfEditCookie, ITfComposition*) {
-  owner_->OnCompositionTerminated();
+HRESULT STDMETHODCALLTYPE VoiceService::CompositionSink::OnCompositionTerminated(TfEditCookie cookie,
+                                                                                  ITfComposition* composition) {
+  owner_->OnCompositionTerminated(cookie, composition);
   return S_OK;
 }
 
@@ -1136,7 +1145,15 @@ void VoiceService::ReleaseCompositionPointer() {
   held->Release();
 }
 
-void VoiceService::OnCompositionTerminated() {
+void VoiceService::OnCompositionTerminated(TfEditCookie cookie, ITfComposition* composition) {
+  // Our EndComposition already wrote the commit or cleared the range.
+  if (!ending_composition_ && cookie != TF_INVALID_EDIT_COOKIE && composition != nullptr) {
+    ITfRange* range = nullptr;
+    if (SUCCEEDED(composition->GetRange(&range)) && range != nullptr) {
+      range->SetText(cookie, TF_ST_CORRECTION, L"", 0);
+      range->Release();
+    }
+  }
   ReleaseCompositionPointer();
   if (ending_composition_) return;
   rime_.Clear();

@@ -16,6 +16,8 @@ cmake --build build
 build\voiceime_tests.exe
 ```
 
+构建 `voiceime_tsf.dll` 之后，生成后步骤把源码树的 `rime-data` 复制到 DLL 同目录（`build\rime-data`）。输入法从 DLL 目录加载方案，不从源码树加载。测试仍使用源码树的 `rime-data`。
+
 带一个参数时只跑名字里包含该参数的测试，例如 `build\voiceime_tests.exe utf8`。
 
 ## 模型

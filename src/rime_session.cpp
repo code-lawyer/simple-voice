@@ -45,7 +45,19 @@ void MapKey(int vk, bool shift, int* keycode, int* mask) {
     return;
   }
   if (vk >= 0x30 && vk <= 0x39) {
-    *keycode = vk;
+    if (shift) {
+      // half_shape is keyed by the character, so the shift mask is cleared.
+      static const int kShiftedDigit[] = {')', '!', '@', '#', '$', '%', '^', '&', '*', '('};
+      *keycode = kShiftedDigit[vk - 0x30];
+      *mask = 0;
+    } else {
+      *keycode = vk;
+    }
+    return;
+  }
+  // 0x61 is 'a'. Numpad 0-9 are XK_KP_0 (0xffb0) through XK_KP_9.
+  if (vk >= 0x60 && vk <= 0x69) {
+    *keycode = 0xffb0 + (vk - 0x60);
     return;
   }
   switch (vk) {

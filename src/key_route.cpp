@@ -53,13 +53,15 @@ KeyDecision RouteKey(const KeyState& state, Hotkey hotkey) {
         return KeyDecision{KeyAction::ToRime};
       }
       int index = 0;
-      if (state.vk >= 0x31 && state.vk <= 0x35) index = state.vk - 0x30;
+      // Shift+digit is punctuation (!, （, ）), not a candidate number.
+      if (!state.shift && state.vk >= 0x31 && state.vk <= 0x35) index = state.vk - 0x30;
       else if (state.vk >= 0x61 && state.vk <= 0x65) index = state.vk - 0x60;
       if (index >= 1 && index <= 5) {
         return KeyDecision{index <= state.candidate_count ? KeyAction::ToRime : KeyAction::Pass};
       }
     }
     if (IsPunctuation(state.vk)) return KeyDecision{KeyAction::ToRime};
+    if (state.shift && state.vk >= 0x30 && state.vk <= 0x39) return KeyDecision{KeyAction::ToRime};
   }
 
   return KeyDecision{KeyAction::Pass};

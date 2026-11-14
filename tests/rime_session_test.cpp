@@ -107,6 +107,23 @@ void UnknownLettersCommitRawOnSpace() {
   CHECK(done.commit == "xxxx");
   CHECK(!ContainsCjk(done.commit));
 }
+void NumpadSelectsThePageEntry() {
+  RimeSession session;
+  CHECK(session.Start(SharedDataDir(), TempUserDir()));
+  session.ProcessKey(0x4E, false);
+  session.ProcessKey(0x49, false);
+  CHECK(!session.view().page.empty());
+  const std::string first = session.view().page[0];
+  RimeView picked = session.ProcessKey(0x61, false);
+  CHECK(picked.commit == first);
+}
+void ShiftOneCommitsFullwidthExclamation() {
+  RimeSession session;
+  CHECK(session.Start(SharedDataDir(), TempUserDir()));
+  CHECK(!session.view().composing);
+  RimeView done = session.ProcessKey(0x31, true);
+  CHECK(done.commit == "！");
+}
 void DigitSelectsThePageEntry() {
   RimeSession session;
   CHECK(session.Start(SharedDataDir(), TempUserDir()));

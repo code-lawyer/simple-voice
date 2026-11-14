@@ -44,6 +44,30 @@ void DigitPastThePagePasses() {
   CHECK(RouteKey(s, DefaultHotkey()).action == KeyAction::Pass);
   s.vk = 0x65;
   CHECK(RouteKey(s, DefaultHotkey()).action == KeyAction::ToRime);
+  s.shift = true;
+  s.candidate_count = 0;
+  s.vk = 0x31;
+  CHECK(RouteKey(s, DefaultHotkey()).action == KeyAction::ToRime);
+  s.vk = 0x30;
+  CHECK(RouteKey(s, DefaultHotkey()).action == KeyAction::ToRime);
+  s.vk = 0x39;
+  CHECK(RouteKey(s, DefaultHotkey()).action == KeyAction::ToRime);
+  s.composing = false;
+  s.vk = 0x31;
+  CHECK(RouteKey(s, DefaultHotkey()).action == KeyAction::ToRime);
+  s.shift = false;
+  CHECK(RouteKey(s, DefaultHotkey()).action == KeyAction::Pass);
+  s.composing = true;
+  s.candidate_count = 1;
+  s.vk = 0x31;
+  CHECK(RouteKey(s, DefaultHotkey()).action == KeyAction::ToRime);
+  s.vk = 0x61;
+  CHECK(RouteKey(s, DefaultHotkey()).action == KeyAction::ToRime);
+  s.mode = InputMode::English;
+  s.shift = true;
+  s.composing = false;
+  s.vk = 0x31;
+  CHECK(RouteKey(s, DefaultHotkey()).action == KeyAction::Pass);
 }
 void ShiftLetterDoesNotToggle() {
   KeyState s{};

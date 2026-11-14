@@ -47,6 +47,8 @@ void NihaoCommitsTheWeightedWord();
 void LongPinyinProducesHanzi();
 void PeriodCommitsChinesePunct();
 void UnknownLettersCommitRawOnSpace();
+void NumpadSelectsThePageEntry();
+void ShiftOneCommitsFullwidthExclamation();
 void DigitSelectsThePageEntry();
 void EscapeDropsCompositionWithoutCommit();
 void EnterCommitsNihaoOnAFreshUserDir();
@@ -103,6 +105,8 @@ int main(int argc, char** argv) {
       {"rime.LongPinyinProducesHanzi", LongPinyinProducesHanzi},
       {"rime.PeriodCommitsChinesePunct", PeriodCommitsChinesePunct},
       {"rime.UnknownLettersCommitRawOnSpace", UnknownLettersCommitRawOnSpace},
+      {"rime.NumpadSelectsThePageEntry", NumpadSelectsThePageEntry},
+      {"rime.ShiftOneCommitsFullwidthExclamation", ShiftOneCommitsFullwidthExclamation},
       {"rime.DigitSelectsThePageEntry", DigitSelectsThePageEntry},
       {"rime.EscapeDropsCompositionWithoutCommit", EscapeDropsCompositionWithoutCommit},
       {"rime.EnterCommitsNihaoOnAFreshUserDir", EnterCommitsNihaoOnAFreshUserDir},

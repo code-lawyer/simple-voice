@@ -67,6 +67,11 @@ target_link_libraries(voiceime_tsf PRIVATE ole32 oleaut32 uuid user32 gdi32 "-Wl
 target_include_directories(voiceime_tsf PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_compile_definitions(voiceime_tsf PRIVATE _WIN32_WINNT=0x0601)
 target_link_options(voiceime_tsf PRIVATE -static-libstdc++ -static-libgcc)
+# EnsureRime reads rime-data beside the DLL. The source tree is not that directory.
+add_custom_command(TARGET voiceime_tsf POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E copy_directory
+    "${CMAKE_SOURCE_DIR}/rime-data"
+    "$<TARGET_FILE_DIR:voiceime_tsf>/rime-data")
 add_dependencies(voiceime_tests voiceime_tsf)
 
 add_executable(voiceime_register src/register_ime.cpp src/register_ime.rc)
