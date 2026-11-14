@@ -32,9 +32,11 @@ else()
   set_source_files_properties(third_party/sqlite/sqlite3.c PROPERTIES COMPILE_OPTIONS -w)
 endif()
 
-add_executable(voiceime_tests tests/main.cpp tests/utf8_test.cpp tests/lexicon_test.cpp tests/segmenter_test.cpp tests/vad_test.cpp tests/session_test.cpp tests/place_test.cpp tests/ipc_test.cpp tests/tsf_load_test.cpp tests/settings_test.cpp tests/key_route_test.cpp tests/pinyin_controller_test.cpp)
+add_executable(voiceime_tests tests/main.cpp tests/utf8_test.cpp tests/lexicon_test.cpp tests/segmenter_test.cpp tests/vad_test.cpp tests/session_test.cpp tests/place_test.cpp tests/ipc_test.cpp tests/tsf_load_test.cpp tests/settings_test.cpp tests/key_route_test.cpp tests/pinyin_controller_test.cpp tests/rime_session_test.cpp)
 target_link_libraries(voiceime_tests PRIVATE voiceime_core)
 target_include_directories(voiceime_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+file(TO_CMAKE_PATH "${CMAKE_SOURCE_DIR}" VOICEIME_SOURCE_DIR_CMAKE)
+target_compile_definitions(voiceime_tests PRIVATE "VOICEIME_SOURCE_DIR=\"${VOICEIME_SOURCE_DIR_CMAKE}\"")
 
 add_executable(voiceime_engine src/engine_main.cpp src/confirm_box.cpp src/sherpa_recognizer.cpp src/voiceime_engine.rc)
 target_link_options(voiceime_engine PRIVATE "-specs=${CMAKE_SOURCE_DIR}/cmake/no-default-manifest.specs")
@@ -73,3 +75,9 @@ target_link_libraries(voiceime_register PRIVATE ole32 uuid advapi32 "-Wl,-Bstati
 target_include_directories(voiceime_register PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_compile_definitions(voiceime_register PRIVATE _WIN32_WINNT=0x0601)
 target_link_options(voiceime_register PRIVATE -static-libstdc++ -static-libgcc)
+
+include(cmake/librime.cmake)
+target_sources(voiceime_tests PRIVATE src/rime_session.cpp)
+target_sources(voiceime_tsf PRIVATE src/rime_session.cpp)
+voiceime_link_librime(voiceime_tests)
+voiceime_link_librime(voiceime_tsf)

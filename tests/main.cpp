@@ -42,6 +42,14 @@ void VoiceHotkeyClearsWithoutCommitting();
 void VoiceSessionLetsLettersThrough();
 void ShiftTogglesAndClears();
 void LetterIsSentToTheComposer();
+void NihaoCommitsTheWeightedWord();
+void LongPinyinProducesHanzi();
+void PeriodCommitsChinesePunct();
+void UnknownLettersCommitRawOnSpace();
+void DigitSelectsThePageEntry();
+void EscapeDropsCompositionWithoutCommit();
+void EnterCommitsNihaoOnAFreshUserDir();
+void SelectingACandidateCreatesAUserDb();
 
 int main(int argc, char** argv) {
   const Test tests[] = {
@@ -87,6 +95,14 @@ int main(int argc, char** argv) {
       {"pinyin.VoiceSessionLetsLettersThrough", VoiceSessionLetsLettersThrough},
       {"pinyin.ShiftTogglesAndClears", ShiftTogglesAndClears},
       {"pinyin.LetterIsSentToTheComposer", LetterIsSentToTheComposer},
+      {"rime.NihaoCommitsTheWeightedWord", NihaoCommitsTheWeightedWord},
+      {"rime.LongPinyinProducesHanzi", LongPinyinProducesHanzi},
+      {"rime.PeriodCommitsChinesePunct", PeriodCommitsChinesePunct},
+      {"rime.UnknownLettersCommitRawOnSpace", UnknownLettersCommitRawOnSpace},
+      {"rime.DigitSelectsThePageEntry", DigitSelectsThePageEntry},
+      {"rime.EscapeDropsCompositionWithoutCommit", EscapeDropsCompositionWithoutCommit},
+      {"rime.EnterCommitsNihaoOnAFreshUserDir", EnterCommitsNihaoOnAFreshUserDir},
+      {"rime.SelectingACandidateCreatesAUserDb", SelectingACandidateCreatesAUserDb},
   };
   return RunTests(argc, argv, tests, sizeof(tests) / sizeof(tests[0]));
 }
