@@ -61,7 +61,7 @@ voiceime_copy_runtime(voiceime_engine)
 
 # The text service is loaded into other processes. Those hosts do not search
 # next to this DLL for libstdc++, so the runtime is linked in.
-add_library(voiceime_tsf SHARED src/tsf_main.cpp src/tsf_service.cpp src/ipc.cpp src/candidate_bar.cpp src/place.cpp)
+add_library(voiceime_tsf SHARED src/tsf_main.cpp src/tsf_service.cpp src/ipc.cpp src/candidate_bar.cpp src/place.cpp src/key_route.cpp)
 set_target_properties(voiceime_tsf PROPERTIES PREFIX "" OUTPUT_NAME "voiceime_tsf")
 target_link_libraries(voiceime_tsf PRIVATE ole32 oleaut32 uuid user32 gdi32 "-Wl,-Bstatic" "-Wl,--whole-archive" "-lwinpthread" "-Wl,--no-whole-archive" "-Wl,-Bdynamic")
 target_include_directories(voiceime_tsf PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)

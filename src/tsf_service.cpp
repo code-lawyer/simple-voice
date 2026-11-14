@@ -2,9 +2,11 @@
 
 #include "tsf_service.hpp"
 
+#include "candidate_bar.hpp"
 #include "hotkey.hpp"
 #include "ipc.hpp"
 #include "register_status.hpp"
+#include "rime_session.hpp"
 
 #include <msctf.h>
 #include <oleauto.h>
@@ -79,9 +81,49 @@ Hotkey ReadConfiguredHotkey() {
   return Hotkey{modifiers, vk};
 }
 
+enum class CompositionEdit { SetPreedit, Commit, Cancel };
+
+std::wstring ModuleDirectory() {
+  wchar_t module_path[MAX_PATH];
+  const DWORD count = GetModuleFileNameW(VoiceImeModule(), module_path, MAX_PATH);
+  if (count == 0 || count >= MAX_PATH) return L"";
+  std::wstring path(module_path, count);
+  const auto slash = path.find_last_of(L"\\/");
+  if (slash == std::wstring::npos) return L"";
+  return path.substr(0, slash);
+}
+
+std::wstring RimeUserDirectory() {
+  wchar_t local[MAX_PATH];
+  const DWORD count = GetEnvironmentVariableW(L"LOCALAPPDATA", local, MAX_PATH);
+  if (count == 0 || count >= MAX_PATH) return L"";
+  return std::wstring(local, count) + L"\\VoiceIme\\rime";
+}
+
+bool EatsKey(KeyAction action) {
+  return action != KeyAction::Pass && action != KeyAction::PassAfterClear;
+}
+
+bool NeedsVoicePipe(KeyAction action) {
+  return action == KeyAction::OpenVoice || action == KeyAction::VoiceEnter || action == KeyAction::VoiceEscape;
+}
+
+void MoveCaretToEnd(TfEditCookie cookie, ITfContext* context, ITfRange* range) {
+  if (context == nullptr || range == nullptr) return;
+  ITfRange* end = nullptr;
+  if (FAILED(range->Clone(&end)) || end == nullptr) return;
+  end->Collapse(cookie, TF_ANCHOR_END);
+  TF_SELECTION selection{};
+  selection.range = end;
+  selection.style.ase = TF_AE_NONE;
+  selection.style.fInterimChar = FALSE;
+  context->SetSelection(cookie, 1, &selection);
+  end->Release();
+}
+
 class VoiceService : public ITfTextInputProcessor {
  public:
-  VoiceService() : key_sink_(this), thread_sink_(this) {}
+  VoiceService() : key_sink_(this), thread_sink_(this), composition_sink_(this), pinyin_(&rime_) {}
   ~VoiceService() { Deactivate(); }
 
   HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, void** out) override {
@@ -171,6 +213,26 @@ class VoiceService : public ITfTextInputProcessor {
     HRESULT STDMETHODCALLTYPE OnSetFocus(ITfDocumentMgr*, ITfDocumentMgr*) override { return S_OK; }
     HRESULT STDMETHODCALLTYPE OnPushContext(ITfContext*) override { return S_OK; }
     HRESULT STDMETHODCALLTYPE OnPopContext(ITfContext*) override { return S_OK; }
+
+   private:
+    VoiceService* owner_;
+  };
+
+  class CompositionSink : public ITfCompositionSink {
+   public:
+    explicit CompositionSink(VoiceService* owner) : owner_(owner) {}
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, void** out) override {
+      if (out == nullptr) return E_POINTER;
+      if (IsEqualGUID(iid, IID_IUnknown) || IsEqualGUID(iid, IID_ITfCompositionSink)) {
+        *out = static_cast<ITfCompositionSink*>(this);
+        AddRef();
+        return S_OK;
+      }
+      return owner_->QueryInterface(iid, out);
+    }
+    ULONG STDMETHODCALLTYPE AddRef() override { return owner_->AddRef(); }
+    ULONG STDMETHODCALLTYPE Release() override { return owner_->Release(); }
+    HRESULT STDMETHODCALLTYPE OnCompositionTerminated(TfEditCookie cookie, ITfComposition* composition) override;
 
    private:
     VoiceService* owner_;
@@ -269,9 +331,31 @@ class VoiceService : public ITfTextInputProcessor {
     }
   };
 
+  struct CompSession : StackSession {
+    VoiceService* owner = nullptr;
+    ITfContext* context = nullptr;
+    CompositionEdit op = CompositionEdit::Cancel;
+    std::wstring text;
+    HRESULT STDMETHODCALLTYPE DoEditSession(TfEditCookie cookie) override;
+  };
+
   bool DocumentAcceptsText(ITfContext* context) const;
-  bool HotkeyDown(WPARAM vk) const;
   bool WriteClient(const Message& message);
+  bool EnsureRime();
+  bool PipeConnected();
+  KeyState MakeKeyState(ITfContext* context, WPARAM vk, LPARAM lparam);
+  void SendVoice(MsgType type, WPARAM vk, WINBOOL* eaten);
+  void RunComposition(ITfContext* context, CompositionEdit op, const std::wstring& text);
+  void EditComposition(TfEditCookie cookie, ITfContext* context, CompositionEdit op, const std::wstring& text);
+  bool StartComposition(TfEditCookie cookie, ITfContext* context);
+  void SetCompositionText(TfEditCookie cookie, ITfContext* context, const std::wstring& text);
+  void CommitComposition(TfEditCookie cookie, ITfContext* context, const std::wstring& text);
+  void CancelComposition(TfEditCookie cookie);
+  void ReleaseCompositionPointer();
+  void OnCompositionTerminated();
+  void ShowCandidates(ITfContext* context);
+  void SyncAfterRime(ITfContext* context);
+  void CancelFocusComposition();
   void LaunchEngine();
   void EnsureWindow();
   ITfContext* FocusContext() const;
@@ -279,6 +363,14 @@ class VoiceService : public ITfTextInputProcessor {
 
   KeySink key_sink_;
   ThreadSink thread_sink_;
+  CompositionSink composition_sink_;
+  RimeSession rime_;
+  PinyinController pinyin_;
+  CandidateBar bar_;
+  ITfComposition* composition_ = nullptr;
+  bool ending_composition_ = false;
+  bool rime_ready_ = false;
+  bool rime_failed_ = false;
   LONG refs_ = 1;
   ITfThreadMgr* thread_mgr_ = nullptr;
   TfClientId client_id_ = 0;
@@ -317,15 +409,6 @@ bool VoiceService::DocumentAcceptsText(ITfContext* context) const {
   }
   manager->Release();
   return !disabled;
-}
-
-bool VoiceService::HotkeyDown(WPARAM vk) const {
-  const Hotkey want = ReadConfiguredHotkey();
-  int modifiers = 0;
-  if ((GetKeyState(VK_CONTROL) & 0x8000) != 0) modifiers |= 1;
-  if ((GetKeyState(VK_MENU) & 0x8000) != 0) modifiers |= 2;
-  if ((GetKeyState(VK_SHIFT) & 0x8000) != 0) modifiers |= 4;
-  return modifiers == want.modifiers && static_cast<int>(vk) == want.vk;
 }
 
 bool WriteAll(HANDLE pipe, const std::string& bytes) {
@@ -587,6 +670,11 @@ HRESULT VoiceService::Activate(ITfThreadMgr* manager, TfClientId client_id) {
 }
 
 HRESULT VoiceService::Deactivate() {
+  CancelFocusComposition();
+  bar_.Hide();
+  rime_.Shutdown();
+  rime_ready_ = false;
+  rime_failed_ = false;
   stop_reader_ = true;
   if (stop_event_ != nullptr) SetEvent(stop_event_);
   if (write_event_ != nullptr) SetEvent(write_event_);
@@ -652,38 +740,285 @@ HRESULT VoiceService::Deactivate() {
   return S_OK;
 }
 
+HRESULT STDMETHODCALLTYPE VoiceService::CompositionSink::OnCompositionTerminated(TfEditCookie, ITfComposition*) {
+  owner_->OnCompositionTerminated();
+  return S_OK;
+}
+
+HRESULT STDMETHODCALLTYPE VoiceService::CompSession::DoEditSession(TfEditCookie cookie) {
+  if (owner != nullptr) owner->EditComposition(cookie, context, op, text);
+  return S_OK;
+}
+
+bool VoiceService::EnsureRime() {
+  if (rime_ready_) return true;
+  if (rime_failed_) return false;
+  const std::wstring shared = ModuleDirectory();
+  const std::wstring user = RimeUserDirectory();
+  // Maintenance is slow. Activate must return without this call.
+  if (shared.empty() || user.empty() || !rime_.Start(shared + L"\\rime-data", user)) {
+    rime_failed_ = true;
+    return false;
+  }
+  rime_ready_ = true;
+  return true;
+}
+
+bool VoiceService::PipeConnected() {
+  std::lock_guard<std::mutex> lock(write_mu_);
+  return pipe_ != INVALID_HANDLE_VALUE;
+}
+
+KeyState VoiceService::MakeKeyState(ITfContext* context, WPARAM vk, LPARAM lparam) {
+  const RimeView& view = pinyin_.view();
+  KeyState state{};
+  state.mode = pinyin_.mode();
+  state.accepts = DocumentAcceptsText(context);
+  state.voice_active = active_;
+  state.composing = view.composing;
+  state.candidate_count = static_cast<int>(view.page.size());
+  state.shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+  state.ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+  state.alt = (GetKeyState(VK_MENU) & 0x8000) != 0;
+  // Caps Lock is a toggle. The low bit is the locked state, not key-down.
+  state.caps = (GetKeyState(VK_CAPITAL) & 0x0001) != 0;
+  state.repeat = IsKeyRepeat(static_cast<unsigned int>(lparam));
+  state.vk = static_cast<int>(vk);
+  return state;
+}
+
+void VoiceService::SendVoice(MsgType type, WPARAM vk, WINBOOL* eaten) {
+  Message message;
+  message.type = type;
+  if (!WriteClient(message)) {
+    if (type == MsgType::Enter || type == MsgType::Cancel) active_ = false;
+    return;
+  }
+  if (type == MsgType::StartListen) active_ = true;
+  if (type == MsgType::Cancel) active_ = false;
+  eaten_vk_ = static_cast<int>(vk);
+  if (eaten != nullptr) *eaten = TRUE;
+}
+
+void VoiceService::RunComposition(ITfContext* context, CompositionEdit op, const std::wstring& text) {
+  if (op == CompositionEdit::Cancel && composition_ == nullptr) return;
+  if (context == nullptr || client_id_ == 0) {
+    if (op == CompositionEdit::Cancel) ReleaseCompositionPointer();
+    return;
+  }
+  CompSession session;
+  session.owner = this;
+  session.context = context;
+  session.op = op;
+  session.text = text;
+  HRESULT session_hr = E_FAIL;
+  context->RequestEditSession(client_id_, &session, TF_ES_SYNC | TF_ES_READWRITE, &session_hr);
+  if (FAILED(session_hr) && op == CompositionEdit::Cancel) ReleaseCompositionPointer();
+}
+
+void VoiceService::EditComposition(TfEditCookie cookie, ITfContext* context, CompositionEdit op, const std::wstring& text) {
+  if (op == CompositionEdit::Commit) CommitComposition(cookie, context, text);
+  else if (op == CompositionEdit::SetPreedit) SetCompositionText(cookie, context, text);
+  else CancelComposition(cookie);
+}
+
+bool VoiceService::StartComposition(TfEditCookie cookie, ITfContext* context) {
+  if (composition_ != nullptr) return true;
+  if (context == nullptr) return false;
+  ITfInsertAtSelection* insert = nullptr;
+  if (FAILED(context->QueryInterface(IID_ITfInsertAtSelection, reinterpret_cast<void**>(&insert))) || insert == nullptr) {
+    return false;
+  }
+  ITfRange* range = nullptr;
+  const HRESULT inserted = insert->InsertTextAtSelection(cookie, TF_IAS_QUERYONLY, nullptr, 0, &range);
+  insert->Release();
+  if (FAILED(inserted) || range == nullptr) return false;
+  ITfContextComposition* compositions = nullptr;
+  if (FAILED(context->QueryInterface(IID_ITfContextComposition, reinterpret_cast<void**>(&compositions))) ||
+      compositions == nullptr) {
+    range->Release();
+    return false;
+  }
+  ITfComposition* created = nullptr;
+  const HRESULT started = compositions->StartComposition(cookie, range, &composition_sink_, &created);
+  compositions->Release();
+  range->Release();
+  if (FAILED(started) || created == nullptr) return false;
+  composition_ = created;
+  return true;
+}
+
+void VoiceService::SetCompositionText(TfEditCookie cookie, ITfContext* context, const std::wstring& text) {
+  if (text.empty()) {
+    CancelComposition(cookie);
+    return;
+  }
+  if (composition_ == nullptr && !StartComposition(cookie, context)) return;
+  ITfRange* range = nullptr;
+  if (composition_ == nullptr || FAILED(composition_->GetRange(&range)) || range == nullptr) return;
+  range->SetText(cookie, TF_ST_CORRECTION, text.c_str(), static_cast<LONG>(text.size()));
+  MoveCaretToEnd(cookie, context, range);
+  range->Release();
+}
+
+void VoiceService::CommitComposition(TfEditCookie cookie, ITfContext* context, const std::wstring& text) {
+  if (composition_ == nullptr && !text.empty() && !StartComposition(cookie, context)) return;
+  if (composition_ == nullptr) return;
+  ITfRange* range = nullptr;
+  if (SUCCEEDED(composition_->GetRange(&range)) && range != nullptr) {
+    range->SetText(cookie, 0, text.c_str(), static_cast<LONG>(text.size()));
+    MoveCaretToEnd(cookie, context, range);
+    range->Release();
+  }
+  ITfComposition* held = composition_;
+  ending_composition_ = true;
+  held->EndComposition(cookie);
+  ending_composition_ = false;
+  if (composition_ == held) ReleaseCompositionPointer();
+}
+
+void VoiceService::CancelComposition(TfEditCookie cookie) {
+  if (composition_ == nullptr) return;
+  ITfRange* range = nullptr;
+  if (SUCCEEDED(composition_->GetRange(&range)) && range != nullptr) {
+    range->SetText(cookie, TF_ST_CORRECTION, L"", 0);
+    range->Release();
+  }
+  ITfComposition* held = composition_;
+  ending_composition_ = true;
+  held->EndComposition(cookie);
+  ending_composition_ = false;
+  if (composition_ == held) ReleaseCompositionPointer();
+}
+
+void VoiceService::ReleaseCompositionPointer() {
+  if (composition_ == nullptr) return;
+  ITfComposition* held = composition_;
+  composition_ = nullptr;
+  held->Release();
+}
+
+void VoiceService::OnCompositionTerminated() {
+  ReleaseCompositionPointer();
+  if (ending_composition_) return;
+  rime_.Clear();
+  bar_.Hide();
+}
+
+void VoiceService::ShowCandidates(ITfContext* context) {
+  const RimeView& view = pinyin_.view();
+  Rect caret{0, 0, 0, 0};
+  Rect window{0, 0, 0, 0};
+  if (context != nullptr && client_id_ != 0) {
+    CaretSession session;
+    session.context = context;
+    HRESULT session_hr = E_FAIL;
+    context->RequestEditSession(client_id_, &session, TF_ES_SYNC | TF_ES_READ, &session_hr);
+    if (SUCCEEDED(session_hr)) {
+      caret = Rect{session.caret_x, session.caret_y, session.caret_w, session.caret_h};
+      window = Rect{session.window_x, session.window_y, session.window_w, session.window_h};
+    }
+  }
+  bar_.Show(caret, window, view, pinyin_.mode());
+}
+
+void VoiceService::SyncAfterRime(ITfContext* context) {
+  const RimeView& view = pinyin_.view();
+  if (!view.commit.empty()) {
+    RunComposition(context, CompositionEdit::Commit, Utf8ToWide(view.commit));
+    if (view.composing && !view.preedit.empty()) {
+      RunComposition(context, CompositionEdit::SetPreedit, Utf8ToWide(view.preedit));
+      ShowCandidates(context);
+    } else {
+      bar_.Hide();
+    }
+    return;
+  }
+  if (view.preedit.empty()) {
+    RunComposition(context, CompositionEdit::Cancel, L"");
+    bar_.Hide();
+    return;
+  }
+  RunComposition(context, CompositionEdit::SetPreedit, Utf8ToWide(view.preedit));
+  ShowCandidates(context);
+}
+
+void VoiceService::CancelFocusComposition() {
+  ITfContext* context = FocusContext();
+  if (context != nullptr) {
+    RunComposition(context, CompositionEdit::Cancel, L"");
+    context->Release();
+  }
+  ReleaseCompositionPointer();
+}
+
 HRESULT VoiceService::OnKey(ITfContext* context, WPARAM vk, LPARAM lparam, WINBOOL* eaten, bool down) {
   if (eaten != nullptr) *eaten = FALSE;
-  if (!foreground_ || !DocumentAcceptsText(context)) return S_OK;
-  const bool hotkey = HotkeyDown(vk);
-  const bool enter = active_ && vk == VK_RETURN;
-  const bool escape = active_ && vk == VK_ESCAPE;
-  if (!hotkey && !enter && !escape) return S_OK;
-  if (IsKeyRepeat(static_cast<unsigned int>(lparam))) {
+  if (!foreground_) return S_OK;
+  const KeyState state = MakeKeyState(context, vk, lparam);
+  const Hotkey hotkey = ReadConfiguredHotkey();
+  const KeyAction action = RouteKey(state, hotkey).action;
+  // RouteKey reports ToggleMode for a held Shift. A repeat must not flip mode.
+  const bool shift_repeat = state.repeat && action == KeyAction::ToggleMode;
+  // Enter and Esc repeats used to be swallowed with no second voice message.
+  const bool voice_repeat = state.repeat && (action == KeyAction::VoiceEnter || action == KeyAction::VoiceEscape);
+
+  if (!down) {
+    if (shift_repeat || voice_repeat) {
+      if (eaten != nullptr) *eaten = TRUE;
+      return S_OK;
+    }
+    if (action == KeyAction::ToRime && rime_failed_) return S_OK;
+    if (NeedsVoicePipe(action) && !PipeConnected()) return S_OK;
+    if (eaten != nullptr) *eaten = EatsKey(action) ? TRUE : FALSE;
+    return S_OK;
+  }
+
+  if (shift_repeat || voice_repeat) {
+    eaten_vk_ = static_cast<int>(vk);
     if (eaten != nullptr) *eaten = TRUE;
     return S_OK;
   }
-  if (!down) {
-    std::lock_guard<std::mutex> lock(write_mu_);
-    if (eaten != nullptr) *eaten = pipe_ != INVALID_HANDLE_VALUE ? TRUE : FALSE;
-    return S_OK;
+  // OpenVoice clears the composition inside Apply. Skip that when the pipe is down
+  // so the pinyin stays and the hotkey falls through, matching the old voice path.
+  if (action == KeyAction::OpenVoice && !PipeConnected()) return S_OK;
+  if (action == KeyAction::ToRime && !EnsureRime()) return S_OK;
+
+  const KeyAction decided = pinyin_.Apply(state, hotkey).action;
+  switch (decided) {
+    case KeyAction::Pass:
+      break;
+    case KeyAction::PassAfterClear:
+      RunComposition(context, CompositionEdit::Cancel, L"");
+      bar_.Hide();
+      break;
+    case KeyAction::ToRime:
+      SyncAfterRime(context);
+      eaten_vk_ = static_cast<int>(vk);
+      if (eaten != nullptr) *eaten = TRUE;
+      break;
+    case KeyAction::ToggleMode:
+      RunComposition(context, CompositionEdit::Cancel, L"");
+      bar_.Hide();
+      eaten_vk_ = static_cast<int>(vk);
+      if (eaten != nullptr) *eaten = TRUE;
+      break;
+    case KeyAction::OpenVoice:
+      RunComposition(context, CompositionEdit::Cancel, L"");
+      bar_.Hide();
+      SendVoice(MsgType::StartListen, vk, eaten);
+      break;
+    case KeyAction::VoiceEnter:
+      SendVoice(MsgType::Enter, vk, eaten);
+      break;
+    case KeyAction::VoiceEscape:
+      SendVoice(MsgType::Cancel, vk, eaten);
+      break;
+    case KeyAction::Consume:
+      eaten_vk_ = static_cast<int>(vk);
+      if (eaten != nullptr) *eaten = TRUE;
+      break;
   }
-  Message message;
-  if (hotkey) {
-    message.type = MsgType::StartListen;
-  } else if (enter) {
-    message.type = MsgType::Enter;
-  } else {
-    message.type = MsgType::Cancel;
-  }
-  if (!WriteClient(message)) {
-    if (escape || enter) active_ = false;
-    return S_OK;
-  }
-  if (hotkey) active_ = true;
-  if (escape) active_ = false;
-  eaten_vk_ = static_cast<int>(vk);
-  if (eaten != nullptr) *eaten = TRUE;
   return S_OK;
 }
 
