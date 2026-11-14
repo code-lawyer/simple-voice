@@ -2,3 +2,6 @@ build/
 models/
 third_party/sherpa-onnx/
 .superpowers/
+
+.worktrees/
+
