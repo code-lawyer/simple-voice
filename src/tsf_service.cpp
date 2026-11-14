@@ -314,7 +314,7 @@ class VoiceService : public ITfTextInputProcessor {
   HRESULT STDMETHODCALLTYPE Deactivate() override;
 
   HRESULT OnKey(ITfContext* context, WPARAM vk, LPARAM lparam, WINBOOL* eaten, bool down);
-  HRESULT OnKeyUp(WPARAM vk, WINBOOL* eaten, bool down);
+  HRESULT OnKeyUp(ITfContext* context, WPARAM vk, WINBOOL* eaten, bool down);
   void OnForeground(bool foreground) { foreground_ = foreground; }
 
   void ReadLoop();
@@ -343,14 +343,14 @@ class VoiceService : public ITfTextInputProcessor {
     HRESULT STDMETHODCALLTYPE OnTestKeyDown(ITfContext* context, WPARAM vk, LPARAM lparam, WINBOOL* eaten) override {
       return owner_->OnKey(context, vk, lparam, eaten, false);
     }
-    HRESULT STDMETHODCALLTYPE OnTestKeyUp(ITfContext*, WPARAM vk, LPARAM, WINBOOL* eaten) override {
-      return owner_->OnKeyUp(vk, eaten, false);
+    HRESULT STDMETHODCALLTYPE OnTestKeyUp(ITfContext* context, WPARAM vk, LPARAM, WINBOOL* eaten) override {
+      return owner_->OnKeyUp(context, vk, eaten, false);
     }
     HRESULT STDMETHODCALLTYPE OnKeyDown(ITfContext* context, WPARAM vk, LPARAM lparam, WINBOOL* eaten) override {
       return owner_->OnKey(context, vk, lparam, eaten, true);
     }
-    HRESULT STDMETHODCALLTYPE OnKeyUp(ITfContext*, WPARAM vk, LPARAM, WINBOOL* eaten) override {
-      return owner_->OnKeyUp(vk, eaten, true);
+    HRESULT STDMETHODCALLTYPE OnKeyUp(ITfContext* context, WPARAM vk, LPARAM, WINBOOL* eaten) override {
+      return owner_->OnKeyUp(context, vk, eaten, true);
     }
     HRESULT STDMETHODCALLTYPE OnPreservedKey(ITfContext*, REFGUID, WINBOOL* eaten) override {
       if (eaten != nullptr) *eaten = FALSE;
@@ -570,6 +570,7 @@ class VoiceService : public ITfTextInputProcessor {
   bool advised_keys_ = false;
   bool foreground_ = true;
   bool active_ = false;
+  bool pending_toggle_ = false;
   int eaten_vk_ = 0;
   HWND host_ = nullptr;
   HANDLE pipe_ = INVALID_HANDLE_VALUE;
@@ -867,6 +868,7 @@ HRESULT VoiceService::Deactivate() {
   rime_.Shutdown();
   rime_ready_ = false;
   rime_failed_ = false;
+  pending_toggle_ = false;
   stop_reader_ = true;
   if (stop_event_ != nullptr) SetEvent(stop_event_);
   if (write_event_ != nullptr) SetEvent(write_event_);
@@ -1159,13 +1161,19 @@ HRESULT VoiceService::OnKey(ITfContext* context, WPARAM vk, LPARAM lparam, WINBO
   const KeyState state = MakeKeyState(context, vk, lparam);
   const Hotkey hotkey = ReadConfiguredHotkey();
   const KeyAction action = RouteKey(state, hotkey).action;
-  // RouteKey reports ToggleMode for a held Shift. A repeat must not flip mode.
-  const bool shift_repeat = state.repeat && action == KeyAction::ToggleMode;
+  // Bare Shift is ToggleMode. Apply waits until keyup so Shift+letter stays in this mode.
+  if (action == KeyAction::ToggleMode) {
+    if (down && !state.repeat) pending_toggle_ = true;
+    if (down) eaten_vk_ = static_cast<int>(vk);
+    if (eaten != nullptr) *eaten = TRUE;
+    return S_OK;
+  }
+  pending_toggle_ = false;
   // Enter and Esc repeats used to be swallowed with no second voice message.
   const bool voice_repeat = state.repeat && (action == KeyAction::VoiceEnter || action == KeyAction::VoiceEscape);
 
   if (!down) {
-    if (shift_repeat || voice_repeat) {
+    if (voice_repeat) {
       if (eaten != nullptr) *eaten = TRUE;
       return S_OK;
     }
@@ -1180,7 +1188,7 @@ HRESULT VoiceService::OnKey(ITfContext* context, WPARAM vk, LPARAM lparam, WINBO
     return S_OK;
   }
 
-  if (shift_repeat || voice_repeat) {
+  if (voice_repeat) {
     eaten_vk_ = static_cast<int>(vk);
     if (eaten != nullptr) *eaten = TRUE;
     return S_OK;
@@ -1206,10 +1214,6 @@ HRESULT VoiceService::OnKey(ITfContext* context, WPARAM vk, LPARAM lparam, WINBO
       if (eaten != nullptr) *eaten = TRUE;
       break;
     case KeyAction::ToggleMode:
-      RunComposition(context, CompositionEdit::Cancel, L"");
-      bar_.Hide();
-      eaten_vk_ = static_cast<int>(vk);
-      if (eaten != nullptr) *eaten = TRUE;
       break;
     case KeyAction::OpenVoice:
       RunComposition(context, CompositionEdit::Cancel, L"");
@@ -1230,9 +1234,24 @@ HRESULT VoiceService::OnKey(ITfContext* context, WPARAM vk, LPARAM lparam, WINBO
   return S_OK;
 }
 
-HRESULT VoiceService::OnKeyUp(WPARAM vk, WINBOOL* eaten, bool down) {
+HRESULT VoiceService::OnKeyUp(ITfContext* context, WPARAM vk, WINBOOL* eaten, bool down) {
+  const bool shift = vk == 0x10 || vk == 0xA0 || vk == 0xA1;
+  if (!down) {
+    const bool eat = (pending_toggle_ && shift) || (eaten_vk_ != 0 && eaten_vk_ == static_cast<int>(vk));
+    if (eaten != nullptr) *eaten = eat ? TRUE : FALSE;
+    return S_OK;
+  }
+  if (pending_toggle_ && shift) {
+    const KeyState state = MakeKeyState(context, vk, 0);
+    const KeyAction decided = pinyin_.Apply(state, ReadConfiguredHotkey()).action;
+    pending_toggle_ = false;
+    if (decided == KeyAction::ToggleMode) {
+      RunComposition(context, CompositionEdit::Cancel, L"");
+      bar_.Hide();
+    }
+  }
   const bool eat = eaten_vk_ != 0 && eaten_vk_ == static_cast<int>(vk);
-  if (eat && down) eaten_vk_ = 0;
+  if (eat) eaten_vk_ = 0;
   if (eaten != nullptr) *eaten = eat ? TRUE : FALSE;
   return S_OK;
 }
