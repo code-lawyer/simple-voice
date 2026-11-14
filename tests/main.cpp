@@ -50,6 +50,8 @@ void DigitSelectsThePageEntry();
 void EscapeDropsCompositionWithoutCommit();
 void EnterCommitsNihaoOnAFreshUserDir();
 void SelectingACandidateCreatesAUserDb();
+void ClampPullsTheRectInsideTheWorkArea();
+void SettingsHitIsTheRightStrip();
 
 int main(int argc, char** argv) {
   const Test tests[] = {
@@ -103,6 +105,8 @@ int main(int argc, char** argv) {
       {"rime.EscapeDropsCompositionWithoutCommit", EscapeDropsCompositionWithoutCommit},
       {"rime.EnterCommitsNihaoOnAFreshUserDir", EnterCommitsNihaoOnAFreshUserDir},
       {"rime.SelectingACandidateCreatesAUserDb", SelectingACandidateCreatesAUserDb},
+      {"candidate.ClampPullsTheRectInsideTheWorkArea", ClampPullsTheRectInsideTheWorkArea},
+      {"candidate.SettingsHitIsTheRightStrip", SettingsHitIsTheRightStrip},
   };
   return RunTests(argc, argv, tests, sizeof(tests) / sizeof(tests[0]));
 }

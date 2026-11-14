@@ -32,7 +32,7 @@ else()
   set_source_files_properties(third_party/sqlite/sqlite3.c PROPERTIES COMPILE_OPTIONS -w)
 endif()
 
-add_executable(voiceime_tests tests/main.cpp tests/utf8_test.cpp tests/lexicon_test.cpp tests/segmenter_test.cpp tests/vad_test.cpp tests/session_test.cpp tests/place_test.cpp tests/ipc_test.cpp tests/tsf_load_test.cpp tests/settings_test.cpp tests/key_route_test.cpp tests/pinyin_controller_test.cpp tests/rime_session_test.cpp)
+add_executable(voiceime_tests tests/main.cpp tests/utf8_test.cpp tests/lexicon_test.cpp tests/segmenter_test.cpp tests/vad_test.cpp tests/session_test.cpp tests/place_test.cpp tests/ipc_test.cpp tests/tsf_load_test.cpp tests/settings_test.cpp tests/key_route_test.cpp tests/pinyin_controller_test.cpp tests/rime_session_test.cpp tests/candidate_test.cpp)
 target_link_libraries(voiceime_tests PRIVATE voiceime_core)
 target_include_directories(voiceime_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
 file(TO_CMAKE_PATH "${CMAKE_SOURCE_DIR}" VOICEIME_SOURCE_DIR_CMAKE)
@@ -61,7 +61,7 @@ voiceime_copy_runtime(voiceime_engine)
 
 # The text service is loaded into other processes. Those hosts do not search
 # next to this DLL for libstdc++, so the runtime is linked in.
-add_library(voiceime_tsf SHARED src/tsf_main.cpp src/tsf_service.cpp src/ipc.cpp)
+add_library(voiceime_tsf SHARED src/tsf_main.cpp src/tsf_service.cpp src/ipc.cpp src/candidate_bar.cpp src/place.cpp)
 set_target_properties(voiceime_tsf PROPERTIES PREFIX "" OUTPUT_NAME "voiceime_tsf")
 target_link_libraries(voiceime_tsf PRIVATE ole32 oleaut32 uuid user32 gdi32 "-Wl,-Bstatic" "-Wl,--whole-archive" "-lwinpthread" "-Wl,--no-whole-archive" "-Wl,-Bdynamic")
 target_include_directories(voiceime_tsf PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)

@@ -8,3 +8,4 @@ struct Rect {
 };
 
 Rect PlaceBox(Rect caret_screen, Rect window_client_screen, int box_w, int box_h, int margin);
+Rect ClampRect(Rect wanted, Rect work);
