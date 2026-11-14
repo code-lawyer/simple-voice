@@ -19,11 +19,17 @@ class CandidateBar {
   void Show(Rect caret_screen, Rect window_client_screen, const RimeView& view, InputMode mode);
   void Hide();
   HWND hwnd() const { return hwnd_; }
+  void SetSettingsHandler(void (*handler)(void*), void* user) {
+    settings_handler_ = handler;
+    settings_user_ = user;
+  }
 
  private:
   HWND hwnd_ = nullptr;
   RimeView view_{};
   InputMode mode_ = InputMode::Chinese;
+  void (*settings_handler_)(void*) = nullptr;
+  void* settings_user_ = nullptr;
 
   void EnsureWindow();
   void Paint();

@@ -179,6 +179,18 @@ LRESULT CALLBACK CandidateBar::Proc(HWND hwnd, UINT message, WPARAM wparam, LPAR
   }
   if (message == WM_NCDESTROY && self != nullptr) self->hwnd_ = nullptr;
   if (message == WM_MOUSEACTIVATE) return MA_NOACTIVATE;
+  if (message == WM_LBUTTONUP && self != nullptr && self->settings_handler_ != nullptr) {
+    RECT client{};
+    GetClientRect(hwnd, &client);
+    const int x = static_cast<int>(static_cast<short>(LOWORD(lparam)));
+    const int y = static_cast<int>(static_cast<short>(HIWORD(lparam)));
+    // Client click and client rect are one coordinate space.
+    const Rect bar{client.left, client.top, client.right - client.left, client.bottom - client.top};
+    if (HitSettings(bar, x, y)) {
+      self->settings_handler_(self->settings_user_);
+      return 0;
+    }
+  }
   if (message == WM_PAINT && self != nullptr) {
     self->Paint();
     return 0;

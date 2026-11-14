@@ -36,6 +36,21 @@ void PhaseAndInsertAckRoundTrip() {
   CHECK(out.text == "fail");
 }
 
+void ShowSettingsRoundTrip() {
+  Message in;
+  in.type = MsgType::ShowSettings;
+  const std::string bytes = Encode(in);
+  CHECK(bytes.size() == 5);
+  CHECK(static_cast<unsigned char>(bytes[4]) == static_cast<unsigned char>(MsgType::ShowSettings));
+  Message out;
+  out.text = "kept";
+  std::size_t used = 0;
+  CHECK(Decode(bytes, &out, &used));
+  CHECK(used == 5);
+  CHECK(out.type == MsgType::ShowSettings);
+  CHECK(out.text.empty());
+}
+
 void EnterAndCaretRoundTrip() {
   Message enter;
   enter.type = MsgType::Enter;

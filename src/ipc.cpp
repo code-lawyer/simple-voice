@@ -33,6 +33,8 @@ std::string Encode(const Message& message) {
     const int values[] = {message.caret_x, message.caret_y, message.caret_w, message.caret_h,
                            message.window_x, message.window_y, message.window_w, message.window_h};
     for (int i = 0; i < 8; ++i) WriteLe32(body, static_cast<std::size_t>(i) * 4, static_cast<std::uint32_t>(values[i]));
+  } else if (message.type == MsgType::ShowSettings) {
+    // Body stays empty. The settings menu has no payload.
   } else {
     body = message.text;
   }
@@ -61,6 +63,8 @@ bool Decode(std::string_view bytes, Message* out, std::size_t* consumed) {
     int* values[] = {&message.caret_x, &message.caret_y, &message.caret_w, &message.caret_h,
                       &message.window_x, &message.window_y, &message.window_w, &message.window_h};
     for (int i = 0; i < 8; ++i) *values[i] = static_cast<int>(ReadLe32(body, static_cast<std::size_t>(i) * 4));
+  } else if (message.type == MsgType::ShowSettings) {
+    if (!body.empty()) return false;
   } else {
     message.text.assign(body.data(), body.size());
   }

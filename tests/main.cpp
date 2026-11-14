@@ -14,6 +14,7 @@ void EscapeAndRestartDoNotCommit();
 void MissingCaretGoesToBottomRight();
 void DecodeWaitsForAFullFrame();
 void EnterAndCaretRoundTrip();
+void ShowSettingsRoundTrip();
 void TsfFactoryExportsTheVoiceImeClass();
 void MissingSettingsUseCtrlAltSpace();
 void SaveSettingsWritesTheDefaultJson();
@@ -69,6 +70,7 @@ int main(int argc, char** argv) {
       {"place.MissingCaretGoesToBottomRight", MissingCaretGoesToBottomRight},
       {"ipc.DecodeWaitsForAFullFrame", DecodeWaitsForAFullFrame},
       {"ipc.EnterAndCaretRoundTrip", EnterAndCaretRoundTrip},
+      {"ipc.ShowSettingsRoundTrip", ShowSettingsRoundTrip},
       {"tsf.TsfFactoryExportsTheVoiceImeClass", TsfFactoryExportsTheVoiceImeClass},
       {"settings.MissingSettingsUseCtrlAltSpace", MissingSettingsUseCtrlAltSpace},
       {"settings.SaveSettingsWritesTheDefaultJson", SaveSettingsWritesTheDefaultJson},

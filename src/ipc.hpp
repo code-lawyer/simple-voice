@@ -19,6 +19,7 @@ enum class MsgType : std::uint8_t {
   Caret = 11,
   Phase = 12,
   InsertAck = 13,
+  ShowSettings = 14,
 };
 
 struct Message {

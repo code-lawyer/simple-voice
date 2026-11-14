@@ -208,6 +208,7 @@ class Engine {
  private:
   LRESULT OnMessage(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam);
   void OnPipe(const Message& message);
+  void ShowMenu(HWND hwnd);
   void OnPartial();
   void OnEndpoint();
   void StartCapture();
@@ -584,7 +585,36 @@ void Engine::OnEndpoint() {
   UpdateBox();
 }
 
+void Engine::ShowMenu(HWND hwnd) {
+  HMENU menu = CreatePopupMenu();
+  HMENU recent = CreatePopupMenu();
+  recent_menu_.clear();
+  if (lexicon_) {
+    for (const Entry& entry : lexicon_->Recent(20)) {
+      if (recent_menu_.size() >= 20) break;
+      recent_menu_.push_back(entry.text);
+      AppendMenuW(recent, MF_STRING, kRecentBase + static_cast<UINT>(recent_menu_.size() - 1),
+                  Utf8ToWide(entry.text).c_str());
+    }
+  }
+  if (recent_menu_.empty()) {
+    AppendMenuW(recent, MF_STRING | MF_GRAYED, kRecentBase, Utf8ToWide("（空）").c_str());
+  }
+  AppendMenuW(menu, MF_STRING, kRecordCommand, Utf8ToWide("设置快捷键").c_str());
+  AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(recent), Utf8ToWide("最近记住的词").c_str());
+  AppendMenuW(menu, MF_STRING, kQuitCommand, Utf8ToWide("退出").c_str());
+  POINT point;
+  GetCursorPos(&point);
+  SetForegroundWindow(hwnd);
+  TrackPopupMenu(menu, TPM_RIGHTBUTTON, point.x, point.y, 0, hwnd, nullptr);
+  DestroyMenu(menu);
+}
+
 void Engine::OnPipe(const Message& message) {
+  if (message.type == MsgType::ShowSettings) {
+    ShowMenu(box_.hwnd());
+    return;
+  }
   if (message.type == MsgType::InsertAck) {
     if (message.text == "ok") {
       StoreLexicon();
@@ -688,28 +718,7 @@ LRESULT Engine::OnMessage(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
     return 0;
   }
   if (message == kTrayMessage && (lparam == WM_RBUTTONUP || lparam == WM_LBUTTONUP)) {
-    HMENU menu = CreatePopupMenu();
-    HMENU recent = CreatePopupMenu();
-    recent_menu_.clear();
-    if (lexicon_) {
-      for (const Entry& entry : lexicon_->Recent(20)) {
-        if (recent_menu_.size() >= 20) break;
-        recent_menu_.push_back(entry.text);
-        AppendMenuW(recent, MF_STRING, kRecentBase + static_cast<UINT>(recent_menu_.size() - 1),
-                    Utf8ToWide(entry.text).c_str());
-      }
-    }
-    if (recent_menu_.empty()) {
-      AppendMenuW(recent, MF_STRING | MF_GRAYED, kRecentBase, Utf8ToWide("（空）").c_str());
-    }
-    AppendMenuW(menu, MF_STRING, kRecordCommand, Utf8ToWide("设置快捷键").c_str());
-    AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(recent), Utf8ToWide("最近记住的词").c_str());
-    AppendMenuW(menu, MF_STRING, kQuitCommand, Utf8ToWide("退出").c_str());
-    POINT point;
-    GetCursorPos(&point);
-    SetForegroundWindow(hwnd);
-    TrackPopupMenu(menu, TPM_RIGHTBUTTON, point.x, point.y, 0, hwnd, nullptr);
-    DestroyMenu(menu);
+    ShowMenu(hwnd);
     return 0;
   }
   if (message == WM_COMMAND) {

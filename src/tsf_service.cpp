@@ -285,7 +285,9 @@ class InputAttributeEnum : public IEnumTfDisplayAttributeInfo {
 class VoiceService : public ITfTextInputProcessor {
  public:
   VoiceService()
-      : key_sink_(this), thread_sink_(this), composition_sink_(this), attribute_provider_(this), pinyin_(&rime_) {}
+      : key_sink_(this), thread_sink_(this), composition_sink_(this), attribute_provider_(this), pinyin_(&rime_) {
+    bar_.SetSettingsHandler(&VoiceService::SettingsClicked, this);
+  }
   ~VoiceService() { Deactivate(); }
 
   HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, void** out) override {
@@ -531,6 +533,8 @@ class VoiceService : public ITfTextInputProcessor {
 
   bool DocumentAcceptsText(ITfContext* context) const;
   bool WriteClient(const Message& message);
+  void RequestSettings();
+  static void SettingsClicked(void* self);
   bool EnsureRime();
   bool PipeConnected();
   KeyState MakeKeyState(ITfContext* context, WPARAM vk, LPARAM lparam);
@@ -622,6 +626,16 @@ bool VoiceService::WriteClient(const Message& message) {
   outgoing_.push_back(Encode(message));
   SetEvent(write_event_);
   return true;
+}
+
+void VoiceService::RequestSettings() {
+  Message message;
+  message.type = MsgType::ShowSettings;
+  WriteClient(message);
+}
+
+void VoiceService::SettingsClicked(void* self) {
+  static_cast<VoiceService*>(self)->RequestSettings();
 }
 
 void VoiceService::LaunchEngine() {
