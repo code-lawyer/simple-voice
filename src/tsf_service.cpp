@@ -628,7 +628,28 @@ bool VoiceService::WriteClient(const Message& message) {
   return true;
 }
 
+// The TSF target is Windows 7. That header set does not declare this Vista pipe query.
+static BOOL QueryPipeServerProcessId(HANDLE pipe, ULONG* server) {
+  using Fn = BOOL(WINAPI*)(HANDLE, ULONG*);
+  static Fn fn = nullptr;
+  static bool resolved = false;
+  if (!resolved) {
+    resolved = true;
+    const HMODULE kernel = GetModuleHandleW(L"kernel32.dll");
+    if (kernel != nullptr) fn = reinterpret_cast<Fn>(GetProcAddress(kernel, "GetNamedPipeServerProcessId"));
+  }
+  if (fn == nullptr || server == nullptr) return FALSE;
+  return fn(pipe, server);
+}
+
 void VoiceService::RequestSettings() {
+  ULONG server = 0;
+  bool have_server = false;
+  {
+    std::lock_guard<std::mutex> lock(write_mu_);
+    if (pipe_ != INVALID_HANDLE_VALUE && QueryPipeServerProcessId(pipe_, &server)) have_server = server != 0;
+  }
+  if (have_server) AllowSetForegroundWindow(server);
   Message message;
   message.type = MsgType::ShowSettings;
   WriteClient(message);
