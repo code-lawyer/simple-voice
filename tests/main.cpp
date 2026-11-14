@@ -38,6 +38,10 @@ void IdleEnterPasses();
 void ChinesePeriodGoesToRime();
 void PageKeyOnlyWhileComposing();
 void VoiceHotkeyStillOpensWhileVoiceIsActive();
+void VoiceHotkeyClearsWithoutCommitting();
+void VoiceSessionLetsLettersThrough();
+void ShiftTogglesAndClears();
+void LetterIsSentToTheComposer();
 
 int main(int argc, char** argv) {
   const Test tests[] = {
@@ -79,6 +83,10 @@ int main(int argc, char** argv) {
       {"keyroute.ChinesePeriodGoesToRime", ChinesePeriodGoesToRime},
       {"keyroute.PageKeyOnlyWhileComposing", PageKeyOnlyWhileComposing},
       {"keyroute.VoiceHotkeyStillOpensWhileVoiceIsActive", VoiceHotkeyStillOpensWhileVoiceIsActive},
+      {"pinyin.VoiceHotkeyClearsWithoutCommitting", VoiceHotkeyClearsWithoutCommitting},
+      {"pinyin.VoiceSessionLetsLettersThrough", VoiceSessionLetsLettersThrough},
+      {"pinyin.ShiftTogglesAndClears", ShiftTogglesAndClears},
+      {"pinyin.LetterIsSentToTheComposer", LetterIsSentToTheComposer},
   };
   return RunTests(argc, argv, tests, sizeof(tests) / sizeof(tests[0]));
 }
