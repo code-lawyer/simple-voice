@@ -1,6 +1,7 @@
 #include "register_status.hpp"
 #include "tsf_service.hpp"
 
+#include <msctf.h>
 #include <objbase.h>
 
 #include <cstdio>
@@ -76,6 +77,7 @@ bool WriteTree(HKEY root, const std::wstring& dll) {
   const std::wstring clsid = GuidText(CLSID_VoiceIme);
   const std::wstring profile = GuidText(GUID_VoiceImeProfile);
   const std::wstring category = GuidText(kTipKeyboardCategory);
+  const std::wstring display = GuidText(GUID_TFCAT_DISPLAYATTRIBUTEPROVIDER);
   const std::wstring name = Utf8ToWide("语音输入法");
   const std::wstring classes = L"Software\\Classes\\CLSID\\" + clsid;
   const std::wstring tip = L"Software\\Microsoft\\CTF\\TIP\\" + clsid;
@@ -91,12 +93,15 @@ bool WriteTree(HKEY root, const std::wstring& dll) {
   ok = WriteDword(root, language, L"Enable", 1) && ok;
   ok = WriteEmpty(root, tip + L"\\Category\\Category\\" + category + L"\\" + clsid) && ok;
   ok = WriteEmpty(root, tip + L"\\Category\\Item\\" + clsid + L"\\" + category) && ok;
+  ok = WriteEmpty(root, tip + L"\\Category\\Category\\" + display + L"\\" + clsid) && ok;
+  ok = WriteEmpty(root, tip + L"\\Category\\Item\\" + clsid + L"\\" + display) && ok;
   return ok;
 }
 
 bool DeleteTree(HKEY root) {
   const std::wstring clsid = GuidText(CLSID_VoiceIme);
   const LSTATUS classes = RegDeleteTreeW(root, (L"Software\\Classes\\CLSID\\" + clsid).c_str());
+  // Both category keys live under this TIP key, so one delete removes the display-attribute registration too.
   const LSTATUS tip = RegDeleteTreeW(root, (L"Software\\Microsoft\\CTF\\TIP\\" + clsid).c_str());
   auto gone = [](LSTATUS status) { return status == ERROR_SUCCESS || status == ERROR_FILE_NOT_FOUND; };
   return gone(classes) && gone(tip);

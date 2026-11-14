@@ -17,6 +17,19 @@
 #include <string>
 #include <vector>
 
+// MinGW msctf.h declares the info and enum interfaces and omits the provider.
+// This IID is the Windows SDK msctf.idl uuid, not a new identifier.
+DEFINE_GUID(IID_ITfDisplayAttributeProvider, 0xfee47777, 0x163c, 0x4769, 0x99, 0x6a, 0x6e, 0x9c, 0x50, 0xad, 0x8f, 0x54);
+#ifndef __ITfDisplayAttributeProvider_INTERFACE_DEFINED__
+#define __ITfDisplayAttributeProvider_INTERFACE_DEFINED__
+MIDL_INTERFACE("fee47777-163c-4769-996a-6e9c50ad8f54")
+ITfDisplayAttributeProvider : public IUnknown {
+ public:
+  virtual HRESULT STDMETHODCALLTYPE EnumDisplayAttributeInfo(IEnumTfDisplayAttributeInfo** ppEnum) = 0;
+  virtual HRESULT STDMETHODCALLTYPE GetDisplayAttributeInfo(REFGUID guid, ITfDisplayAttributeInfo** ppInfo) = 0;
+};
+#endif
+
 namespace {
 
 constexpr UINT kCommitMessage = WM_APP + 1;
@@ -121,15 +134,169 @@ void MoveCaretToEnd(TfEditCookie cookie, ITfContext* context, ITfRange* range) {
   end->Release();
 }
 
+TF_DISPLAYATTRIBUTE SolidInputUnderline() {
+  TF_DISPLAYATTRIBUTE attr{};
+  attr.crText.type = TF_CT_NONE;
+  attr.crBk.type = TF_CT_NONE;
+  attr.lsStyle = TF_LS_SOLID;
+  attr.fBoldLine = FALSE;
+  attr.crLine.type = TF_CT_SYSCOLOR;
+  attr.crLine.nIndex = COLOR_WINDOWTEXT;
+  attr.bAttr = TF_ATTR_INPUT;
+  return attr;
+}
+
+// No SDK constant names an input underline. CLSID_VoiceIme is the one attribute this service publishes.
+TfGuidAtom InputAttributeAtom() {
+  static TfGuidAtom cached = 0;
+  if (cached != 0) return cached;
+  ITfCategoryMgr* categories = nullptr;
+  const HRESULT created = CoCreateInstance(CLSID_TF_CategoryMgr, nullptr, CLSCTX_INPROC_SERVER, IID_ITfCategoryMgr,
+                                           reinterpret_cast<void**>(&categories));
+  if (FAILED(created) || categories == nullptr) return 0;
+  TfGuidAtom atom = 0;
+  const HRESULT registered = categories->RegisterGUID(CLSID_VoiceIme, &atom);
+  categories->Release();
+  if (FAILED(registered) || atom == 0) return 0;
+  cached = atom;
+  return cached;
+}
+
+void SetInputAttribute(TfEditCookie cookie, ITfContext* context, ITfRange* range, bool underline) {
+  if (context == nullptr || range == nullptr) return;
+  ITfProperty* prop = nullptr;
+  if (FAILED(context->GetProperty(GUID_PROP_ATTRIBUTE, &prop)) || prop == nullptr) return;
+  if (!underline) {
+    prop->Clear(cookie, range);
+    prop->Release();
+    return;
+  }
+  const TfGuidAtom atom = InputAttributeAtom();
+  if (atom == 0) {
+    prop->Release();
+    return;
+  }
+  VARIANT value;
+  VariantInit(&value);
+  value.vt = VT_I4;
+  value.lVal = static_cast<LONG>(atom);
+  prop->SetValue(cookie, range, &value);
+  prop->Release();
+}
+
+class InputAttribute : public ITfDisplayAttributeInfo {
+ public:
+  HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, void** out) override {
+    if (out == nullptr) return E_POINTER;
+    if (IsEqualGUID(iid, IID_IUnknown) || IsEqualGUID(iid, IID_ITfDisplayAttributeInfo)) {
+      *out = static_cast<ITfDisplayAttributeInfo*>(this);
+      AddRef();
+      return S_OK;
+    }
+    *out = nullptr;
+    return E_NOINTERFACE;
+  }
+  ULONG STDMETHODCALLTYPE AddRef() override { return static_cast<ULONG>(InterlockedIncrement(&refs_)); }
+  ULONG STDMETHODCALLTYPE Release() override {
+    const LONG left = InterlockedDecrement(&refs_);
+    if (left == 0) delete this;
+    return static_cast<ULONG>(left);
+  }
+  HRESULT STDMETHODCALLTYPE GetGUID(GUID* guid) override {
+    if (guid == nullptr) return E_INVALIDARG;
+    *guid = CLSID_VoiceIme;
+    return S_OK;
+  }
+  HRESULT STDMETHODCALLTYPE GetDescription(BSTR* description) override {
+    if (description == nullptr) return E_INVALIDARG;
+    *description = SysAllocString(L"uncommitted pinyin");
+    return *description == nullptr ? E_OUTOFMEMORY : S_OK;
+  }
+  HRESULT STDMETHODCALLTYPE GetAttributeInfo(TF_DISPLAYATTRIBUTE* attr) override {
+    if (attr == nullptr) return E_INVALIDARG;
+    *attr = attr_;
+    return S_OK;
+  }
+  HRESULT STDMETHODCALLTYPE SetAttributeInfo(const TF_DISPLAYATTRIBUTE* attr) override {
+    if (attr == nullptr) return E_INVALIDARG;
+    attr_ = *attr;
+    return S_OK;
+  }
+  HRESULT STDMETHODCALLTYPE Reset() override {
+    attr_ = SolidInputUnderline();
+    return S_OK;
+  }
+
+ private:
+  LONG refs_ = 1;
+  TF_DISPLAYATTRIBUTE attr_ = SolidInputUnderline();
+};
+
+class InputAttributeEnum : public IEnumTfDisplayAttributeInfo {
+ public:
+  explicit InputAttributeEnum(ULONG index) : index_(index) {}
+  HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, void** out) override {
+    if (out == nullptr) return E_POINTER;
+    if (IsEqualGUID(iid, IID_IUnknown) || IsEqualGUID(iid, IID_IEnumTfDisplayAttributeInfo)) {
+      *out = static_cast<IEnumTfDisplayAttributeInfo*>(this);
+      AddRef();
+      return S_OK;
+    }
+    *out = nullptr;
+    return E_NOINTERFACE;
+  }
+  ULONG STDMETHODCALLTYPE AddRef() override { return static_cast<ULONG>(InterlockedIncrement(&refs_)); }
+  ULONG STDMETHODCALLTYPE Release() override {
+    const LONG left = InterlockedDecrement(&refs_);
+    if (left == 0) delete this;
+    return static_cast<ULONG>(left);
+  }
+  HRESULT STDMETHODCALLTYPE Clone(IEnumTfDisplayAttributeInfo** out) override {
+    if (out == nullptr) return E_INVALIDARG;
+    *out = new InputAttributeEnum(index_);
+    return S_OK;
+  }
+  HRESULT STDMETHODCALLTYPE Next(ULONG count, ITfDisplayAttributeInfo** info, ULONG* fetched) override {
+    if (info == nullptr || (fetched == nullptr && count != 1)) return E_INVALIDARG;
+    ULONG written = 0;
+    if (index_ == 0 && count > 0) {
+      info[0] = new InputAttribute();
+      index_ = 1;
+      written = 1;
+    }
+    if (fetched != nullptr) *fetched = written;
+    return written == count ? S_OK : S_FALSE;
+  }
+  HRESULT STDMETHODCALLTYPE Reset() override {
+    index_ = 0;
+    return S_OK;
+  }
+  HRESULT STDMETHODCALLTYPE Skip(ULONG count) override {
+    if (index_ >= 1 || count == 0) return index_ >= 1 && count > 0 ? S_FALSE : S_OK;
+    index_ = 1;
+    return count == 1 ? S_OK : S_FALSE;
+  }
+
+ private:
+  LONG refs_ = 1;
+  ULONG index_ = 0;
+};
+
 class VoiceService : public ITfTextInputProcessor {
  public:
-  VoiceService() : key_sink_(this), thread_sink_(this), composition_sink_(this), pinyin_(&rime_) {}
+  VoiceService()
+      : key_sink_(this), thread_sink_(this), composition_sink_(this), attribute_provider_(this), pinyin_(&rime_) {}
   ~VoiceService() { Deactivate(); }
 
   HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, void** out) override {
     if (out == nullptr) return E_POINTER;
     if (IsEqualGUID(iid, IID_IUnknown) || IsEqualGUID(iid, IID_ITfTextInputProcessor)) {
       *out = static_cast<ITfTextInputProcessor*>(this);
+      AddRef();
+      return S_OK;
+    }
+    if (IsEqualGUID(iid, IID_ITfDisplayAttributeProvider)) {
+      *out = static_cast<ITfDisplayAttributeProvider*>(&attribute_provider_);
       AddRef();
       return S_OK;
     }
@@ -213,6 +380,29 @@ class VoiceService : public ITfTextInputProcessor {
     HRESULT STDMETHODCALLTYPE OnSetFocus(ITfDocumentMgr*, ITfDocumentMgr*) override { return S_OK; }
     HRESULT STDMETHODCALLTYPE OnPushContext(ITfContext*) override { return S_OK; }
     HRESULT STDMETHODCALLTYPE OnPopContext(ITfContext*) override { return S_OK; }
+
+   private:
+    VoiceService* owner_;
+  };
+
+  class AttributeProvider : public ITfDisplayAttributeProvider {
+   public:
+    explicit AttributeProvider(VoiceService* owner) : owner_(owner) {}
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, void** out) override { return owner_->QueryInterface(iid, out); }
+    ULONG STDMETHODCALLTYPE AddRef() override { return owner_->AddRef(); }
+    ULONG STDMETHODCALLTYPE Release() override { return owner_->Release(); }
+    HRESULT STDMETHODCALLTYPE EnumDisplayAttributeInfo(IEnumTfDisplayAttributeInfo** out) override {
+      if (out == nullptr) return E_INVALIDARG;
+      *out = new InputAttributeEnum(0);
+      return S_OK;
+    }
+    HRESULT STDMETHODCALLTYPE GetDisplayAttributeInfo(REFGUID guid, ITfDisplayAttributeInfo** info) override {
+      if (info == nullptr) return E_INVALIDARG;
+      *info = nullptr;
+      if (!IsEqualGUID(guid, CLSID_VoiceIme)) return E_INVALIDARG;
+      *info = new InputAttribute();
+      return S_OK;
+    }
 
    private:
     VoiceService* owner_;
@@ -346,6 +536,7 @@ class VoiceService : public ITfTextInputProcessor {
   KeyState MakeKeyState(ITfContext* context, WPARAM vk, LPARAM lparam);
   void SendVoice(MsgType type, WPARAM vk, WINBOOL* eaten);
   void RunComposition(ITfContext* context, CompositionEdit op, const std::wstring& text);
+  void DropUncommitted(ITfContext* context, const KeyState& state, const Hotkey& hotkey);
   void EditComposition(TfEditCookie cookie, ITfContext* context, CompositionEdit op, const std::wstring& text);
   bool StartComposition(TfEditCookie cookie, ITfContext* context);
   void SetCompositionText(TfEditCookie cookie, ITfContext* context, const std::wstring& text);
@@ -364,6 +555,7 @@ class VoiceService : public ITfTextInputProcessor {
   KeySink key_sink_;
   ThreadSink thread_sink_;
   CompositionSink composition_sink_;
+  AttributeProvider attribute_provider_;
   RimeSession rime_;
   PinyinController pinyin_;
   CandidateBar bar_;
@@ -800,6 +992,13 @@ void VoiceService::SendVoice(MsgType type, WPARAM vk, WINBOOL* eaten) {
   if (eaten != nullptr) *eaten = TRUE;
 }
 
+void VoiceService::DropUncommitted(ITfContext* context, const KeyState& state, const Hotkey& hotkey) {
+  // PassAfterClear and a pipe-down OpenVoice only Clear() inside Apply.
+  pinyin_.Apply(state, hotkey);
+  RunComposition(context, CompositionEdit::Cancel, L"");
+  bar_.Hide();
+}
+
 void VoiceService::RunComposition(ITfContext* context, CompositionEdit op, const std::wstring& text) {
   if (op == CompositionEdit::Cancel && composition_ == nullptr) return;
   if (context == nullptr || client_id_ == 0) {
@@ -857,6 +1056,7 @@ void VoiceService::SetCompositionText(TfEditCookie cookie, ITfContext* context, 
   ITfRange* range = nullptr;
   if (composition_ == nullptr || FAILED(composition_->GetRange(&range)) || range == nullptr) return;
   range->SetText(cookie, TF_ST_CORRECTION, text.c_str(), static_cast<LONG>(text.size()));
+  SetInputAttribute(cookie, context, range, true);
   MoveCaretToEnd(cookie, context, range);
   range->Release();
 }
@@ -867,6 +1067,7 @@ void VoiceService::CommitComposition(TfEditCookie cookie, ITfContext* context, c
   ITfRange* range = nullptr;
   if (SUCCEEDED(composition_->GetRange(&range)) && range != nullptr) {
     range->SetText(cookie, 0, text.c_str(), static_cast<LONG>(text.size()));
+    SetInputAttribute(cookie, context, range, false);
     MoveCaretToEnd(cookie, context, range);
     range->Release();
   }
@@ -969,6 +1170,11 @@ HRESULT VoiceService::OnKey(ITfContext* context, WPARAM vk, LPARAM lparam, WINBO
       return S_OK;
     }
     if (action == KeyAction::ToRime && rime_failed_) return S_OK;
+    // A host that sees eaten false does not call OnKeyDown, so the clear has to happen here.
+    if (action == KeyAction::PassAfterClear || (action == KeyAction::OpenVoice && !PipeConnected())) {
+      DropUncommitted(context, state, hotkey);
+      return S_OK;
+    }
     if (NeedsVoicePipe(action) && !PipeConnected()) return S_OK;
     if (eaten != nullptr) *eaten = EatsKey(action) ? TRUE : FALSE;
     return S_OK;
@@ -979,9 +1185,11 @@ HRESULT VoiceService::OnKey(ITfContext* context, WPARAM vk, LPARAM lparam, WINBO
     if (eaten != nullptr) *eaten = TRUE;
     return S_OK;
   }
-  // OpenVoice clears the composition inside Apply. Skip that when the pipe is down
-  // so the pinyin stays and the hotkey falls through, matching the old voice path.
-  if (action == KeyAction::OpenVoice && !PipeConnected()) return S_OK;
+  // The test call already dropped this. If this keydown still runs, drop again and send nothing.
+  if (action == KeyAction::OpenVoice && !PipeConnected()) {
+    if (composition_ != nullptr || pinyin_.view().composing) DropUncommitted(context, state, hotkey);
+    return S_OK;
+  }
   if (action == KeyAction::ToRime && !EnsureRime()) return S_OK;
 
   const KeyAction decided = pinyin_.Apply(state, hotkey).action;
