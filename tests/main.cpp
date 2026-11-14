@@ -26,6 +26,18 @@ void EnterDuringListeningCommitsTheFinalNotTheDraft();
 void RejectedInsertRestoresThePendingFinal();
 void PunctuationDoesNotBlockARepeatedSentence();
 void PhaseAndInsertAckRoundTrip();
+void ChineseLetterGoesToRime();
+void ChordPassesToTheDocument();
+void DisabledDocumentPassesEveryKey();
+void DigitPastThePagePasses();
+void ShiftLetterDoesNotToggle();
+void BareShiftToggles();
+void VoiceHotkeyAndItsRepeat();
+void VoiceSessionStealsEnterOnly();
+void IdleEnterPasses();
+void ChinesePeriodGoesToRime();
+void PageKeyOnlyWhileComposing();
+void VoiceHotkeyStillOpensWhileVoiceIsActive();
 
 int main(int argc, char** argv) {
   const Test tests[] = {
@@ -55,6 +67,18 @@ int main(int argc, char** argv) {
       {"session.RejectedInsertRestoresThePendingFinal", RejectedInsertRestoresThePendingFinal},
       {"lexicon.PunctuationDoesNotBlockARepeatedSentence", PunctuationDoesNotBlockARepeatedSentence},
       {"ipc.PhaseAndInsertAckRoundTrip", PhaseAndInsertAckRoundTrip},
+      {"keyroute.ChineseLetterGoesToRime", ChineseLetterGoesToRime},
+      {"keyroute.ChordPassesToTheDocument", ChordPassesToTheDocument},
+      {"keyroute.DisabledDocumentPassesEveryKey", DisabledDocumentPassesEveryKey},
+      {"keyroute.DigitPastThePagePasses", DigitPastThePagePasses},
+      {"keyroute.ShiftLetterDoesNotToggle", ShiftLetterDoesNotToggle},
+      {"keyroute.BareShiftToggles", BareShiftToggles},
+      {"keyroute.VoiceHotkeyAndItsRepeat", VoiceHotkeyAndItsRepeat},
+      {"keyroute.VoiceSessionStealsEnterOnly", VoiceSessionStealsEnterOnly},
+      {"keyroute.IdleEnterPasses", IdleEnterPasses},
+      {"keyroute.ChinesePeriodGoesToRime", ChinesePeriodGoesToRime},
+      {"keyroute.PageKeyOnlyWhileComposing", PageKeyOnlyWhileComposing},
+      {"keyroute.VoiceHotkeyStillOpensWhileVoiceIsActive", VoiceHotkeyStillOpensWhileVoiceIsActive},
   };
   return RunTests(argc, argv, tests, sizeof(tests) / sizeof(tests[0]));
 }
