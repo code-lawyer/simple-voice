@@ -24,5 +24,5 @@ class Vad {
   std::vector<std::int16_t> pending_;
   bool heard_ = false;
   int silence_ms_ = 0;
-  int speech_age_ms_ = 0;
+  int elapsed_ms_ = 0;
 };

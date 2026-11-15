@@ -9,7 +9,7 @@ bool Session::mic_open() const { return mic_open_; }
 const std::string& Session::box_text() const { return box_; }
 
 void Session::Hotkey() {
-  if (phase_ == Phase::Finalizing) return;
+  if (phase_ == Phase::Finalizing || phase_ == Phase::Committing) return;
   if (phase_ == Phase::Listening) {
     phase_ = Phase::Finalizing;
     mic_open_ = false;
@@ -18,7 +18,8 @@ void Session::Hotkey() {
   phase_ = Phase::Listening;
   mic_open_ = true;
   box_.clear();
-  enter_during_final_ = false;
+  commit_ready_ = lexicon_ready_ = false;
+  committed_.clear();
 }
 
 void Session::OnDraft(std::string text) {
@@ -35,37 +36,33 @@ void Session::OnSpeechEnded() {
 void Session::OnFinal(std::string punctuated) {
   if (phase_ != Phase::Finalizing) return;
   mic_open_ = false;
-  if (enter_during_final_) {
-    committed_ = std::move(punctuated);
-    commit_ready_ = true;
-    lexicon_ready_ = true;
-    box_.clear();
-    phase_ = Phase::Idle;
-    enter_during_final_ = false;
-    return;
-  }
   box_ = std::move(punctuated);
   phase_ = Phase::Pending;
 }
 
 void Session::Enter() {
-  if (phase_ == Phase::Listening || phase_ == Phase::Finalizing) {
-    enter_during_final_ = true;
+  if (phase_ == Phase::Listening) {
+    OnSpeechEnded();
     return;
   }
-  if (phase_ != Phase::Pending) return;
+  if (phase_ != Phase::Pending || box_.empty()) return;
   committed_ = box_;
   commit_ready_ = true;
+  lexicon_ready_ = false;
+  phase_ = Phase::Committing;
+  mic_open_ = false;
+}
+
+void Session::ConfirmInserted() {
+  if (phase_ != Phase::Committing) return;
+  phase_ = Phase::Idle;
   lexicon_ready_ = true;
   box_.clear();
-  phase_ = Phase::Idle;
-  mic_open_ = false;
 }
 
 void Session::RestorePending(std::string text) {
   phase_ = Phase::Pending;
   mic_open_ = false;
-  enter_during_final_ = false;
   commit_ready_ = false;
   lexicon_ready_ = false;
   committed_.clear();
@@ -77,7 +74,6 @@ void Session::Escape() {
   phase_ = Phase::Idle;
   mic_open_ = false;
   box_.clear();
-  enter_during_final_ = false;
 }
 
 bool Session::TakeCommit(std::string* text) {

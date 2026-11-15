@@ -8,7 +8,7 @@ void Vad::Reset() {
   pending_.clear();
   heard_ = false;
   silence_ms_ = 0;
-  speech_age_ms_ = 0;
+  elapsed_ms_ = 0;
 }
 
 VadEvent Vad::Push(const std::int16_t* samples, std::size_t count) {
@@ -36,10 +36,10 @@ VadEvent Vad::Push(const std::int16_t* samples, std::size_t count) {
       silence_ms_ = 0;
       saw_speech = true;
     }
+    elapsed_ms_ += 20;
+    if (elapsed_ms_ >= config_.max_utterance_ms) forced = true;
     if (!heard_) continue;
-    speech_age_ms_ += 20;
     if (!speech) silence_ms_ += 20;
-    if (speech_age_ms_ >= config_.max_utterance_ms) forced = true;
     if (silence_ms_ >= config_.silence_ms) endpoint = true;
   }
   if (used > 0) pending_.erase(pending_.begin(), pending_.begin() + static_cast<std::ptrdiff_t>(used));

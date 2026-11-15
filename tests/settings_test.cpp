@@ -7,6 +7,8 @@
 #include <cstdio>
 #include <fstream>
 #include <string>
+#include <windows.h>
+#include <filesystem>
 
 namespace {
 
@@ -23,6 +25,26 @@ std::string ReadFile(const std::string& path) {
 }
 
 }  // namespace
+
+void FailedSettingsReplacePreservesPreviousFile() {
+  const auto path = TempPath();
+  CHECK(SaveSettings(path, Settings{DefaultHotkey()}));
+  HANDLE held = CreateFileW(Utf8ToWide(path).c_str(), GENERIC_READ, FILE_SHARE_READ,
+                            nullptr, OPEN_EXISTING, 0, nullptr);
+  CHECK(held != INVALID_HANDLE_VALUE);
+  const bool saved = SaveSettings(path, Settings{Hotkey{0, VK_F8}});
+  if (held != INVALID_HANDLE_VALUE) CloseHandle(held);
+  CHECK(!saved);
+  CHECK(LoadSettings(path).hotkey.vk == DefaultHotkey().vk);
+  CHECK(!std::filesystem::exists(path + ".tmp"));
+  std::remove(path.c_str());
+}
+
+void SettingsSaveReportsMissingDirectory() {
+  const auto path = TempPath() + "/unavailable/config.json";
+  CHECK(!SaveSettings(path, Settings{DefaultHotkey()}));
+  CHECK(!std::filesystem::exists(path));
+}
 
 void MissingSettingsUseCtrlAltSpace() {
   const std::string path = TempPath();
@@ -87,4 +109,37 @@ void SettingsRoundTripOnANonAsciiPath() {
   CHECK(s.hotkey.vk == 0x70);
   CHECK(FileExistsUtf8(path));
   std::remove(path.c_str());
+}
+
+void SkinsPersistWithoutChangingLegacyHotkeys() {
+  const auto hotkey_path=TempPath();
+  const auto skin_path=Utf8ToWide(TempPath());
+  CHECK(SaveSettings(hotkey_path,Settings{Hotkey{1,VK_F8}}));
+  const auto original=ReadFile(hotkey_path);
+  CHECK(LoadSkin(skin_path)==UiSkin::Titanium);
+  for (auto skin : {UiSkin::Titanium,UiSkin::Daylight,UiSkin::DeepSpace}) {
+    CHECK(SaveSkin(skin_path,skin));
+    CHECK(LoadSkin(skin_path)==skin);
+    CHECK(ReadFile(hotkey_path)==original);
+  }
+  CHECK(SaveSettings(hotkey_path,Settings{DefaultHotkey()}));
+  CHECK(LoadSkin(skin_path)==UiSkin::DeepSpace);
+  std::remove(hotkey_path.c_str()); DeleteFileW(skin_path.c_str());
+}
+
+void InvalidAppearanceFallsBackAndFailedSavePreservesSkin() {
+  for (const auto* bad : {"", "{", "{\"skin\":\"unknown\"}", "{\"skin\":2}",
+       "{\"skin\":\"daylight\"}junk", "{\"skin\":\"daylight\",\"skin\":\"deep-space\"}"})
+    CHECK(ParseSkin(bad)==UiSkin::Titanium);
+  CHECK(ParseSkin("\xEF\xBB\xBF{ \"skin\" : \"deep-space\" }\n")==UiSkin::DeepSpace);
+  const auto path=Utf8ToWide(TempPath());
+  CHECK(SaveSkin(path,UiSkin::Daylight));
+  HANDLE held=CreateFileW(path.c_str(),GENERIC_READ,FILE_SHARE_READ,nullptr,OPEN_EXISTING,0,nullptr);
+  CHECK(held!=INVALID_HANDLE_VALUE);
+  CHECK(!SaveSkin(path,UiSkin::DeepSpace));
+  CloseHandle(held);
+  CHECK(LoadSkin(path)==UiSkin::Daylight);
+  CHECK(!SaveSkin(path,static_cast<UiSkin>(99)));
+  CHECK(!std::filesystem::exists(path+L".tmp"));
+  DeleteFileW(path.c_str());
 }

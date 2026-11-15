@@ -1,6 +1,24 @@
 #include "harness.hpp"
 #include "key_route.hpp"
 
+void WindowsChordsPassWithoutStartingCompositionOrVoice() {
+  KeyState s{};
+  s.accepts = true;
+  s.mode = InputMode::Chinese;
+  s.composing = true;
+  s.win = true;
+  for (int vk : {0x45, 0x44, 0x20, 0x0D, 0x1B}) {
+    s.vk = vk;
+    CHECK(RouteKey(s, DefaultHotkey()).action == KeyAction::Pass);
+    s.voice_active = true;
+    CHECK(RouteKey(s, DefaultHotkey()).action == KeyAction::Pass);
+    s.voice_active = false;
+  }
+  s.ctrl = s.alt = true;
+  s.vk = 0x20;
+  CHECK(RouteKey(s, DefaultHotkey()).action == KeyAction::Pass);
+}
+
 void ChineseLetterGoesToRime() {
   KeyState s{};
   s.accepts = true;

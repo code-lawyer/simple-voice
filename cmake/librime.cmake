@@ -6,8 +6,17 @@ if(POLICY CMP0135)
   cmake_policy(SET CMP0135 NEW)
 endif()
 
-file(TO_CMAKE_PATH "${CMAKE_BINARY_DIR}/rime-prefix" VOICEIME_RIME_PREFIX)
+set(VOICEIME_RIME_PREFIX "${CMAKE_BINARY_DIR}/rime-prefix" CACHE PATH "Installed static librime dependencies")
+option(VOICEIME_USE_PREBUILT_RIME "Reuse the installed librime prefix without downloading dependencies" OFF)
+file(TO_CMAKE_PATH "${VOICEIME_RIME_PREFIX}" VOICEIME_RIME_PREFIX)
 set(VOICEIME_RIME_LIBDIR "${VOICEIME_RIME_PREFIX}/lib")
+if(VOICEIME_USE_PREBUILT_RIME)
+  foreach(required include/rime_api.h lib/librime.a lib/libyaml-cpp.a lib/libleveldb.a lib/libopencc.a lib/libmarisa.a)
+    if(NOT EXISTS "${VOICEIME_RIME_PREFIX}/${required}")
+      message(FATAL_ERROR "Missing prebuilt Rime dependency: ${VOICEIME_RIME_PREFIX}/${required}")
+    endif()
+  endforeach()
+endif()
 
 set(_voiceime_ep_common
   -DCMAKE_BUILD_TYPE=Release
@@ -126,6 +135,7 @@ if(NOT header MATCHES "#include <cstdint>")
 endif()
 ]=])
 
+if(NOT VOICEIME_USE_PREBUILT_RIME)
 ExternalProject_Add(voiceime_boost_ext
   URL https://github.com/boostorg/boost/releases/download/boost-1.86.0/boost-1.86.0-cmake.tar.xz
   DOWNLOAD_EXTRACT_TIMESTAMP TRUE
@@ -240,11 +250,29 @@ ExternalProject_Add(voiceime_librime_ext
   USES_TERMINAL_DOWNLOAD TRUE
   USES_TERMINAL_BUILD TRUE)
 
+endif()
+
+# Static librime contains its own VERSIONINFO resource. Remove only that member
+# from a build-local copy so the host DLL can expose Simple Voice's version.
+# Never modify a shared/prebuilt prefix used by an installed version.
+set(VOICEIME_RIME_CORE "${CMAKE_BINARY_DIR}/rime-core/librime.a")
+add_custom_command(OUTPUT "${VOICEIME_RIME_CORE}"
+  COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/rime-core"
+  COMMAND ${CMAKE_COMMAND} -E copy "${VOICEIME_RIME_LIBDIR}/librime.a" "${VOICEIME_RIME_CORE}"
+  COMMAND ${CMAKE_AR} d "${VOICEIME_RIME_CORE}" rime.rc.obj
+  DEPENDS "${VOICEIME_RIME_LIBDIR}/librime.a"
+  VERBATIM)
+add_custom_target(voiceime_rime_core DEPENDS "${VOICEIME_RIME_CORE}")
+if(NOT VOICEIME_USE_PREBUILT_RIME)
+  add_dependencies(voiceime_rime_core voiceime_librime_ext)
+endif()
+
 function(voiceime_link_librime target)
+  add_dependencies(${target} voiceime_rime_core)
   target_include_directories(${target} PRIVATE "${VOICEIME_RIME_PREFIX}/include")
   target_link_libraries(${target} PRIVATE
     "-Wl,--whole-archive"
-    "${VOICEIME_RIME_LIBDIR}/librime.a"
+    "${VOICEIME_RIME_CORE}"
     "-Wl,--no-whole-archive"
     "${VOICEIME_RIME_LIBDIR}/libyaml-cpp.a"
     "${VOICEIME_RIME_LIBDIR}/libleveldb.a"
@@ -255,15 +283,17 @@ function(voiceime_link_librime target)
     wsock32)
   get_target_property(_voiceime_kind ${target} TYPE)
   if(_voiceime_kind STREQUAL "SHARED_LIBRARY")
-    target_link_libraries(${target} PRIVATE "-Wl,-Bstatic" "-lwinpthread" "-Wl,-Bdynamic")
+    target_link_libraries(${target} PRIVATE "-Wl,-Bstatic" "${VOICEIME_PTHREAD_CORE}" "-Wl,-Bdynamic")
   else()
     target_link_libraries(${target} PRIVATE winpthread)
   endif()
-  add_dependencies(${target}
+  if(NOT VOICEIME_USE_PREBUILT_RIME)
+    add_dependencies(${target}
     voiceime_boost_ext
     voiceime_yaml_ext
     voiceime_leveldb_ext
     voiceime_marisa_ext
     voiceime_opencc_ext
-    voiceime_librime_ext)
+      voiceime_librime_ext)
+  endif()
 endfunction()

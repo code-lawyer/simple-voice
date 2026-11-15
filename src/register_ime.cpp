@@ -1,4 +1,5 @@
 #include "register_status.hpp"
+#include "product.hpp"
 #include "tsf_service.hpp"
 
 #include <msctf.h>
@@ -78,7 +79,7 @@ bool WriteTree(HKEY root, const std::wstring& dll) {
   const std::wstring profile = GuidText(GUID_VoiceImeProfile);
   const std::wstring category = GuidText(kTipKeyboardCategory);
   const std::wstring display = GuidText(GUID_TFCAT_DISPLAYATTRIBUTEPROVIDER);
-  const std::wstring name = Utf8ToWide("语音输入法");
+  const std::wstring name = kProductDisplayName;
   const std::wstring classes = L"Software\\Classes\\CLSID\\" + clsid;
   const std::wstring tip = L"Software\\Microsoft\\CTF\\TIP\\" + clsid;
   const std::wstring language = tip + L"\\LanguageProfile\\0x00000804\\" + profile;

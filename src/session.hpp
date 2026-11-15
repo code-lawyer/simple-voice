@@ -2,7 +2,7 @@
 
 #include <string>
 
-enum class Phase { Idle, Listening, Finalizing, Pending };
+enum class Phase { Idle, Listening, Finalizing, Pending, Committing };
 
 class Session {
  public:
@@ -15,6 +15,7 @@ class Session {
   void OnFinal(std::string punctuated);
   void Enter();
   void RestorePending(std::string text);
+  void ConfirmInserted();
   void Escape();
   bool TakeCommit(std::string* text);
   bool TakeLexiconWrite(std::string* text);
@@ -22,7 +23,6 @@ class Session {
  private:
   Phase phase_ = Phase::Idle;
   bool mic_open_ = false;
-  bool enter_during_final_ = false;
   bool commit_ready_ = false;
   bool lexicon_ready_ = false;
   std::string box_;

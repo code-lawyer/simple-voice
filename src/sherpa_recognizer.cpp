@@ -287,7 +287,8 @@ class SherpaRecognizer : public Recognizer {
       const auto now = std::chrono::duration_cast<std::chrono::seconds>(
                            std::chrono::system_clock::now().time_since_epoch())
                            .count();
-      text = lexicon_->Apply(text, tokens, now);
+      try { text = lexicon_->Apply(text, tokens, now); }
+      catch (const std::exception& e) { warning_ = e.what(); }
     }
     partial_ = text;
     return text;
@@ -297,7 +298,13 @@ class SherpaRecognizer : public Recognizer {
     std::lock_guard<std::mutex> lock(mu_);
     samples_.clear();
     partial_.clear();
+    warning_.clear();
     if (ready_) api_.reset_online(online_, online_stream_);
+  }
+
+  std::string TakeWarning() override {
+    std::lock_guard<std::mutex> lock(mu_);
+    std::string result; result.swap(warning_); return result;
   }
 
  private:
@@ -317,6 +324,7 @@ class SherpaRecognizer : public Recognizer {
   mutable std::mutex mu_;
   std::vector<std::int16_t> samples_;
   std::string partial_;
+  std::string warning_;
 };
 
 #endif

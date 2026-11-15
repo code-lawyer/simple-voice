@@ -5,6 +5,7 @@
 
 #include <cstdlib>
 #include <fstream>
+#include <mutex>
 #include <unordered_map>
 #include <utility>
 
@@ -217,6 +218,7 @@ std::string PinyinOf(const std::string& word, const std::unordered_map<char32_t,
 }  // namespace
 
 struct Segmenter::Impl {
+  std::mutex mutex;
   cppjieba::Jieba jieba;
   std::unordered_map<char32_t, std::string> pinyin;
 
@@ -233,6 +235,7 @@ Segmenter::Segmenter(const std::string& dict_dir) : impl_(std::make_unique<Impl>
 Segmenter::~Segmenter() = default;
 
 std::vector<Token> Segmenter::Cut(const std::string& text) const {
+  std::lock_guard<std::mutex> lock(impl_->mutex);
   std::vector<std::string> words;
   if (!text.empty()) impl_->jieba.Cut(text, words, true);
   if (words.empty()) {
@@ -250,5 +253,6 @@ std::vector<Token> Segmenter::Cut(const std::string& text) const {
 void Segmenter::Remember(const std::string& text) {
   const int count = CodePointCount(text);
   if (count < 2 || count > 8) return;
+  std::lock_guard<std::mutex> lock(impl_->mutex);
   impl_->jieba.InsertUserWord(text, 100000000);
 }

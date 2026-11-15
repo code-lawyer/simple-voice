@@ -1,4 +1,13 @@
 #include "harness.hpp"
+void MalformedFramesAreRejectedWithoutConsumingOrLooping();
+void CorrelatedFramesSurviveFragmentationAndHaveBounds();
+void CommittingWaitsForConfirmationAndEmptyResultsNeverCommit();
+void SettingsRejectCorruptionAndUseTheSameHotkeyPolicy();
+void LexiconStatementFailuresRollBackAndCanRecover();
+void BusyLexiconTransactionDoesNotPoisonLaterWrites();
+void LegacyPhraseRetentionStartsOnceAndExpiresAfter365Days();
+void StreamingResamplingIsIndependentOfPacketBoundaries();
+void DownsamplingRejectsAliasedHighFrequencyAudio();
 
 void Utf8CountsCharactersNotBytes();
 void FirstSentenceAndSingleCountDoNotReplace();
@@ -23,7 +32,9 @@ void DeadEngineIsStartedAgain();
 void RepeatedHotkeyIsNotANewPress();
 void RegisterRequiresTheMachineKey();
 void SettingsRoundTripOnANonAsciiPath();
-void EnterDuringListeningCommitsTheFinalNotTheDraft();
+void SkinsPersistWithoutChangingLegacyHotkeys();
+void InvalidAppearanceFallsBackAndFailedSavePreservesSkin();
+void EnterDuringListeningPreviewsBeforeSecondEnter();
 void RejectedInsertRestoresThePendingFinal();
 void PunctuationDoesNotBlockARepeatedSentence();
 void PhaseAndInsertAckRoundTrip();
@@ -55,9 +66,52 @@ void EnterCommitsNihaoOnAFreshUserDir();
 void SelectingACandidateCreatesAUserDb();
 void ClampPullsTheRectInsideTheWorkArea();
 void SettingsHitIsTheRightStrip();
+void InitialSilenceAlsoStopsAtSixtySeconds();
+void InitialSilenceCountsTowardSpeechLimitAndResetClearsIt();
+void ConcurrentLexiconReadsWritesAndDeletesAreSerialized();
+void RimeSessionsSurviveAnotherSessionShuttingDown();
+void RimeRejectsReconfigurationWhileAnotherSessionIsLive();
+void RimeSessionsOnDifferentThreadsRemainIndependent();
+void PipeReadSurvivesRepeatedTimeouts();
+void PipeWakeCancelsOnlyThePendingRead();
+void PipeWakeRacingWithDataLosesNoBytes();
+void PipeDisconnectFinishesPendingRead();
+void PipeStopCancelsBlockedWrite();
+void PipeStopFinishesPendingRead();
+void WindowsChordsPassWithoutStartingCompositionOrVoice();
+void FailedSettingsReplacePreservesPreviousFile();
+void SettingsSaveReportsMissingDirectory();
+void ConcurrentSegmentationAndLearningKeepTheTextIntact();
 
 int main(int argc, char** argv) {
   const Test tests[] = {
+      {"hardening.MalformedFramesAreRejectedWithoutConsumingOrLooping", MalformedFramesAreRejectedWithoutConsumingOrLooping},
+      {"hardening.CorrelatedFramesSurviveFragmentationAndHaveBounds", CorrelatedFramesSurviveFragmentationAndHaveBounds},
+      {"hardening.CommittingWaitsForConfirmationAndEmptyResultsNeverCommit", CommittingWaitsForConfirmationAndEmptyResultsNeverCommit},
+      {"hardening.SettingsRejectCorruptionAndUseTheSameHotkeyPolicy", SettingsRejectCorruptionAndUseTheSameHotkeyPolicy},
+      {"settings.SkinsPersistWithoutChangingLegacyHotkeys", SkinsPersistWithoutChangingLegacyHotkeys},
+      {"settings.InvalidAppearanceFallsBackAndFailedSavePreservesSkin", InvalidAppearanceFallsBackAndFailedSavePreservesSkin},
+      {"hardening.LexiconStatementFailuresRollBackAndCanRecover", LexiconStatementFailuresRollBackAndCanRecover},
+      {"hardening.BusyLexiconTransactionDoesNotPoisonLaterWrites", BusyLexiconTransactionDoesNotPoisonLaterWrites},
+      {"hardening.LegacyPhraseRetentionStartsOnceAndExpiresAfter365Days", LegacyPhraseRetentionStartsOnceAndExpiresAfter365Days},
+      {"hardening.StreamingResamplingIsIndependentOfPacketBoundaries", StreamingResamplingIsIndependentOfPacketBoundaries},
+      {"hardening.DownsamplingRejectsAliasedHighFrequencyAudio", DownsamplingRejectsAliasedHighFrequencyAudio},
+      {"segmenter.ConcurrentSegmentationAndLearningKeepTheTextIntact", ConcurrentSegmentationAndLearningKeepTheTextIntact},
+      {"keyroute.WindowsChordsPassWithoutStartingCompositionOrVoice", WindowsChordsPassWithoutStartingCompositionOrVoice},
+      {"settings.FailedReplacePreservesPreviousFile", FailedSettingsReplacePreservesPreviousFile},
+      {"settings.SaveReportsMissingDirectory", SettingsSaveReportsMissingDirectory},
+      {"vad.InitialSilenceAlsoStopsAtSixtySeconds", InitialSilenceAlsoStopsAtSixtySeconds},
+      {"vad.InitialSilenceCountsTowardSpeechLimitAndResetClearsIt", InitialSilenceCountsTowardSpeechLimitAndResetClearsIt},
+      {"lexicon.ConcurrentReadsWritesAndDeletesAreSerialized", ConcurrentLexiconReadsWritesAndDeletesAreSerialized},
+      {"rime.SessionsSurviveAnotherSessionShuttingDown", RimeSessionsSurviveAnotherSessionShuttingDown},
+      {"rime.RejectsReconfigurationWhileAnotherSessionIsLive", RimeRejectsReconfigurationWhileAnotherSessionIsLive},
+      {"rime.SessionsOnDifferentThreadsRemainIndependent", RimeSessionsOnDifferentThreadsRemainIndependent},
+      {"pipe.ReadSurvivesRepeatedTimeouts", PipeReadSurvivesRepeatedTimeouts},
+      {"pipe.WakeCancelsOnlyThePendingRead", PipeWakeCancelsOnlyThePendingRead},
+      {"pipe.WakeRacingWithDataLosesNoBytes", PipeWakeRacingWithDataLosesNoBytes},
+      {"pipe.DisconnectFinishesPendingRead", PipeDisconnectFinishesPendingRead},
+      {"pipe.StopCancelsBlockedWrite", PipeStopCancelsBlockedWrite},
+      {"pipe.StopFinishesPendingRead", PipeStopFinishesPendingRead},
       {"Utf8CountsCharactersNotBytes", Utf8CountsCharactersNotBytes},
       {"lexicon.FirstSentenceAndSingleCountDoNotReplace", FirstSentenceAndSingleCountDoNotReplace},
       {"lexicon.PreferredHomophoneReplacesOnlySamePinyin", PreferredHomophoneReplacesOnlySamePinyin},
@@ -81,7 +135,7 @@ int main(int argc, char** argv) {
       {"settings.RepeatedHotkeyIsNotANewPress", RepeatedHotkeyIsNotANewPress},
       {"settings.RegisterRequiresTheMachineKey", RegisterRequiresTheMachineKey},
       {"settings.SettingsRoundTripOnANonAsciiPath", SettingsRoundTripOnANonAsciiPath},
-      {"session.EnterDuringListeningCommitsTheFinalNotTheDraft", EnterDuringListeningCommitsTheFinalNotTheDraft},
+      {"session.EnterDuringListeningPreviewsBeforeSecondEnter", EnterDuringListeningPreviewsBeforeSecondEnter},
       {"session.RejectedInsertRestoresThePendingFinal", RejectedInsertRestoresThePendingFinal},
       {"lexicon.PunctuationDoesNotBlockARepeatedSentence", PunctuationDoesNotBlockARepeatedSentence},
       {"ipc.PhaseAndInsertAckRoundTrip", PhaseAndInsertAckRoundTrip},

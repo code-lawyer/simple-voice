@@ -27,6 +27,7 @@ struct KeyState {
   bool caps;
   bool repeat;
   int vk;
+  bool win = false;
 };
 
 struct KeyDecision {

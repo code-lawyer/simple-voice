@@ -19,7 +19,7 @@ bool IsPunctuation(int vk) {
 }  // namespace
 
 KeyDecision RouteKey(const KeyState& state, Hotkey hotkey) {
-  if (!state.accepts) return KeyDecision{KeyAction::Pass};
+  if (!state.accepts || state.win) return KeyDecision{KeyAction::Pass};
 
   if (PressedModifiers(state) == hotkey.modifiers && state.vk == hotkey.vk) {
     return KeyDecision{state.repeat ? KeyAction::Consume : KeyAction::OpenVoice};

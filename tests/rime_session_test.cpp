@@ -3,6 +3,8 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <atomic>
+#include <thread>
 #include <string>
 
 namespace {
@@ -160,4 +162,53 @@ void SelectingACandidateCreatesAUserDb() {
   session.ProcessKey(0x20, false);
   session.Shutdown();
   CHECK(DirectoryContainsUserDb(user));
+}
+
+void RimeSessionsSurviveAnotherSessionShuttingDown() {
+  const auto user = TempUserDir();
+  RimeSession first;
+  RimeSession second;
+  CHECK(first.Start(SharedDataDir(), user));
+  TypeNihao(first);
+  CHECK(second.Start(SharedDataDir(), user));
+  CHECK(first.ProcessKey(0x20, false).commit == "你好");
+  first.Shutdown();
+  TypeNihao(second);
+  CHECK(second.view().page.size() == 5);
+  CHECK(second.ProcessKey(0x20, false).commit == "你好");
+  CHECK(first.Start(SharedDataDir(), user));
+  second.Shutdown();
+  TypeNihao(first);
+  CHECK(first.ProcessKey(0x20, false).commit == "你好");
+}
+
+void RimeRejectsReconfigurationWhileAnotherSessionIsLive() {
+  RimeSession first;
+  RimeSession other;
+  CHECK(first.Start(SharedDataDir(), TempUserDir()));
+  CHECK(!other.Start(SharedDataDir(), TempUserDir()));
+  TypeNihao(first);
+  CHECK(first.ProcessKey(0x20, false).commit == "你好");
+}
+
+void RimeSessionsOnDifferentThreadsRemainIndependent() {
+  const auto shared = SharedDataDir();
+  const auto user = TempUserDir();
+  RimeSession keeper;
+  CHECK(keeper.Start(shared, user));
+  std::atomic<bool> valid{true};
+  auto exercise = [&] {
+    for (int n = 0; n < 15; ++n) {
+      RimeSession session;
+      if (!session.Start(shared, user)) { valid = false; return; }
+      TypeNihao(session);
+      if (session.ProcessKey(0x20, false).commit != "你好") valid = false;
+    }
+  };
+  std::thread first(exercise);
+  std::thread second(exercise);
+  first.join(); second.join();
+  CHECK(valid.load());
+  TypeNihao(keeper);
+  CHECK(keeper.ProcessKey(0x20, false).commit == "你好");
 }

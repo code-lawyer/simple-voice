@@ -1,7 +1,24 @@
 build/
+build-review/
+build-verify/
+build-ui/
+build-next/
+build-skins/
+build-dev/
+build-release/
+dist/
+.downloads/
 models/
 third_party/sherpa-onnx/
 .superpowers/
 
 .worktrees/
+
+# Machine-specific audits and research notes remain local.
+/docs/2026-*.md
+/RESEARCH.md
+.impeccable/*
+!.impeccable/design.json
+/docs/design/skin-directions.md
+/docs/design/skins/skin-comparison.jpg
 

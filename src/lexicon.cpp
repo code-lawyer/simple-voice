@@ -1,26 +1,63 @@
 #include "lexicon.hpp"
-
 #include "sqlite3.h"
 #include "utf8.hpp"
-
+#include <mutex>
 #include <stdexcept>
 #include <utility>
+#include <ctime>
 
 namespace {
-
 constexpr std::int64_t kDay = 86400;
 constexpr std::int64_t kBiasSeconds = 180 * kDay;
 constexpr std::int64_t kDropSeconds = 365 * kDay;
-
-void Exec(sqlite3* db, const char* sql) {
-  char* error = nullptr;
-  if (sqlite3_exec(db, sql, nullptr, nullptr, &error) != SQLITE_OK) {
-    std::string message = error ? error : "sqlite error";
-    sqlite3_free(error);
-    throw std::runtime_error(message);
-  }
+void Check(sqlite3* db, int code) {
+  if (code != SQLITE_OK) throw std::runtime_error(sqlite3_errmsg(db));
 }
+void Exec(sqlite3* db, const char* sql) { Check(db, sqlite3_exec(db, sql, nullptr, nullptr, nullptr)); }
 
+class Statement {
+ public:
+  Statement(sqlite3* db, const char* sql) : db_(db) {
+    const int rc = sqlite3_prepare_v2(db, sql, -1, &stmt_, nullptr);
+    if (rc != SQLITE_OK) { sqlite3_finalize(stmt_); stmt_ = nullptr; Check(db, rc); }
+  }
+  ~Statement() { sqlite3_finalize(stmt_); }
+  Statement(const Statement&) = delete;
+  Statement& operator=(const Statement&) = delete;
+  void Text(int index, const std::string& text) { Check(db_, sqlite3_bind_text(stmt_, index, text.c_str(), -1, SQLITE_TRANSIENT)); }
+  void Int(int index, std::int64_t value) { Check(db_, sqlite3_bind_int64(stmt_, index, value)); }
+  bool Row() {
+    const int rc = sqlite3_step(stmt_);
+    if (rc == SQLITE_ROW) return true;
+    if (rc == SQLITE_DONE) return false;
+    Check(db_, rc); return false;
+  }
+  void Done() { if (Row()) throw std::runtime_error("unexpected SQLite row"); }
+  void Reset() { Check(db_, sqlite3_reset(stmt_)); Check(db_, sqlite3_clear_bindings(stmt_)); }
+  std::string Text(int index) const {
+    const auto* text = sqlite3_column_text(stmt_, index);
+    return text ? reinterpret_cast<const char*>(text) : "";
+  }
+  std::int64_t Int(int index) const { return sqlite3_column_int64(stmt_, index); }
+ private:
+  sqlite3* db_;
+  sqlite3_stmt* stmt_ = nullptr;
+};
+class Transaction {
+ public:
+  explicit Transaction(sqlite3* db) : db_(db) { Exec(db_, "BEGIN IMMEDIATE"); }
+  ~Transaction() { if (!committed_) sqlite3_exec(db_, "ROLLBACK", nullptr, nullptr, nullptr); }
+  void Commit() { Exec(db_, "COMMIT"); committed_ = true; }
+ private:
+  sqlite3* db_;
+  bool committed_ = false;
+};
+void Purge(sqlite3* db, std::int64_t now) {
+  Statement purge(db, "DELETE FROM entries WHERE (?1 - last_commit_unix) > ?2");
+  purge.Int(1, now); purge.Int(2, kDropSeconds); purge.Done();
+  Statement seen(db, "DELETE FROM seen_phrase WHERE (?1 - last_seen_unix) > ?2");
+  seen.Int(1, now); seen.Int(2, kDropSeconds); seen.Done();
+}
 std::string JoinPinyin(const std::vector<Token>& tokens) {
   std::string joined;
   for (const Token& token : tokens) {
@@ -30,210 +67,135 @@ std::string JoinPinyin(const std::vector<Token>& tokens) {
   }
   return joined;
 }
-
-bool Better(int count, std::int64_t when, int best_count, std::int64_t best_when) {
-  if (count != best_count) return count > best_count;
-  return when > best_when;
+bool Better(const Entry& row, const Entry* best) {
+  return best == nullptr || row.count > best->count ||
+      (row.count == best->count && row.last_commit_unix > best->last_commit_unix);
 }
-
+Entry ReadEntry(const Statement& query) {
+  return {query.Text(0), query.Text(1), static_cast<int>(query.Int(2)), query.Int(3), query.Text(4)};
+}
 }  // namespace
 
 struct Lexicon::Db {
   sqlite3* raw = nullptr;
+  std::mutex mutex;
+  ~Db() { if (raw) sqlite3_close(raw); }
 };
 
-Lexicon::Lexicon(const std::string& db_path) : db_(std::make_unique<Db>()) {
-  if (sqlite3_open(db_path.c_str(), &db_->raw) != SQLITE_OK) {
-    throw std::runtime_error("failed to open lexicon");
-  }
+Lexicon::Lexicon(const std::string& path) : db_(std::make_unique<Db>()) {
+  const int rc = sqlite3_open_v2(path.c_str(), &db_->raw,
+      SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX, nullptr);
+  Check(db_->raw, rc);
+  Check(db_->raw, sqlite3_busy_timeout(db_->raw, 250));
   Exec(db_->raw,
-       "CREATE TABLE IF NOT EXISTS entries ("
-       "text TEXT PRIMARY KEY,"
-       "pinyin TEXT NOT NULL,"
-       "count INTEGER NOT NULL,"
-       "last_commit_unix INTEGER NOT NULL,"
-       "kind TEXT NOT NULL);"
-       "CREATE TABLE IF NOT EXISTS seen_phrase (text TEXT PRIMARY KEY);");
-}
-
-Lexicon::~Lexicon() {
-  if (db_ && db_->raw) sqlite3_close(db_->raw);
-}
-
-void Lexicon::Commit(const std::string& full_text, const std::vector<Token>& tokens, std::int64_t now_unix) {
-  Exec(db_->raw, "BEGIN");
-  sqlite3_stmt* purge = nullptr;
-  sqlite3_prepare_v2(db_->raw,
-                      "DELETE FROM entries WHERE (?1 - last_commit_unix) > ?2",
-                      -1, &purge, nullptr);
-  sqlite3_bind_int64(purge, 1, now_unix);
-  sqlite3_bind_int64(purge, 2, kDropSeconds);
-  sqlite3_step(purge);
-  sqlite3_finalize(purge);
-
-  sqlite3_stmt* word = nullptr;
-  sqlite3_prepare_v2(db_->raw,
-                      "INSERT INTO entries(text, pinyin, count, last_commit_unix, kind) "
-                      "VALUES(?1, ?2, 1, ?3, 'word') "
-                      "ON CONFLICT(text) DO UPDATE SET "
-                      "count = count + 1, last_commit_unix = excluded.last_commit_unix, "
-                      "pinyin = excluded.pinyin",
-                      -1, &word, nullptr);
-  for (const Token& token : tokens) {
-    if (CodePointCount(token.text) < 2 || CodePointCount(token.text) > 8) continue;
-    sqlite3_reset(word);
-    sqlite3_clear_bindings(word);
-    sqlite3_bind_text(word, 1, token.text.c_str(), -1, SQLITE_TRANSIENT);
-    sqlite3_bind_text(word, 2, token.pinyin.c_str(), -1, SQLITE_TRANSIENT);
-    sqlite3_bind_int64(word, 3, now_unix);
-    sqlite3_step(word);
+      "CREATE TABLE IF NOT EXISTS entries (text TEXT PRIMARY KEY,pinyin TEXT NOT NULL,"
+      "count INTEGER NOT NULL,last_commit_unix INTEGER NOT NULL,kind TEXT NOT NULL);"
+      "CREATE TABLE IF NOT EXISTS seen_phrase (text TEXT PRIMARY KEY);");
+  // Legacy rows have no date: start their retention period once, at upgrade.
+  Transaction migration(db_->raw);
+  bool dated = false;
+  {
+    Statement columns(db_->raw, "PRAGMA table_info(seen_phrase)");
+    while (columns.Row()) if (columns.Text(1) == "last_seen_unix") dated = true;
   }
-  sqlite3_finalize(word);
+  if (!dated) {
+    Exec(db_->raw, "ALTER TABLE seen_phrase ADD COLUMN last_seen_unix INTEGER NOT NULL DEFAULT 0");
+    Statement date(db_->raw, "UPDATE seen_phrase SET last_seen_unix=?1");
+    date.Int(1, static_cast<std::int64_t>(std::time(nullptr))); date.Done();
+  }
+  migration.Commit();
+  Purge(db_->raw, static_cast<std::int64_t>(std::time(nullptr)));
+}
+Lexicon::~Lexicon() = default;
 
-  if (CodePointCount(full_text) > 8) {
-    sqlite3_stmt* find = nullptr;
-    sqlite3_prepare_v2(db_->raw, "SELECT 1 FROM entries WHERE text = ?1 AND kind = 'phrase'", -1, &find, nullptr);
-    sqlite3_bind_text(find, 1, full_text.c_str(), -1, SQLITE_TRANSIENT);
-    const bool exists = sqlite3_step(find) == SQLITE_ROW;
-    sqlite3_finalize(find);
-    const std::string pinyin = JoinPinyin(tokens);
+void Lexicon::Commit(const std::string& text, const std::vector<Token>& tokens, std::int64_t now) {
+  std::lock_guard<std::mutex> lock(db_->mutex);
+  Transaction transaction(db_->raw);
+  Purge(db_->raw, now);
+  Statement word(db_->raw,
+      "INSERT INTO entries(text,pinyin,count,last_commit_unix,kind) VALUES(?1,?2,1,?3,'word') "
+      "ON CONFLICT(text) DO UPDATE SET count=count+1,last_commit_unix=excluded.last_commit_unix,pinyin=excluded.pinyin");
+  for (const Token& token : tokens) {
+    const auto length = CodePointCount(token.text);
+    if (length < 2 || length > 8) continue;
+    word.Reset(); word.Text(1, token.text); word.Text(2, token.pinyin); word.Int(3, now); word.Done();
+  }
+  if (CodePointCount(text) > 8) {
+    bool exists = false;
+    {
+      Statement find(db_->raw, "SELECT 1 FROM entries WHERE text=?1 AND kind='phrase'");
+      find.Text(1, text); exists = find.Row();
+    }
+    const auto pinyin = JoinPinyin(tokens);
     if (exists) {
-      sqlite3_stmt* bump = nullptr;
-      sqlite3_prepare_v2(db_->raw,
-                          "UPDATE entries SET count = count + 1, last_commit_unix = ?2, pinyin = ?3 "
-                          "WHERE text = ?1",
-                          -1, &bump, nullptr);
-      sqlite3_bind_text(bump, 1, full_text.c_str(), -1, SQLITE_TRANSIENT);
-      sqlite3_bind_int64(bump, 2, now_unix);
-      sqlite3_bind_text(bump, 3, pinyin.c_str(), -1, SQLITE_TRANSIENT);
-      sqlite3_step(bump);
-      sqlite3_finalize(bump);
+      Statement bump(db_->raw, "UPDATE entries SET count=count+1,last_commit_unix=?2,pinyin=?3 WHERE text=?1");
+      bump.Text(1, text); bump.Int(2, now); bump.Text(3, pinyin); bump.Done();
     } else {
-      sqlite3_stmt* seen = nullptr;
-      sqlite3_prepare_v2(db_->raw, "SELECT 1 FROM seen_phrase WHERE text = ?1", -1, &seen, nullptr);
-      sqlite3_bind_text(seen, 1, full_text.c_str(), -1, SQLITE_TRANSIENT);
-      const bool again = sqlite3_step(seen) == SQLITE_ROW;
-      sqlite3_finalize(seen);
+      bool again = false;
+      {
+        Statement seen(db_->raw, "SELECT 1 FROM seen_phrase WHERE text=?1");
+        seen.Text(1, text); again = seen.Row();
+      }
       if (!again) {
-        sqlite3_stmt* mark = nullptr;
-        sqlite3_prepare_v2(db_->raw, "INSERT INTO seen_phrase(text) VALUES(?1)", -1, &mark, nullptr);
-        sqlite3_bind_text(mark, 1, full_text.c_str(), -1, SQLITE_TRANSIENT);
-        sqlite3_step(mark);
-        sqlite3_finalize(mark);
+        Statement mark(db_->raw, "INSERT INTO seen_phrase(text,last_seen_unix) VALUES(?1,?2)");
+        mark.Text(1, text); mark.Int(2, now); mark.Done();
       } else {
-        sqlite3_stmt* add = nullptr;
-        sqlite3_prepare_v2(db_->raw,
-                            "INSERT INTO entries(text, pinyin, count, last_commit_unix, kind) "
-                            "VALUES(?1, ?2, 2, ?3, 'phrase')",
-                            -1, &add, nullptr);
-        sqlite3_bind_text(add, 1, full_text.c_str(), -1, SQLITE_TRANSIENT);
-        sqlite3_bind_text(add, 2, pinyin.c_str(), -1, SQLITE_TRANSIENT);
-        sqlite3_bind_int64(add, 3, now_unix);
-        sqlite3_step(add);
-        sqlite3_finalize(add);
-        sqlite3_stmt* drop = nullptr;
-        sqlite3_prepare_v2(db_->raw, "DELETE FROM seen_phrase WHERE text = ?1", -1, &drop, nullptr);
-        sqlite3_bind_text(drop, 1, full_text.c_str(), -1, SQLITE_TRANSIENT);
-        sqlite3_step(drop);
-        sqlite3_finalize(drop);
+        Statement add(db_->raw,
+            "INSERT INTO entries(text,pinyin,count,last_commit_unix,kind) VALUES(?1,?2,2,?3,'phrase')");
+        add.Text(1, text); add.Text(2, pinyin); add.Int(3, now); add.Done();
+        Statement drop(db_->raw, "DELETE FROM seen_phrase WHERE text=?1");
+        drop.Text(1, text); drop.Done();
       }
     }
   }
-  Exec(db_->raw, "COMMIT");
+  transaction.Commit();
 }
-
-std::string Lexicon::Apply(const std::string& recognized, const std::vector<Token>& tokens, std::int64_t now_unix) {
-  sqlite3_stmt* purge = nullptr;
-  sqlite3_prepare_v2(db_->raw, "DELETE FROM entries WHERE (?1 - last_commit_unix) > ?2", -1, &purge, nullptr);
-  sqlite3_bind_int64(purge, 1, now_unix);
-  sqlite3_bind_int64(purge, 2, kDropSeconds);
-  sqlite3_step(purge);
-  sqlite3_finalize(purge);
-
-  sqlite3_stmt* query = nullptr;
-  sqlite3_prepare_v2(db_->raw,
-                      "SELECT text, pinyin, count, last_commit_unix, kind FROM entries "
-                      "WHERE count >= 2 AND (?1 - last_commit_unix) <= ?2",
-                      -1, &query, nullptr);
-  sqlite3_bind_int64(query, 1, now_unix);
-  sqlite3_bind_int64(query, 2, kBiasSeconds);
-
-  struct Row {
-    std::string text;
-    std::string pinyin;
-    int count;
-    std::int64_t when;
-    std::string kind;
-  };
-  std::vector<Row> rows;
-  while (sqlite3_step(query) == SQLITE_ROW) {
-    Row row;
-    row.text = reinterpret_cast<const char*>(sqlite3_column_text(query, 0));
-    row.pinyin = reinterpret_cast<const char*>(sqlite3_column_text(query, 1));
-    row.count = sqlite3_column_int(query, 2);
-    row.when = sqlite3_column_int64(query, 3);
-    row.kind = reinterpret_cast<const char*>(sqlite3_column_text(query, 4));
-    rows.push_back(std::move(row));
-  }
-  sqlite3_finalize(query);
-
-  const std::string full = JoinPinyin(tokens);
+std::string Lexicon::Apply(const std::string& recognized, const std::vector<Token>& tokens, std::int64_t now) {
+  std::lock_guard<std::mutex> lock(db_->mutex);
+  Purge(db_->raw, now);
+  Statement query(db_->raw,
+      "SELECT text,pinyin,count,last_commit_unix,kind FROM entries WHERE count>=2 AND (?1-last_commit_unix)<=?2");
+  query.Int(1, now); query.Int(2, kBiasSeconds);
+  std::vector<Entry> rows;
+  while (query.Row()) rows.push_back(ReadEntry(query));
+  const auto full = JoinPinyin(tokens);
   if (!full.empty()) {
-    const Row* best = nullptr;
-    for (const Row& row : rows) {
-      if (row.kind != "phrase" || row.pinyin != full) continue;
-      if (best == nullptr || Better(row.count, row.when, best->count, best->when)) best = &row;
+    const Entry* best = nullptr;
+    for (const auto& row : rows) {
+      if (row.kind == "phrase" && row.pinyin == full && Better(row, best)) best = &row;
     }
-    if (best != nullptr) return best->text;
+    if (best) return best->text;
   }
-
   std::string result;
-  for (const Token& token : tokens) {
-    const Row* best = nullptr;
+  for (const auto& token : tokens) {
+    const Entry* best = nullptr;
     if (!token.pinyin.empty()) {
-      for (const Row& row : rows) {
-        if (row.kind != "word" || row.pinyin != token.pinyin) continue;
-        if (best == nullptr || Better(row.count, row.when, best->count, best->when)) best = &row;
+      for (const auto& row : rows) {
+        if (row.kind == "word" && row.pinyin == token.pinyin && Better(row, best)) best = &row;
       }
     }
-    result += best != nullptr ? best->text : token.text;
+    result += best ? best->text : token.text;
   }
-  if (tokens.empty()) return recognized;
-  return result;
+  return tokens.empty() ? recognized : result;
 }
-
 std::vector<Entry> Lexicon::Recent(int limit) {
-  sqlite3_stmt* query = nullptr;
-  sqlite3_prepare_v2(db_->raw,
-                      "SELECT text, pinyin, count, last_commit_unix, kind FROM entries "
-                      "ORDER BY last_commit_unix DESC LIMIT ?1",
-                      -1, &query, nullptr);
-  sqlite3_bind_int(query, 1, limit);
+  std::lock_guard<std::mutex> lock(db_->mutex);
+  Statement query(db_->raw,
+      "SELECT text,pinyin,count,last_commit_unix,kind FROM entries ORDER BY last_commit_unix DESC LIMIT ?1");
+  query.Int(1, limit);
   std::vector<Entry> entries;
-  while (sqlite3_step(query) == SQLITE_ROW) {
-    Entry entry;
-    entry.text = reinterpret_cast<const char*>(sqlite3_column_text(query, 0));
-    entry.pinyin = reinterpret_cast<const char*>(sqlite3_column_text(query, 1));
-    entry.count = sqlite3_column_int(query, 2);
-    entry.last_commit_unix = sqlite3_column_int64(query, 3);
-    entry.kind = reinterpret_cast<const char*>(sqlite3_column_text(query, 4));
-    entries.push_back(std::move(entry));
-  }
-  sqlite3_finalize(query);
+  while (query.Row()) entries.push_back(ReadEntry(query));
   return entries;
 }
-
 bool Lexicon::Delete(const std::string& text) {
-  sqlite3_stmt* drop = nullptr;
-  sqlite3_prepare_v2(db_->raw, "DELETE FROM entries WHERE text = ?1", -1, &drop, nullptr);
-  sqlite3_bind_text(drop, 1, text.c_str(), -1, SQLITE_TRANSIENT);
-  sqlite3_step(drop);
-  sqlite3_finalize(drop);
+  std::lock_guard<std::mutex> lock(db_->mutex);
+  Transaction transaction(db_->raw);
+  Statement drop(db_->raw, "DELETE FROM entries WHERE text=?1");
+  drop.Text(1, text); drop.Done();
   const int removed = sqlite3_changes(db_->raw);
-  sqlite3_stmt* seen = nullptr;
-  sqlite3_prepare_v2(db_->raw, "DELETE FROM seen_phrase WHERE text = ?1", -1, &seen, nullptr);
-  sqlite3_bind_text(seen, 1, text.c_str(), -1, SQLITE_TRANSIENT);
-  sqlite3_step(seen);
-  sqlite3_finalize(seen);
-  return removed > 0 || sqlite3_changes(db_->raw) > 0;
+  Statement seen(db_->raw, "DELETE FROM seen_phrase WHERE text=?1");
+  seen.Text(1, text); seen.Done();
+  const bool changed = removed > 0 || sqlite3_changes(db_->raw) > 0;
+  transaction.Commit();
+  return changed;
 }

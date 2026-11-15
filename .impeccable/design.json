@@ -1,0 +1,226 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-15T14:14:31Z",
+  "title": "Design System: Simple Voice",
+  "extensions": {
+    "platform": {
+      "target": "Windows desktop input method",
+      "implementation": "C++17 / Win32 / GDI / TSF",
+      "tokenSource": "DESIGN.md frontmatter",
+      "nativeSources": [
+        "src/ui_theme.hpp",
+        "src/confirm_box.cpp",
+        "src/candidate_bar.cpp",
+        "src/engine_main.cpp",
+        "src/settings.cpp"
+      ],
+      "lengthSemantics": "Frontmatter px values represent DIP at 96 DPI; UiPx converts them for each native window.",
+      "fontMetrics": "GDI measures line height and wrapped text; no fixed CSS line-height or letter-spacing is asserted.",
+      "componentRepresentation": "Native metadata only. The existing browser comparison prototype is a reference, not the production implementation.",
+      "referencePrototype": "docs/design/skin-preview/index.html"
+    },
+    "themes": [
+      {
+        "id": "titanium",
+        "displayName": "钛银",
+        "default": true,
+        "voiceComponent": "voice-titanium",
+        "candidateComponent": "candidate-titanium",
+        "roles": {
+          "background": "{colors.titanium-background}",
+          "text": "{colors.titanium-text}",
+          "secondary": "{colors.titanium-secondary}",
+          "selected": "{colors.titanium-selected}",
+          "selectedText": "{colors.titanium-selected-text}",
+          "hover": "{colors.titanium-hover}",
+          "border": "{colors.titanium-border}",
+          "rule": "{colors.titanium-rule}",
+          "accent": "{colors.titanium-accent}"
+        },
+        "form": {
+          "outerOutline": true,
+          "voiceHeaderRule": true,
+          "voiceFooterRule": true,
+          "statusMarker": "square",
+          "selectedCandidateAccent": "thin lower line",
+          "statusIconBadge": false
+        }
+      },
+      {
+        "id": "daylight",
+        "displayName": "极昼",
+        "default": false,
+        "voiceComponent": "voice-daylight",
+        "candidateComponent": "candidate-daylight",
+        "roles": {
+          "background": "{colors.daylight-background}",
+          "text": "{colors.daylight-text}",
+          "secondary": "{colors.daylight-secondary}",
+          "selected": "{colors.daylight-selected}",
+          "selectedText": "{colors.daylight-selected-text}",
+          "hover": "{colors.daylight-hover}",
+          "rule": "{colors.daylight-rule}",
+          "accent": "{colors.daylight-accent}",
+          "iconBackground": "{colors.daylight-hover}"
+        },
+        "form": {
+          "outerOutline": false,
+          "voiceHeaderRule": false,
+          "voiceFooterRule": false,
+          "statusMarker": "circle",
+          "selectedCandidateAccent": "none",
+          "statusIconBadge": true
+        }
+      },
+      {
+        "id": "deep-space",
+        "displayName": "深空",
+        "default": false,
+        "voiceComponent": "voice-deep-space",
+        "candidateComponent": "candidate-deep-space",
+        "roles": {
+          "background": "{colors.deep-space-background}",
+          "text": "{colors.deep-space-text}",
+          "secondary": "{colors.deep-space-secondary}",
+          "selected": "{colors.deep-space-selected}",
+          "selectedText": "{colors.deep-space-selected-text}",
+          "hover": "{colors.deep-space-hover}",
+          "border": "{colors.deep-space-border}",
+          "rule": "{colors.deep-space-rule}",
+          "accent": "{colors.deep-space-accent}"
+        },
+        "form": {
+          "outerOutline": true,
+          "voiceHeaderRule": false,
+          "voiceFooterRule": true,
+          "statusMarker": "circle",
+          "selectedCandidateAccent": "none",
+          "statusIconBadge": false
+        }
+      }
+    ],
+    "typographyMeta": {
+      "body": { "displayName": "正文与候选词", "purpose": "Voice preview content, empty-content guidance, and candidate words." },
+      "status": { "displayName": "语音状态", "purpose": "The native voice overlay's current phase or recovery condition." },
+      "label": { "displayName": "操作提示", "purpose": "Action hints, scroll hints, candidate indices, and settings entry." }
+    },
+    "elevation": {
+      "mechanism": "Native window shadow plus solid surfaces, selection fills, and rules.",
+      "windowClassStyle": "CS_DROPSHADOW",
+      "ownership": "Windows determines shadow rendering; the project defines no CSS shadow parameters.",
+      "transparency": "Opaque GDI surfaces.",
+      "backdropBlur": false,
+      "paintStrategy": "UiPaintFrame submits a complete offscreen frame to avoid background-only flashes."
+    },
+    "appearance": {
+      "entryPoints": ["Tray menu", "Candidate strip settings entry"],
+      "menu": "Shared native Windows skin submenu with a radio mark for the current selection.",
+      "preferenceFile": "%LOCALAPPDATA%\\VoiceIme\\appearance.json",
+      "separateFrom": "%LOCALAPPDATA%\\VoiceIme\\config.json",
+      "fallbackSkin": "titanium",
+      "saveFailure": "Keep the previous skin and notify the user to retry.",
+      "apply": "Save the preference, repaint the voice overlay, and broadcast VoiceIme.AppearanceChanged to existing candidate windows; new windows read the saved selection.",
+      "preservedOnSwitch": ["Recording session", "Preview text", "Candidate selection", "Scroll position", "Window position", "Window visibility", "Document focus"],
+      "automaticSystemLightDarkSwitch": false,
+      "highContrastPriority": {
+        "background": "COLOR_WINDOW",
+        "text": "COLOR_WINDOWTEXT",
+        "secondary": "COLOR_WINDOWTEXT",
+        "selectedAndHover": "COLOR_HIGHLIGHT",
+        "selectedAndHoveredText": "COLOR_HIGHLIGHTTEXT",
+        "borderRuleAndAccent": "COLOR_WINDOWTEXT",
+        "outerOutline": true
+      }
+    },
+    "layout": {
+      "model": "Caret-anchored, non-activating native popups constrained to the monitor work area.",
+      "responsiveBehavior": "Per-window DPI scaling and work-area clamping; no web breakpoints.",
+      "voice": {
+        "nominalWidthRef": "{components.voice-titanium.width}",
+        "maximumHeightDip": 320,
+        "bodyStartDip": 44,
+        "horizontalInsetRef": "{spacing.surface-inset}",
+        "overflow": "Whole-font-line viewport with scrollbar and explicit end-of-content hint."
+      },
+      "candidates": {
+        "maximumCount": 5,
+        "maximumWidthDip": 960,
+        "settingsRegionDip": 52,
+        "sizing": "GDI-measured words share available width; truncation retains full tooltip and accessible names."
+      }
+    },
+    "states": {
+      "voice": [
+        { "id": "listening", "label": "正在听", "icon": "microphone", "hint": "停顿后自动校准 · Enter 停录预览 · Esc 取消" },
+        { "id": "finalizing", "label": "正在校准文字", "icon": "calibration sliders", "hint": "校准后可预览并确认 · Esc 取消" },
+        { "id": "pending", "label": "待确认", "icon": "check", "hint": "Enter 写入正文 · Esc 取消" },
+        { "id": "committing", "label": "正在写入正文", "icon": "calibration sliders", "hint": "正在等待应用确认，请稍候" },
+        { "id": "error", "label": "语音暂不可用", "iconInkRole": "secondary", "hint": "检查输入设备和访问权限后重试 · Esc 关闭" },
+        { "id": "uncertain", "label": "写入结果待核实", "iconInkRole": "secondary", "hint": "请先核对正文 · 确认未写入后 Enter 重试 · Esc 关闭" },
+        { "id": "empty", "label": "录音已结束", "hint": "按语音快捷键重新开始 · Esc 关闭" }
+      ],
+      "confirmation": "Enter during recording stops and finalizes; a subsequent confirmation inserts the final preview. Enter during finalization does not queue insertion.",
+      "candidates": "Selected styling takes precedence over hover; ordinary hover retains the normal text roles, while high-contrast hover uses the system highlight foreground.",
+      "motion": "Immediate state redraws with no authored animation. Unchanged content and anchors avoid redundant moves, paints, and visibility changes.",
+      "focus": "WS_EX_NOACTIVATE / MA_NOACTIVATE keep the text application's focus."
+    },
+    "evidence": {
+      "nativeScreenshotDirectory": "docs/design/skins/",
+      "nativeScreenshots": [
+        "titanium-voice.png",
+        "titanium-candidate.png",
+        "daylight-voice.png",
+        "daylight-candidate.png",
+        "deep-space-voice.png",
+        "deep-space-candidate.png"
+      ],
+      "provenance": "Captured from this project's real native UI by its UI test tool; not generated images or third-party assets.",
+      "fullEvidenceDirectory": "build/skins-2026-11-15/",
+      "reviewVerdict": "build/skins-2026-11-15/native-skin-review-verdict.md",
+      "reviewScope": "The final verdict resolves the scored visual findings; it is not a claim of complete human acceptance.",
+      "contrastChecks": {
+        "foregroundRef": "{colors.daylight-secondary}",
+        "backgroundRatio": 5.54,
+        "hoverRatio": 4.95,
+        "smallTextMinimumRatio": 4.5
+      },
+      "acceptanceBoundary": "Human microphone use in user applications, physical multi-monitor operation, and screen-reader acceptance remain separate. High-contrast screenshots exercise an injected test branch."
+    }
+  },
+  "components": [
+    { "name": "语音确认浮层", "kind": "custom", "refersTo": "voice-titanium", "description": "Native status, preview, and action-hint regions shared by all three skins.", "nativeSource": "src/confirm_box.cpp", "variants": ["voice-titanium", "voice-daylight", "voice-deep-space"] },
+    { "name": "拼音候选条", "kind": "custom", "refersTo": "candidate-titanium", "description": "A non-activating row of up to five candidates and the settings entry.", "nativeSource": "src/candidate_bar.cpp", "variants": ["candidate-titanium", "candidate-daylight", "candidate-deep-space"] },
+    { "name": "候选选中与悬停", "kind": "custom", "refersTo": "candidate-titanium-selected", "description": "Native selection and pointer feedback; system highlight text is used for high-contrast hover.", "nativeSource": "src/candidate_bar.cpp", "variants": ["candidate-titanium-selected", "candidate-titanium-hover", "candidate-daylight-selected", "candidate-daylight-hover", "candidate-deep-space-selected", "candidate-deep-space-hover"] },
+    { "name": "长文滚动预览", "kind": "custom", "refersTo": "voice-titanium", "description": "The voice body is clipped to whole font lines and gains a scrollbar and an explicit end hint.", "nativeSource": "src/confirm_box.cpp" },
+    { "name": "设置与皮肤菜单", "kind": "nav", "description": "The candidate entry and tray share a native Windows menu with the selected skin radio-marked; menus and dialog buttons retain Windows styling.", "nativeSources": ["src/candidate_bar.cpp", "src/engine_main.cpp", "src/ui_theme.hpp"] }
+  ],
+  "narrative": {
+    "northStar": "精密输入仪表",
+    "overview": "Simple Voice 的原生 Windows 浮层以可读文字和明确状态形成干净、克制的科技感。语音预览与拼音候选使用同一套字体、色彩职责和边界细节，保持输入内容在视觉上的主导地位。科技感来自精确的分区、细线与低饱和强调色。\n\n用户已确认钛银、极昼、深空三套皮肤全部内置并可切换。默认钛银的冷银灰与深青呈现仪表分节；极昼用净白、蓝色和连续圆角表达轻盈；深空用石墨、冰青和细轮廓适应暗色编辑环境。三套共用布局与行为，Windows 高对比度颜色始终优先。",
+    "keyCharacteristics": [
+      "文字为主，状态与操作提示分层清楚。",
+      "同一输入浮层结构承载三套完整皮肤。",
+      "实色表面、细线图标与适量圆角。",
+      "浮层不激活，换肤保留正在进行的输入。"
+    ],
+    "rules": [
+      { "name": "The Shared Roles Rule", "body": "换肤改变一整组色彩角色，语音与候选同步使用；状态意义、文字层级和操作位置不随皮肤变化。", "section": "colors" },
+      { "name": "The System Contrast Rule", "body": "Windows 高对比度开启时，背景取 `COLOR_WINDOW`，正文与次要文字取 `COLOR_WINDOWTEXT`，选中与 hover 底色取 `COLOR_HIGHLIGHT`，其上的候选正文、序号和设置文字取 `COLOR_HIGHLIGHTTEXT`。系统配色覆盖皮肤配色，并恢复可见外轮廓。", "section": "colors" },
+      { "name": "The Readable Small Text Rule", "body": "操作提示与候选序号使用同一小字层级；空间不足时先换行或限制容器，而不是继续缩小文字。", "section": "typography" },
+      { "name": "The Stable Input Rule", "body": "相同内容和锚点不重复移动、显隐或重绘；换肤只更新圆角与绘制，不重新定位浮层、不重启录音、不清空预览、不改变候选选择或滚动位置，也不让隐藏浮层重新出现。", "section": "layout" }
+    ],
+    "dos": [
+      "Do 同步使用同一皮肤的语音与候选角色，保留共享的字号、布局和状态语义。",
+      "Do 以原生 DIP 与实际字体测量布局，检查正常、选中、hover、长文和高对比状态。",
+      "Do 让 Windows 高对比度颜色覆盖预设皮肤，并保持系统高亮底上的对应文字颜色。",
+      "Do 换肤时保留输入、预览、选词、滚动位置和窗口可见状态。",
+      "Do 以真实原生截图核对实现，保留截图来源与测试范围。"
+    ],
+    "donts": [
+      "Don't 将浏览器比较板的宽度、三列排版或按钮设计当作原生输入法规范。",
+      "Don't 用更浅的小字、大面积霓虹、装饰动效或透明模糊表达未来感。",
+      "Don't 为换肤添加新的确认步骤、重启要求或未经批准的自动深浅切换。",
+      "Don't 把高对比度测试分支或截图审查写成真人使用验收结果。"
+    ]
+  }
+}

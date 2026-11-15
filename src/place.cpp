@@ -31,3 +31,13 @@ Rect ClampRect(Rect wanted, Rect work) {
   }
   return wanted;
 }
+
+Rect PlacePopup(Rect caret, Rect window, Rect work, int width, int height, int gap, int margin) {
+  Rect wanted=PlaceBox(caret,window,width,height,margin);
+  if (caret.w>0 && caret.h>0) {
+    wanted.y+=gap;
+    if (wanted.y+height>work.y+work.h && caret.y-gap-height>=work.y)
+      wanted.y=caret.y-gap-height;
+  }
+  return ClampRect(wanted,work);
+}

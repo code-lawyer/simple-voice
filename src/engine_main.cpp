@@ -1,14 +1,18 @@
 #include "confirm_box.hpp"
+#include "product.hpp"
+#include "ui_theme.hpp"
 #include "lexicon.hpp"
 #include "recognizer.hpp"
 #include "resample.hpp"
 #include "segmenter.hpp"
 #include "session.hpp"
 #include "settings.hpp"
+#include "hotkey_dialog.hpp"
 #include "sherpa_recognizer.hpp"
 #include "vad.hpp"
 
 #include "ipc.hpp"
+#include "pipe_io.hpp"
 
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -41,11 +45,43 @@ constexpr UINT kPartialMessage = WM_APP + 2;
 constexpr UINT kEndpointMessage = WM_APP + 3;
 constexpr UINT kFinalMessage = WM_APP + 5;
 constexpr UINT kAnnounceMessage = WM_APP + 6;
+constexpr UINT kCaptureErrorMessage = WM_APP + 7;
+constexpr UINT kClientGoneMessage = WM_APP + 8;
+constexpr UINT_PTR kInsertTimer = 1;
+constexpr UINT_PTR kAnchorTimer = 2;
+using ClientId = std::uintptr_t;
+struct ClientConnection { ClientId id; HANDLE pipe; DWORD process; };
+struct ClientWorker { std::thread thread; std::shared_ptr<std::atomic<bool>> finished; };
 constexpr UINT kTrayMessage = WM_APP + 4;
 constexpr UINT kQuitCommand = 1;
 constexpr UINT kRecordCommand = 2;
+constexpr UINT kSkinBase = 30;
 constexpr UINT kRecentBase = 100;
 const GUID kFloatFormat = {0x00000003, 0x0000, 0x0010, {0x80, 0x00, 0x00, 0xAA, 0x00, 0x38, 0x9B, 0x71}};
+
+#ifdef VOICEIME_TESTING
+// Fixture configuration exists only in the separate test executable.
+std::wstring TestEnvironment(const wchar_t* key) {
+  wchar_t value[32768]{};
+  const DWORD count = GetEnvironmentVariableW(key, value, 32768);
+  return count > 0 && count < 32768 ? std::wstring(value, count) : L"";
+}
+#endif
+
+std::wstring PipeName() {
+#ifdef VOICEIME_TESTING
+  return L"\\\\.\\pipe\\VoiceImeQA_" + TestEnvironment(L"VOICEIME_TEST_ID");
+#else
+  return L"\\\\.\\pipe\\VoiceIme";
+#endif
+}
+std::wstring MutexName() {
+#ifdef VOICEIME_TESTING
+  return L"Local\\VoiceImeQA_" + TestEnvironment(L"VOICEIME_TEST_ID");
+#else
+  return L"Local\\VoiceImeEngine";
+#endif
+}
 
 std::wstring Utf8ToWide(const std::string& utf8) {
   if (utf8.empty()) return L"";
@@ -114,51 +150,50 @@ Rect ForegroundClient() {
   return Rect{origin.x, origin.y, rect.right, rect.bottom};
 }
 
-bool WriteAll(HANDLE pipe, const std::string& bytes) {
-  if (bytes.empty()) return true;
-  OVERLAPPED overlap{};
-  overlap.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-  if (overlap.hEvent == nullptr) return false;
-  DWORD wrote = 0;
-  BOOL ok = WriteFile(pipe, bytes.data(), static_cast<DWORD>(bytes.size()), &wrote, &overlap);
-  if (!ok && GetLastError() == ERROR_IO_PENDING) ok = GetOverlappedResult(pipe, &overlap, &wrote, TRUE);
-  CloseHandle(overlap.hEvent);
-  return ok == TRUE && wrote == bytes.size();
+std::wstring ExecutableDir() {
+  wchar_t exe[MAX_PATH];
+  const DWORD size = GetModuleFileNameW(nullptr, exe, MAX_PATH);
+  if (!size || size >= MAX_PATH) return L"";
+  std::wstring path(exe, size);
+  const auto slash = path.find_last_of(L"\\/");
+  return slash == std::wstring::npos ? L"" : path.substr(0, slash);
 }
 
-std::string DictDir() {
-  const char* candidates[] = {"third_party/cppjieba/dict/jieba.dict.utf8", nullptr};
-  if (GetFileAttributesA(candidates[0]) != INVALID_FILE_ATTRIBUTES) return "third_party/cppjieba/dict";
-  wchar_t exe[MAX_PATH];
-  GetModuleFileNameW(nullptr, exe, MAX_PATH);
-  std::wstring path(exe);
-  const auto slash = path.find_last_of(L"\\/");
-  if (slash != std::wstring::npos) path.resize(slash);
-  path += L"\\..\\third_party\\cppjieba\\dict\\jieba.dict.utf8";
-  if (GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES) {
-    path.resize(path.size() - std::wstring(L"\\jieba.dict.utf8").size());
-    return WideToUtf8(path);
+std::string ResourceDir(const wchar_t* relative, const wchar_t* marker) {
+  const auto exe = ExecutableDir();
+  // Packaged assets win over the host application's working directory.
+  // The parent fallback preserves the source-tree development layout.
+  for (const auto& root : {exe, exe + L"\\..", std::wstring(L".")}) {
+    const auto dir = root + L"\\" + relative;
+    const auto file = dir + L"\\" + marker;
+    const DWORD attr = GetFileAttributesW(file.c_str());
+    if (attr != INVALID_FILE_ATTRIBUTES && !(attr & FILE_ATTRIBUTE_DIRECTORY)) return WideToUtf8(dir);
   }
   return "";
 }
 
-std::string ModelDir() {
-  if (GetFileAttributesA("models\\streaming") != INVALID_FILE_ATTRIBUTES ||
-      GetFileAttributesA("models/streaming") != INVALID_FILE_ATTRIBUTES) {
-    return "models";
+std::string DictDir() { return ResourceDir(L"third_party\\cppjieba\\dict", L"jieba.dict.utf8"); }
+std::string ModelDir() { return ResourceDir(L"models", L"streaming\\model.int8.onnx"); }
+
+int CheckInstallation() {
+  SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
+  const auto dict = DictDir();
+  for (const char* file : {"jieba.dict.utf8", "hmm_model.utf8", "user.dict.utf8", "idf.utf8", "stop_words.utf8", "pinyin.txt"}) {
+    if (dict.empty() || GetFileAttributesW(Utf8ToWide(dict + "/" + file).c_str()) == INVALID_FILE_ATTRIBUTES) {
+      std::fprintf(stderr, "Missing dictionary: %s\n", file);
+      return 2;
+    }
   }
-  wchar_t exe[MAX_PATH];
-  GetModuleFileNameW(nullptr, exe, MAX_PATH);
-  std::wstring path(exe);
-  const auto slash = path.find_last_of(L"\\/");
-  if (slash != std::wstring::npos) path.resize(slash);
-  if (GetFileAttributesW((path + L"\\models\\streaming").c_str()) != INVALID_FILE_ATTRIBUTES) {
-    return WideToUtf8(path + L"\\models");
+  if (GetFileAttributesW((ExecutableDir() + L"\\rime-data\\voiceime.schema.yaml").c_str()) == INVALID_FILE_ATTRIBUTES) {
+    std::fprintf(stderr, "Missing rime-data/voiceime.schema.yaml\n");
+    return 2;
   }
-  if (GetFileAttributesW((path + L"\\..\\models\\streaming").c_str()) != INVALID_FILE_ATTRIBUTES) {
-    return WideToUtf8(path + L"\\..\\models");
-  }
-  return "models";
+  Segmenter segmenter(dict);
+  auto recognizer = MakeSherpaRecognizer(ModelDir(), &segmenter, nullptr);
+  if (!recognizer) return 2;
+  std::printf("%s %s: dictionaries and all three local models loaded.\n", kProductName, SIMPLE_VOICE_VERSION);
+  std::puts("No microphone, input-method registration or personal data was accessed.");
+  return 0;
 }
 
 class FakeRecognizer : public Recognizer {
@@ -171,7 +206,12 @@ class FakeRecognizer : public Recognizer {
     std::lock_guard<std::mutex> lock(mu_);
     return std::to_string(samples_) + "假字";
   }
-  std::string Finalize() override { return Partial() + "。"; }
+  std::string Finalize() override {
+#ifdef VOICEIME_TESTING
+    if (TestEnvironment(L"VOICEIME_TEST_CAPTURE")==L"slow-final") Sleep(250);
+#endif
+    return Partial() + "。";
+  }
   void Reset() override {
     std::lock_guard<std::mutex> lock(mu_);
     samples_ = 0;
@@ -185,7 +225,7 @@ class FakeRecognizer : public Recognizer {
 class EngineLock {
  public:
   EngineLock() {
-    handle_ = CreateMutexW(nullptr, FALSE, L"Local\\VoiceImeEngine");
+    handle_ = CreateMutexW(nullptr, FALSE, MutexName().c_str());
     if (handle_ == nullptr) return;
     const DWORD waited = WaitForSingleObject(handle_, 0);
     owned_ = waited == WAIT_OBJECT_0 || waited == WAIT_ABANDONED;
@@ -207,23 +247,26 @@ class Engine {
 
  private:
   LRESULT OnMessage(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam);
-  void OnPipe(const Message& message);
+  void OnPipe(ClientId sender, const Message& message);
   void ShowMenu(HWND hwnd);
   void OnPartial();
   void OnEndpoint();
   void StartCapture();
   void StopCapture();
   void UpdateBox();
-  void CaptureMain();
+  void CaptureMain(int generation);
   void PipeMain();
-  void ClientLoop(HANDLE pipe);
+  void ClientLoop(ClientId id, HANDLE pipe);
+  void ReapClients();
+  void LoseInsertConfirmation();
+  void LexiconWarning(const char* diagnostic);
   void AddTray();
   void RemoveTray();
   void BeginRecordHotkey();
   void CloseRecord();
-  void ApplyRecordedHotkey(int modifiers, int vk);
-  LRESULT OnRecord(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam);
-  bool WriteClient(const Message& message);
+  static bool SaveRecordedHotkey(void* self, Hotkey next);
+
+  bool WriteClient(const Message& message, ClientId target);
   void Broadcast(const Message& message);
   void PublishPhase();
   void RequestCaret();
@@ -242,25 +285,34 @@ class Engine {
   std::thread pipe_thread_;
   std::thread finalize_thread_;
   int finalize_generation_ = 0;
+  int capture_generation_ = 0;
   std::string pending_insert_;
+  std::uint64_t insert_id_ = 0, next_insert_id_ = 0;
+  ClientId insert_client_ = 0;
+  ClientId commit_client_ = 0;
+  bool insert_uncertain_ = false;
+  std::string lexicon_warning_;
   std::atomic<bool> stop_capture_{false};
   std::atomic<bool> stop_pipe_{false};
   HANDLE wake_ = nullptr;
   HANDLE listen_pipe_ = INVALID_HANDLE_VALUE;
-  HANDLE active_pipe_ = INVALID_HANDLE_VALUE;
-  std::vector<HANDLE> clients_;
-  std::vector<std::thread> client_threads_;
+  std::vector<ClientConnection> clients_;
+  std::vector<ClientWorker> client_threads_;
   std::mutex write_mu_;
   HANDLE write_event_ = nullptr;
-  std::vector<std::pair<HANDLE, std::string>> outgoing_;
+  HANDLE stop_event_ = nullptr;
+  std::vector<std::pair<ClientId, std::string>> outgoing_;
   std::mutex inbox_mu_;
-  std::deque<std::pair<HANDLE, Message>> inbox_;
+  std::deque<std::pair<ClientId, Message>> inbox_;
   bool tray_added_ = false;
   Settings settings_{DefaultHotkey()};
+  std::wstring skin_path_;
   std::string config_path_;
   std::vector<std::string> recent_menu_;
-  HWND record_hwnd_ = nullptr;
+  HotkeyDialog hotkey_dialog_;
   bool caret_known_ = false;
+  DWORD caret_process_ = 0;
+  ULONGLONG listening_started_ = 0;
   Rect caret_{0, 0, 0, 0};
   Rect window_rect_{0, 0, 0, 0};
   std::string mic_error_;
@@ -269,26 +321,37 @@ class Engine {
   static LRESULT Hook(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam, void* self) {
     return static_cast<Engine*>(self)->OnMessage(hwnd, message, wparam, lparam);
   }
-  static LRESULT CALLBACK RecordProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam);
+
 };
 
 int Engine::Run(bool fake) {
+#ifdef VOICEIME_TESTING
+  if (TestEnvironment(L"VOICEIME_TEST_ID").empty() || TestEnvironment(L"VOICEIME_TEST_DATA").empty()) return 3;
+  fake = true;
+#endif
   EngineLock instance_lock;
   if (!instance_lock.owned()) {
     std::fprintf(stderr, "voiceime_engine already running\n");
     return 0;
   }
   const std::wstring data = [] {
+#ifdef VOICEIME_TESTING
+    const auto dir = TestEnvironment(L"VOICEIME_TEST_DATA");
+#else
     wchar_t buffer[MAX_PATH];
     const DWORD count = GetEnvironmentVariableW(L"LOCALAPPDATA", buffer, MAX_PATH);
     std::wstring dir = count > 0 ? std::wstring(buffer, count) : L".";
     dir += L"\\VoiceIme";
+#endif
     CreateDirectoryW(dir.c_str(), nullptr);
     return dir;
   }();
-  lexicon_ = std::make_unique<Lexicon>(WideToUtf8(data + L"\\lexicon.sqlite"));
+  try { lexicon_ = std::make_unique<Lexicon>(WideToUtf8(data + L"\\lexicon.sqlite")); }
+  catch (const std::exception& e) { LexiconWarning(e.what()); }
   config_path_ = WideToUtf8(data + L"\\config.json");
   settings_ = LoadSettings(config_path_);
+  skin_path_ = data + L"\\appearance.json";
+  box_.SetSkin(LoadSkin(skin_path_));
   const std::string dict = DictDir();
   if (!dict.empty()) segmenter_ = std::make_unique<Segmenter>(dict);
   if (fake) {
@@ -301,12 +364,16 @@ int Engine::Run(bool fake) {
   }
 
   if (!box_.Create(GetModuleHandleW(nullptr), &Engine::Hook, this)) return 1;
+#ifndef VOICEIME_TESTING
   AddTray();
+#endif
   write_event_ = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+  stop_event_ = CreateEventW(nullptr, TRUE, FALSE, nullptr);
   pipe_thread_ = std::thread([this] { PipeMain(); });
 
   MSG message;
   while (GetMessageW(&message, nullptr, 0, 0) > 0) {
+    if (hotkey_dialog_.Translate(&message)) continue;
     TranslateMessage(&message);
     DispatchMessageW(&message);
   }
@@ -314,21 +381,26 @@ int Engine::Run(bool fake) {
   ++finalize_generation_;
   CloseRecord();
   stop_pipe_ = true;
+  if (stop_event_ != nullptr) SetEvent(stop_event_);
   if (write_event_ != nullptr) SetEvent(write_event_);
   {
     std::lock_guard<std::mutex> lock(write_mu_);
     if (listen_pipe_ != INVALID_HANDLE_VALUE) CancelIoEx(listen_pipe_, nullptr);
-    for (HANDLE client : clients_) CancelIoEx(client, nullptr);
+    for (const auto& client : clients_) CancelIoEx(client.pipe, nullptr);
   }
   StopCapture();
   if (finalize_thread_.joinable()) finalize_thread_.join();
   if (pipe_thread_.joinable()) pipe_thread_.join();
-  for (std::thread& client : client_threads_) {
-    if (client.joinable()) client.join();
+  for (auto& client : client_threads_) {
+    if (client.thread.joinable()) client.thread.join();
   }
   if (write_event_ != nullptr) {
     CloseHandle(write_event_);
     write_event_ = nullptr;
+  }
+  if (stop_event_ != nullptr) {
+    CloseHandle(stop_event_);
+    stop_event_ = nullptr;
   }
   RemoveTray();
   return 0;
@@ -342,7 +414,7 @@ void Engine::AddTray() {
   icon.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
   icon.uCallbackMessage = kTrayMessage;
   icon.hIcon = LoadIconW(nullptr, MAKEINTRESOURCEW(32512));
-  const std::wstring tip = Utf8ToWide("语音输入法");
+  const std::wstring tip = std::wstring(kProductDisplayName) + L" · Simple Voice";
   wcsncpy(icon.szTip, tip.c_str(), 127);
   tray_added_ = Shell_NotifyIconW(NIM_ADD, &icon) == TRUE;
 }
@@ -358,99 +430,31 @@ void Engine::RemoveTray() {
 }
 
 void Engine::BeginRecordHotkey() {
-  if (record_hwnd_ != nullptr) {
-    SetForegroundWindow(record_hwnd_);
-    return;
-  }
-  WNDCLASSW window_class{};
-  window_class.lpfnWndProc = RecordProc;
-  window_class.hInstance = GetModuleHandleW(nullptr);
-  window_class.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
-  window_class.lpszClassName = L"VoiceImeHotkey";
-  RegisterClassW(&window_class);
-  const std::wstring title = Utf8ToWide("按下新的快捷键");
-  record_hwnd_ = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW, L"VoiceImeHotkey", title.c_str(),
-                                  WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_VISIBLE, 240, 240, 360, 140, nullptr,
-                                  nullptr, GetModuleHandleW(nullptr), this);
-  if (record_hwnd_ != nullptr) SetForegroundWindow(record_hwnd_);
+  hotkey_dialog_.Open(GetModuleHandleW(nullptr), settings_.hotkey, &Engine::SaveRecordedHotkey, this);
 }
 
-void Engine::CloseRecord() {
-  if (record_hwnd_ == nullptr) return;
-  HWND hwnd = record_hwnd_;
-  record_hwnd_ = nullptr;
-  DestroyWindow(hwnd);
-}
+void Engine::CloseRecord() { hotkey_dialog_.Close(); }
 
-void Engine::ApplyRecordedHotkey(int modifiers, int vk) {
-  const Hotkey next{modifiers, vk};
-  if (!HotkeyAccepted(next)) {
-    CloseRecord();
-    return;
-  }
-  Settings updated = settings_;
+bool Engine::SaveRecordedHotkey(void* self, Hotkey next) {
+  auto* engine = static_cast<Engine*>(self);
+  Settings updated = engine->settings_;
   updated.hotkey = next;
-  SaveSettings(config_path_, updated);
-  const Settings loaded = LoadSettings(config_path_);
-  if (loaded.hotkey.modifiers == next.modifiers && loaded.hotkey.vk == next.vk) settings_ = loaded;
-  CloseRecord();
+  if (!SaveSettings(engine->config_path_, updated)) return false;
+  engine->settings_ = updated;
+  return true;
 }
-
-LRESULT CALLBACK Engine::RecordProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
-  if (message == WM_NCCREATE) {
-    const auto* created = reinterpret_cast<CREATESTRUCTW*>(lparam);
-    SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(created->lpCreateParams));
-    return DefWindowProcW(hwnd, message, wparam, lparam);
-  }
-  auto* self = reinterpret_cast<Engine*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
-  if (self == nullptr) return DefWindowProcW(hwnd, message, wparam, lparam);
-  return self->OnRecord(hwnd, message, wparam, lparam);
-}
-
-LRESULT Engine::OnRecord(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
-  if (message == WM_KEYDOWN || message == WM_SYSKEYDOWN) {
-    const int vk = static_cast<int>(wparam);
-    if (vk == VK_SHIFT || vk == VK_LSHIFT || vk == VK_RSHIFT || vk == VK_CONTROL || vk == VK_LCONTROL ||
-        vk == VK_RCONTROL || vk == VK_MENU || vk == VK_LMENU || vk == VK_RMENU) {
-      return 0;
-    }
-    if (vk == VK_ESCAPE) {
-      CloseRecord();
-      return 0;
-    }
-    int modifiers = 0;
-    if ((GetKeyState(VK_CONTROL) & 0x8000) != 0) modifiers |= 1;
-    if ((GetKeyState(VK_MENU) & 0x8000) != 0) modifiers |= 2;
-    if ((GetKeyState(VK_SHIFT) & 0x8000) != 0) modifiers |= 4;
-    ApplyRecordedHotkey(modifiers, vk);
-    return 0;
-  }
-  if (message == WM_PAINT) {
-    PAINTSTRUCT paint;
-    HDC dc = BeginPaint(hwnd, &paint);
-    RECT rect{};
-    GetClientRect(hwnd, &rect);
-    const std::wstring text = Utf8ToWide("按下新的快捷键。Esc 取消。");
-    DrawTextW(dc, text.c_str(), static_cast<int>(text.size()), &rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-    EndPaint(hwnd, &paint);
-    return 0;
-  }
-  if (message == WM_CLOSE) {
-    CloseRecord();
-    return 0;
-  }
-  if (message == WM_DESTROY) {
-    if (record_hwnd_ == hwnd) record_hwnd_ = nullptr;
-    return 0;
-  }
-  return DefWindowProcW(hwnd, message, wparam, lparam);
-}
-
 void Engine::UpdateBox() {
+  UiDpiScope coordinates;
   if (session_.phase() == Phase::Idle) {
     box_.Hide();
     return;
   }
+#ifndef VOICEIME_TESTING
+  DWORD foreground_process=0;
+  GetWindowThreadProcessId(GetForegroundWindow(),&foreground_process);
+  if (caret_known_ && caret_process_!=0 && caret_process_!=foreground_process) { box_.Hide(); return; }
+  if (!caret_known_ && GetTickCount64()-listening_started_<180) return;
+#endif
   const std::string text = mic_error_.empty() ? session_.box_text() : mic_error_;
   Rect caret{0, 0, 0, 0};
   Rect window = ForegroundClient();
@@ -462,15 +466,16 @@ void Engine::UpdateBox() {
       window = window_rect_;
     }
   }
-  box_.ShowText(text, caret, window);
+  box_.ShowText(text, caret, window, session_.phase(), !mic_error_.empty(), insert_uncertain_);
 }
 
-bool Engine::WriteClient(const Message& message) {
+bool Engine::WriteClient(const Message& message, ClientId target) {
   std::lock_guard<std::mutex> lock(write_mu_);
-  HANDLE target = active_pipe_;
-  if (target == INVALID_HANDLE_VALUE && !clients_.empty()) target = clients_.back();
-  if (target == INVALID_HANDLE_VALUE || write_event_ == nullptr) return false;
-  outgoing_.emplace_back(target, Encode(message));
+  if (write_event_ == nullptr || std::none_of(clients_.begin(), clients_.end(),
+      [target](const auto& client) { return client.id == target; })) return false;
+  auto bytes = Encode(message);
+  if (bytes.empty()) return false;
+  outgoing_.emplace_back(target, std::move(bytes));
   SetEvent(write_event_);
   return true;
 }
@@ -479,11 +484,14 @@ void Engine::Broadcast(const Message& message) {
   std::lock_guard<std::mutex> lock(write_mu_);
   if (write_event_ == nullptr) return;
   const std::string bytes = Encode(message);
-  for (HANDLE client : clients_) outgoing_.emplace_back(client, bytes);
+  if (bytes.empty()) return;
+  for (const auto& client : clients_) outgoing_.emplace_back(client.id, bytes);
   if (!clients_.empty()) SetEvent(write_event_);
 }
 
 void Engine::PublishPhase() {
+  if (session_.phase()==Phase::Idle) KillTimer(box_.hwnd(),kAnchorTimer);
+  else SetTimer(box_.hwnd(),kAnchorTimer,80,nullptr);
   Message phase;
   phase.type = MsgType::Phase;
   phase.text = std::to_string(static_cast<int>(session_.phase()));
@@ -499,6 +507,7 @@ void Engine::RequestCaret() {
 void Engine::StoreLexicon() {
   std::string stored;
   if (!session_.TakeLexiconWrite(&stored) || !lexicon_) return;
+  try {
   std::vector<Token> tokens;
   if (segmenter_) {
     segmenter_->Remember(stored);
@@ -506,20 +515,51 @@ void Engine::StoreLexicon() {
     for (const Token& token : tokens) segmenter_->Remember(token.text);
   }
   lexicon_->Commit(stored, tokens, static_cast<std::int64_t>(std::time(nullptr)));
+  lexicon_warning_.clear();
+  } catch (const std::exception& e) { LexiconWarning(e.what()); }
+}
+
+void Engine::LexiconWarning(const char* diagnostic) {
+  std::fprintf(stderr, "lexicon unavailable: %s\n", diagnostic);
+  const bool first = lexicon_warning_.empty();
+  lexicon_warning_ = "词库暂不可用，已写入的文字不受影响";
+  if (!first || !tray_added_) return;
+  NOTIFYICONDATAW icon{};
+  icon.cbSize = sizeof(icon); icon.hWnd = box_.hwnd(); icon.uID = 1;
+  icon.uFlags = NIF_INFO; icon.dwInfoFlags = NIIF_WARNING;
+  wcscpy_s(icon.szInfoTitle, L"语音词库未更新");
+  wcscpy_s(icon.szInfo, L"已写入的文字不受影响。请稍后重试，或从托盘查看词库状态。");
+  Shell_NotifyIconW(NIM_MODIFY, &icon);
 }
 
 void Engine::PublishCommit() {
   std::string commit;
   if (!session_.TakeCommit(&commit)) return;
   pending_insert_ = commit;
+  insert_id_ = ++next_insert_id_;
+  insert_client_ = commit_client_;
+  insert_uncertain_ = false;
   Message done;
-  done.type = MsgType::CommitDone;
+  done.type = MsgType::InsertText;
+  done.request_id = insert_id_;
   done.text = commit;
-  if (!WriteClient(done)) {
+  if (!WriteClient(done, insert_client_)) {
     session_.RestorePending(pending_insert_);
     pending_insert_.clear();
+    insert_id_ = 0;
     PublishPhase();
-  }
+  } else if (!SetTimer(box_.hwnd(), kInsertTimer, 5000, nullptr)) LoseInsertConfirmation();
+}
+
+void Engine::LoseInsertConfirmation() {
+  if (insert_id_ == 0) return;
+  Message cancel; cancel.type = MsgType::CancelInsert; cancel.request_id = insert_id_;
+  WriteClient(cancel, insert_client_);
+  KillTimer(box_.hwnd(), kInsertTimer);
+  session_.RestorePending(pending_insert_);
+  pending_insert_.clear(); insert_id_ = 0;
+  insert_uncertain_ = true;
+  UpdateBox(); PublishPhase();
 }
 
 void Engine::BeginFinalize() {
@@ -540,8 +580,7 @@ void Engine::BeginFinalize() {
 
 void Engine::PublishFinal(const std::string& final_text) {
   session_.OnFinal(final_text);
-  std::fprintf(stderr, "final: %s\n", final_text.c_str());
-  PublishCommit();
+  if (recognizer_ && !recognizer_->TakeWarning().empty()) LexiconWarning("recognition retained without lexicon bias");
   if (session_.phase() != Phase::Idle) RequestCaret();
   UpdateBox();
   PublishPhase();
@@ -551,9 +590,11 @@ void Engine::StartCapture() {
   StopCapture();
   mic_error_.clear();
   vad_.Reset();
+  partial_posted_ = false;
   stop_capture_ = false;
   wake_ = CreateEventW(nullptr, FALSE, FALSE, nullptr);
-  capture_thread_ = std::thread([this] { CaptureMain(); });
+  const int generation = ++capture_generation_;
+  capture_thread_ = std::thread([this, generation] { CaptureMain(generation); });
 }
 
 void Engine::StopCapture() {
@@ -570,11 +611,7 @@ void Engine::StopCapture() {
 void Engine::OnPartial() {
   partial_posted_ = false;
   if (session_.phase() != Phase::Listening) return;
-  if (!mic_error_.empty()) {
-    session_.OnDraft(mic_error_);
-  } else {
-    session_.OnDraft(recognizer_->Partial());
-  }
+  session_.OnDraft(recognizer_->Partial());
   UpdateBox();
 }
 
@@ -590,18 +627,23 @@ void Engine::ShowMenu(HWND hwnd) {
   HMENU recent = CreatePopupMenu();
   recent_menu_.clear();
   if (lexicon_) {
+    try {
     for (const Entry& entry : lexicon_->Recent(20)) {
       if (recent_menu_.size() >= 20) break;
       recent_menu_.push_back(entry.text);
       AppendMenuW(recent, MF_STRING, kRecentBase + static_cast<UINT>(recent_menu_.size() - 1),
-                  Utf8ToWide(entry.text).c_str());
+                  Utf8ToWide("删除「" + entry.text + "」").c_str());
     }
+    } catch (const std::exception& e) { LexiconWarning(e.what()); }
   }
   if (recent_menu_.empty()) {
     AppendMenuW(recent, MF_STRING | MF_GRAYED, kRecentBase, Utf8ToWide("（空）").c_str());
   }
   AppendMenuW(menu, MF_STRING, kRecordCommand, Utf8ToWide("设置快捷键").c_str());
-  AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(recent), Utf8ToWide("最近记住的词").c_str());
+  if (const auto skins=UiSkinMenu(box_.skin(),kSkinBase))
+    AppendMenuW(menu,MF_POPUP,reinterpret_cast<UINT_PTR>(skins),L"皮肤");
+  if (!lexicon_warning_.empty()) AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, Utf8ToWide(lexicon_warning_).c_str());
+  AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(recent), Utf8ToWide("最近记住的词（点击删除）").c_str());
   AppendMenuW(menu, MF_STRING, kQuitCommand, Utf8ToWide("退出").c_str());
   POINT point;
   GetCursorPos(&point);
@@ -610,23 +652,39 @@ void Engine::ShowMenu(HWND hwnd) {
   DestroyMenu(menu);
 }
 
-void Engine::OnPipe(const Message& message) {
+void Engine::OnPipe(ClientId sender, const Message& message) {
   if (message.type == MsgType::ShowSettings) {
     ShowMenu(box_.hwnd());
     return;
   }
-  if (message.type == MsgType::InsertAck) {
+  if (message.type == MsgType::InsertResult) {
+    if (insert_id_ == 0 || sender != insert_client_ || message.request_id != insert_id_) return;
+    KillTimer(box_.hwnd(), kInsertTimer);
     if (message.text == "ok") {
+      session_.ConfirmInserted();
       StoreLexicon();
     } else if (!pending_insert_.empty()) {
       session_.RestorePending(pending_insert_);
     }
     pending_insert_.clear();
+    insert_id_ = 0;
+    insert_uncertain_ = false;
     UpdateBox();
     PublishPhase();
     return;
   }
   if (message.type == MsgType::Caret) {
+    if (message.caret_w<=0 || message.caret_h<=0) return;
+#ifndef VOICEIME_TESTING
+    DWORD foreground_process=0,client_process=0;
+    GetWindowThreadProcessId(GetForegroundWindow(),&foreground_process);
+    {
+      std::lock_guard<std::mutex> lock(write_mu_);
+      for (const auto& client:clients_) if(client.id==sender) client_process=client.process;
+    }
+    if (!client_process || client_process!=foreground_process) return;
+    caret_process_=client_process;
+#endif
     caret_known_ = true;
     caret_ = Rect{message.caret_x, message.caret_y, message.caret_w, message.caret_h};
     window_rect_ = Rect{message.window_x, message.window_y, message.window_w, message.window_h};
@@ -634,6 +692,8 @@ void Engine::OnPipe(const Message& message) {
     return;
   }
   if (message.type == MsgType::Enter) {
+    if (!mic_error_.empty()) return;
+    if (session_.phase() == Phase::Committing || session_.phase() == Phase::Finalizing) return;
     if (session_.phase() == Phase::Listening) {
       session_.Enter();
       StopCapture();
@@ -642,6 +702,7 @@ void Engine::OnPipe(const Message& message) {
       PublishPhase();
       return;
     }
+    commit_client_ = sender;
     session_.Enter();
     PublishCommit();
     UpdateBox();
@@ -649,11 +710,14 @@ void Engine::OnPipe(const Message& message) {
     return;
   }
   if (message.type == MsgType::Cancel) {
+    if (session_.phase() == Phase::Committing) return;
     ++finalize_generation_;
     StopCapture();
     if (finalize_thread_.joinable()) finalize_thread_.join();
     session_.Escape();
     pending_insert_.clear();
+    insert_id_ = 0;
+    insert_uncertain_ = false;
     mic_error_.clear();
     caret_known_ = false;
     UpdateBox();
@@ -668,10 +732,13 @@ void Engine::OnPipe(const Message& message) {
     UpdateBox();
     return;
   }
-  if (session_.phase() == Phase::Finalizing) return;
+  if (session_.phase() == Phase::Finalizing || session_.phase() == Phase::Committing) return;
   if (finalize_thread_.joinable()) finalize_thread_.join();
   recognizer_->Reset();
   caret_known_ = false;
+  caret_process_ = 0;
+  listening_started_=GetTickCount64();
+  insert_uncertain_ = false;
   session_.Hotkey();
   StartCapture();
   RequestCaret();
@@ -680,18 +747,20 @@ void Engine::OnPipe(const Message& message) {
 }
 
 LRESULT Engine::OnMessage(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
+  if (message == kClientGoneMessage) {
+    if (insert_id_ != 0 && static_cast<ClientId>(wparam) == insert_client_) LoseInsertConfirmation();
+    return 0;
+  }
+  if (message == WM_TIMER && wparam == kInsertTimer) { LoseInsertConfirmation(); return 0; }
+  if (message == WM_TIMER && wparam == kAnchorTimer) { UpdateBox(); return 0; }
   if (message == kPipeMessage) {
-    std::deque<std::pair<HANDLE, Message>> local;
+    std::deque<std::pair<ClientId, Message>> local;
     {
       std::lock_guard<std::mutex> lock(inbox_mu_);
       local.swap(inbox_);
     }
     for (const auto& item : local) {
-      {
-        std::lock_guard<std::mutex> lock(write_mu_);
-        if (item.first != INVALID_HANDLE_VALUE) active_pipe_ = item.first;
-      }
-      OnPipe(item.second);
+      OnPipe(item.first, item.second);
     }
     return 0;
   }
@@ -710,11 +779,22 @@ LRESULT Engine::OnMessage(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
     return 0;
   }
   if (message == kPartialMessage) {
-    OnPartial();
+    if (static_cast<int>(wparam) == capture_generation_) OnPartial();
     return 0;
   }
   if (message == kEndpointMessage) {
-    OnEndpoint();
+    if (static_cast<int>(wparam) == capture_generation_) OnEndpoint();
+    return 0;
+  }
+  if (message == kCaptureErrorMessage) {
+    if (static_cast<int>(wparam) == capture_generation_ && session_.phase() == Phase::Listening) {
+      StopCapture();
+      // The capture thread posts a static diagnostic; UI state has one owner.
+      mic_error_ = reinterpret_cast<const char*>(lparam);
+      session_.RestorePending("");
+      UpdateBox();
+      PublishPhase();
+    }
     return 0;
   }
   if (message == kTrayMessage && (lparam == WM_RBUTTONUP || lparam == WM_LBUTTONUP)) {
@@ -731,8 +811,30 @@ LRESULT Engine::OnMessage(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
       BeginRecordHotkey();
       return 0;
     }
+    if (id>=kSkinBase && id<kSkinBase+3) {
+      const auto skin=static_cast<UiSkin>(id-kSkinBase);
+      if (SaveSkin(skin_path_,skin)) {
+        box_.SetSkin(skin);
+#ifndef VOICEIME_TESTING
+        // Existing candidate windows in other applications reload the saved
+        // preference; this does not send keystrokes or change editor focus.
+        SendNotifyMessageW(HWND_BROADCAST,UiSkinChangedMessage(),0,0);
+#endif
+      } else {
+        std::fprintf(stderr,"appearance preference could not be saved\n");
+        if (tray_added_) {
+          NOTIFYICONDATAW icon{}; icon.cbSize=sizeof(icon); icon.hWnd=box_.hwnd(); icon.uID=1;
+          icon.uFlags=NIF_INFO; icon.dwInfoFlags=NIIF_WARNING;
+          wcscpy_s(icon.szInfoTitle,L"皮肤未切换");
+          wcscpy_s(icon.szInfo,L"未能保存皮肤选择，仍使用原来的皮肤。请稍后重试。");
+          Shell_NotifyIconW(NIM_MODIFY,&icon);
+        }
+      }
+      return 0;
+    }
     if (lexicon_ != nullptr && id >= kRecentBase && id < kRecentBase + recent_menu_.size()) {
-      lexicon_->Delete(recent_menu_[id - kRecentBase]);
+      try { lexicon_->Delete(recent_menu_[id - kRecentBase]); lexicon_warning_.clear(); }
+      catch (const std::exception& e) { LexiconWarning(e.what()); }
       return 0;
     }
   }
@@ -744,16 +846,14 @@ LRESULT Engine::OnMessage(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
   return DefWindowProcW(hwnd, message, wparam, lparam);
 }
 
-void Engine::ClientLoop(HANDLE pipe) {
+void Engine::ClientLoop(ClientId id, HANDLE pipe) {
   PostMessageW(box_.hwnd(), kAnnounceMessage, 0, 0);
-  OVERLAPPED overlap{};
-  overlap.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
   std::string buffer;
-  auto take_outgoing = [this, pipe] {
+  auto take_outgoing = [this, id] {
     std::vector<std::string> mine;
     std::lock_guard<std::mutex> lock(write_mu_);
     for (auto it = outgoing_.begin(); it != outgoing_.end();) {
-      if (it->first == pipe) {
+      if (it->first == id) {
         mine.push_back(std::move(it->second));
         it = outgoing_.erase(it);
       } else {
@@ -763,66 +863,62 @@ void Engine::ClientLoop(HANDLE pipe) {
     if (outgoing_.empty() && write_event_ != nullptr) ResetEvent(write_event_);
     return mine;
   };
-  auto deliver = [this, pipe](std::string& pending) {
+  auto deliver = [this, id](std::string& pending) {
     for (;;) {
       Message decoded;
       std::size_t used = 0;
-      if (!Decode(pending, &decoded, &used)) break;
+      const auto status = DecodeFrame(pending, &decoded, &used);
+      if (status == DecodeStatus::Invalid) return false;
+      if (status == DecodeStatus::Incomplete) return true;
       pending.erase(0, used);
       {
         std::lock_guard<std::mutex> lock(inbox_mu_);
-        inbox_.emplace_back(pipe, std::move(decoded));
+        inbox_.emplace_back(id, std::move(decoded));
       }
       PostMessageW(box_.hwnd(), kPipeMessage, 0, 0);
     }
   };
-  while (!stop_pipe_ && overlap.hEvent != nullptr) {
+  while (!stop_pipe_) {
     const std::vector<std::string> mine = take_outgoing();
     if (!mine.empty()) {
       bool failed = false;
       for (const std::string& bytes : mine) {
-        if (!WriteAll(pipe, bytes)) failed = true;
+        if (!WritePipeBytes(pipe, bytes, stop_event_)) { failed = true; break; }
       }
       if (failed || stop_pipe_) break;
       continue;
     }
-    ResetEvent(overlap.hEvent);
-    char chunk[4096];
-    DWORD got = 0;
-    const BOOL ok = ReadFile(pipe, chunk, sizeof(chunk), &got, &overlap);
-    if (!ok && GetLastError() == ERROR_IO_PENDING) {
-      HANDLE waits[2] = {overlap.hEvent, write_event_};
-      const DWORD which = WaitForMultipleObjects(write_event_ == nullptr ? 1 : 2, waits, FALSE, INFINITE);
-      if (stop_pipe_ || which == WAIT_OBJECT_0 + 1) {
-        CancelIoEx(pipe, &overlap);
-        DWORD partial = 0;
-        if (GetOverlappedResult(pipe, &overlap, &partial, TRUE) && partial > 0) {
-          buffer.append(chunk, chunk + partial);
-          deliver(buffer);
-        }
-        if (stop_pipe_) break;
-        continue;
-      }
-      if (!GetOverlappedResult(pipe, &overlap, &got, FALSE) || got == 0) break;
-    } else if (!ok || got == 0) {
-      break;
-    }
-    buffer.append(chunk, chunk + got);
-    deliver(buffer);
+    const PipeReadResult received = ReadPipeChunk(pipe, write_event_, stop_event_);
+    buffer += received.bytes;
+    if (!deliver(buffer)) break;
+    if (received.status == PipeReadStatus::Closed) break;
   }
-  if (overlap.hEvent != nullptr) CloseHandle(overlap.hEvent);
   {
     std::lock_guard<std::mutex> lock(write_mu_);
-    if (active_pipe_ == pipe) active_pipe_ = INVALID_HANDLE_VALUE;
-    clients_.erase(std::remove(clients_.begin(), clients_.end(), pipe), clients_.end());
+    clients_.erase(std::remove_if(clients_.begin(), clients_.end(),
+        [id](const auto& client) { return client.id == id; }), clients_.end());
+    outgoing_.erase(std::remove_if(outgoing_.begin(), outgoing_.end(),
+        [id](const auto& item) { return item.first == id; }), outgoing_.end());
+    if (outgoing_.empty() && write_event_ != nullptr) ResetEvent(write_event_);
   }
   DisconnectNamedPipe(pipe);
   CloseHandle(pipe);
+  PostMessageW(box_.hwnd(), kClientGoneMessage, id, 0);
+}
+
+void Engine::ReapClients() {
+  for (auto it = client_threads_.begin(); it != client_threads_.end();) {
+    if (!it->finished->load()) { ++it; continue; }
+    it->thread.join();
+    it = client_threads_.erase(it);
+  }
 }
 
 void Engine::PipeMain() {
+  ClientId next_client = 0;
   while (!stop_pipe_) {
-    HANDLE pipe = CreateNamedPipeW(L"\\\\.\\pipe\\VoiceIme", PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED,
+    ReapClients();
+    HANDLE pipe = CreateNamedPipeW(PipeName().c_str(), PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED,
                                     PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
                                     PIPE_UNLIMITED_INSTANCES, 65536, 65536, 0, nullptr);
     if (pipe == INVALID_HANDLE_VALUE) {
@@ -843,9 +939,15 @@ void Engine::PipeMain() {
         const DWORD error = GetLastError();
         if (error == ERROR_IO_PENDING) {
           while (!stop_pipe_ && WaitForSingleObject(connect.hEvent, 200) == WAIT_TIMEOUT) {
+            ReapClients();
           }
           DWORD unused = 0;
-          connected = !stop_pipe_ && GetOverlappedResult(pipe, &connect, &unused, FALSE);
+          if (stop_pipe_) {
+            CancelIoEx(pipe, &connect);
+            GetOverlappedResult(pipe, &connect, &unused, TRUE);
+          } else {
+            connected = GetOverlappedResult(pipe, &connect, &unused, FALSE);
+          }
         } else if (error == ERROR_PIPE_CONNECTED) {
           connected = TRUE;
         }
@@ -861,15 +963,47 @@ void Engine::PipeMain() {
       if (stop_pipe_) return;
       continue;
     }
+    const ClientId id = ++next_client;
+    DWORD process=0;
+    using QueryClient=BOOL(WINAPI*)(HANDLE,PULONG);
+    static auto query_client=reinterpret_cast<QueryClient>(GetProcAddress(GetModuleHandleW(L"kernel32.dll"),"GetNamedPipeClientProcessId"));
+    if (query_client) query_client(pipe,&process);
     {
       std::lock_guard<std::mutex> lock(write_mu_);
-      clients_.push_back(pipe);
+      clients_.push_back({id, pipe, process});
     }
-    client_threads_.emplace_back([this, pipe] { ClientLoop(pipe); });
+    auto finished = std::make_shared<std::atomic<bool>>(false);
+    client_threads_.push_back({std::thread([this, id, pipe, finished] {
+      ClientLoop(id, pipe); finished->store(true);
+    }), finished});
   }
 }
 
-void Engine::CaptureMain() {
+void Engine::CaptureMain(int generation) {
+#ifdef VOICEIME_TESTING
+  const auto fixture = TestEnvironment(L"VOICEIME_TEST_CAPTURE");
+  if (fixture == L"error") {
+    PostMessageW(box_.hwnd(), kCaptureErrorMessage, static_cast<WPARAM>(generation),
+                 reinterpret_cast<LPARAM>("测试：麦克风采集已中断"));
+    return;
+  }
+  std::vector<std::int16_t> fixture_samples(fixture == L"silence" ? 16000 * 6 : 320, 0);
+  int fixture_frames=0;
+  while (!stop_capture_) {
+    if(fixture==L"speech-end") std::fill(fixture_samples.begin(),fixture_samples.end(),fixture_frames++<5 ? 1200 : 0);
+    recognizer_->AcceptAudio(fixture_samples.data(), fixture_samples.size());
+    if (fixture == L"silence" || fixture == L"speech-end") {
+      const auto event=vad_.Push(fixture_samples.data(),fixture_samples.size());
+      if(event==VadEvent::Endpoint || event==VadEvent::ForcedEndpoint) {
+        PostMessageW(box_.hwnd(), kEndpointMessage, static_cast<WPARAM>(generation), 0);
+        return;
+      }
+    }
+    if (!partial_posted_.exchange(true)) PostMessageW(box_.hwnd(), kPartialMessage, static_cast<WPARAM>(generation), 0);
+    if (WaitForSingleObject(wake_, 20) == WAIT_OBJECT_0) break;
+  }
+  return;
+#endif
   const HRESULT com = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
   IMMDeviceEnumerator* enumerator = nullptr;
   IMMDevice* device = nullptr;
@@ -878,39 +1012,46 @@ void Engine::CaptureMain() {
   WAVEFORMATEX* format = nullptr;
   bool started = false;
   auto fail = [&](const char* reason) {
-    mic_error_ = reason;
-    PostMessageW(box_.hwnd(), kPartialMessage, 0, 0);
+    stop_capture_ = true;
+    PostMessageW(box_.hwnd(), kCaptureErrorMessage, static_cast<WPARAM>(generation), reinterpret_cast<LPARAM>(reason));
   };
   if (FAILED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, __uuidof(IMMDeviceEnumerator),
                               reinterpret_cast<void**>(&enumerator))) ||
       enumerator == nullptr) {
-    fail("没有麦克风");
+    fail("未能打开麦克风。");
   } else if (FAILED(enumerator->GetDefaultAudioEndpoint(eCapture, eConsole, &device)) || device == nullptr) {
-    fail("没有麦克风");
+    fail("未能打开麦克风。");
   } else if (FAILED(device->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, reinterpret_cast<void**>(&client))) ||
              client == nullptr || FAILED(client->GetMixFormat(&format)) || format == nullptr) {
-    fail("没有麦克风");
+    fail("未能打开麦克风。");
   } else if (FAILED(client->Initialize(AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_EVENTCALLBACK, 2000000, 0, format,
                                         nullptr)) ||
              FAILED(client->SetEventHandle(wake_)) ||
              FAILED(client->GetService(__uuidof(IAudioCaptureClient), reinterpret_cast<void**>(&capture))) ||
              capture == nullptr || FAILED(client->Start())) {
-    fail("没有麦克风");
+    fail("未能打开麦克风。");
   } else {
     started = true;
   }
 
+  std::unique_ptr<Resampler16k> resampler;
+  if (started) {
+    if (format->nSamplesPerSec == 0 || format->nSamplesPerSec > 384000) {
+      fail("麦克风采样格式暂不支持，请更换输入设备。");
+    } else resampler = std::make_unique<Resampler16k>(format->nSamplesPerSec);
+  }
   while (started && !stop_capture_) {
     const DWORD waited = WaitForSingleObject(wake_, 200);
     if (stop_capture_) break;
-    if (waited != WAIT_OBJECT_0 && waited != WAIT_TIMEOUT) break;
+    if (waited != WAIT_OBJECT_0 && waited != WAIT_TIMEOUT) { fail("麦克风采集已中断"); break; }
     UINT32 packet = 0;
-    if (FAILED(capture->GetNextPacketSize(&packet))) break;
+    if (FAILED(capture->GetNextPacketSize(&packet))) { fail("麦克风采集已中断"); break; }
     while (packet > 0 && !stop_capture_) {
       BYTE* data = nullptr;
       UINT32 frames = 0;
       DWORD flags = 0;
       if (FAILED(capture->GetBuffer(&data, &frames, &flags, nullptr, nullptr))) {
+        fail("麦克风采集已中断");
         packet = 0;
         break;
       }
@@ -921,27 +1062,30 @@ void Engine::CaptureMain() {
         mono = ToMono16(data, frames, format);
       }
       capture->ReleaseBuffer(frames);
-      std::vector<std::int16_t> samples =
-          format->nSamplesPerSec == 16000 ? std::move(mono) : ResampleTo16k(mono.data(), mono.size(), format->nSamplesPerSec);
+      std::vector<std::int16_t> samples = resampler->Process(mono.data(), mono.size());
       recognizer_->AcceptAudio(samples.data(), samples.size());
       const VadEvent event = vad_.Push(samples.data(), samples.size());
       if (event == VadEvent::Endpoint || event == VadEvent::ForcedEndpoint) {
-        if (!stop_capture_) PostMessageW(box_.hwnd(), kEndpointMessage, 0, 0);
+        if (!stop_capture_) PostMessageW(box_.hwnd(), kEndpointMessage, static_cast<WPARAM>(generation), 0);
         stop_capture_ = true;
         break;
       }
-      if (!partial_posted_.exchange(true)) PostMessageW(box_.hwnd(), kPartialMessage, 0, 0);
-      if (FAILED(capture->GetNextPacketSize(&packet))) packet = 0;
+      if (!partial_posted_.exchange(true)) PostMessageW(box_.hwnd(), kPartialMessage, static_cast<WPARAM>(generation), 0);
+      if (FAILED(capture->GetNextPacketSize(&packet))) { fail("麦克风采集已中断"); packet = 0; }
     }
   }
 
+  if (resampler) {
+    const auto tail = resampler->Flush();
+    if (!tail.empty()) recognizer_->AcceptAudio(tail.data(), tail.size());
+  }
   if (started && client != nullptr) client->Stop();
   if (format != nullptr) CoTaskMemFree(format);
   if (capture != nullptr) capture->Release();
   if (client != nullptr) client->Release();
   if (device != nullptr) device->Release();
   if (enumerator != nullptr) enumerator->Release();
-  if (com == S_OK) CoUninitialize();
+  if (SUCCEEDED(com)) CoUninitialize();
 }
 
 }  // namespace
@@ -949,6 +1093,11 @@ void Engine::CaptureMain() {
 int main(int argc, char** argv) {
   bool fake = false;
   for (int i = 1; i < argc; ++i) {
+    if (std::strcmp(argv[i], "--version") == 0) {
+      std::printf("%s %s-preview\n", kProductName, SIMPLE_VOICE_VERSION);
+      return 0;
+    }
+    if (std::strcmp(argv[i], "--check") == 0) return CheckInstallation();
     if (std::strcmp(argv[i], "--fake") == 0) fake = true;
   }
   Engine engine;

@@ -22,7 +22,27 @@ std::uint32_t ReadLe32(std::string_view bytes, std::size_t at) {
 
 }  // namespace
 
+namespace {
+bool ValidSize(MsgType type, std::size_t body) {
+  switch (type) {
+    case MsgType::StartListen: case MsgType::Cancel: case MsgType::Enter:
+    case MsgType::QueryCaret: case MsgType::ShowSettings: return body == 0;
+    case MsgType::SetHotkey: return body == 8;
+    case MsgType::Caret: return body == 32;
+    case MsgType::Phase: return body == 1;
+    case MsgType::InsertText: return body > 8;
+    case MsgType::InsertResult: return body == 10 || body == 12;
+    case MsgType::CancelInsert: return body == 8;
+    case MsgType::InsertAck: return body == 2 || body == 4;
+    case MsgType::Draft: case MsgType::Final: case MsgType::CommitDone:
+    case MsgType::ListRecent: case MsgType::DeleteEntry: return true;
+  }
+  return false;
+}
+}
+
 std::string Encode(const Message& message) {
+  if (message.text.size() > kMaxFrameLength - 9) return {};
   std::string body;
   if (message.type == MsgType::SetHotkey) {
     body.assign(8, '\0');
@@ -33,11 +53,19 @@ std::string Encode(const Message& message) {
     const int values[] = {message.caret_x, message.caret_y, message.caret_w, message.caret_h,
                            message.window_x, message.window_y, message.window_w, message.window_h};
     for (int i = 0; i < 8; ++i) WriteLe32(body, static_cast<std::size_t>(i) * 4, static_cast<std::uint32_t>(values[i]));
-  } else if (message.type == MsgType::ShowSettings) {
-    // Body stays empty. The settings menu has no payload.
+  } else if (message.type == MsgType::InsertText || message.type == MsgType::InsertResult || message.type == MsgType::CancelInsert) {
+    if (message.request_id == 0) return {};
+    body.assign(8, '\0');
+    WriteLe32(body, 0, static_cast<std::uint32_t>(message.request_id));
+    WriteLe32(body, 4, static_cast<std::uint32_t>(message.request_id >> 32));
+    body += message.text;
   } else {
     body = message.text;
   }
+  if (!ValidSize(message.type, body.size())) return {};
+  if ((message.type == MsgType::InsertResult || message.type == MsgType::InsertAck) &&
+      message.text != "ok" && message.text != "fail") return {};
+  if (message.type == MsgType::Phase && (message.text[0] < '0' || message.text[0] > '4')) return {};
   const auto length = static_cast<std::uint32_t>(1 + body.size());
   std::string out(4 + length, '\0');
   WriteLe32(out, 0, length);
@@ -46,29 +74,39 @@ std::string Encode(const Message& message) {
   return out;
 }
 
-bool Decode(std::string_view bytes, Message* out, std::size_t* consumed) {
+DecodeStatus DecodeFrame(std::string_view bytes, Message* out, std::size_t* consumed) {
   if (consumed != nullptr) *consumed = 0;
-  if (bytes.size() < 4) return false;
+  if (bytes.size() < 4) return DecodeStatus::Incomplete;
   const std::uint32_t length = ReadLe32(bytes, 0);
-  if (length < 1 || bytes.size() < 4u + length) return false;
+  if (length < 1 || length > kMaxFrameLength) return DecodeStatus::Invalid;
+  if (bytes.size() < 5) return DecodeStatus::Incomplete;
   Message message;
   message.type = static_cast<MsgType>(static_cast<unsigned char>(bytes[4]));
+  if (!ValidSize(message.type, length - 1)) return DecodeStatus::Invalid;
+  if (bytes.size() - 4 < length) return DecodeStatus::Incomplete;
   const std::string_view body = bytes.substr(5, length - 1);
   if (message.type == MsgType::SetHotkey) {
-    if (body.size() != 8) return false;
     message.key_mod = static_cast<int>(ReadLe32(body, 0));
     message.key_vk = static_cast<int>(ReadLe32(body, 4));
   } else if (message.type == MsgType::Caret) {
-    if (body.size() != 32) return false;
     int* values[] = {&message.caret_x, &message.caret_y, &message.caret_w, &message.caret_h,
                       &message.window_x, &message.window_y, &message.window_w, &message.window_h};
     for (int i = 0; i < 8; ++i) *values[i] = static_cast<int>(ReadLe32(body, static_cast<std::size_t>(i) * 4));
-  } else if (message.type == MsgType::ShowSettings) {
-    if (!body.empty()) return false;
+  } else if (message.type == MsgType::InsertText || message.type == MsgType::InsertResult || message.type == MsgType::CancelInsert) {
+    message.request_id = ReadLe32(body, 0) | (static_cast<std::uint64_t>(ReadLe32(body, 4)) << 32);
+    if (message.request_id == 0) return DecodeStatus::Invalid;
+    message.text = std::string(body.substr(8));
   } else {
     message.text.assign(body.data(), body.size());
   }
+  if ((message.type == MsgType::InsertResult || message.type == MsgType::InsertAck) &&
+      message.text != "ok" && message.text != "fail") return DecodeStatus::Invalid;
+  if (message.type == MsgType::Phase && (message.text[0] < '0' || message.text[0] > '4')) return DecodeStatus::Invalid;
   if (out != nullptr) *out = std::move(message);
-  if (consumed != nullptr) *consumed = 4u + length;
-  return true;
+  if (consumed != nullptr) *consumed = 4 + static_cast<std::size_t>(length);
+  return DecodeStatus::Complete;
+}
+
+bool Decode(std::string_view bytes, Message* out, std::size_t* consumed) {
+  return DecodeFrame(bytes, out, consumed) == DecodeStatus::Complete;
 }

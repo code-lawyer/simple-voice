@@ -3,8 +3,11 @@
 #include "tsf_service.hpp"
 
 #include "candidate_bar.hpp"
+#include "ui_theme.hpp"
 #include "hotkey.hpp"
+#include "settings.hpp"
 #include "ipc.hpp"
+#include "pipe_io.hpp"
 #include "register_status.hpp"
 #include "rime_session.hpp"
 
@@ -12,6 +15,8 @@
 #include <oleauto.h>
 
 #include <cstdint>
+#include <algorithm>
+#include <atomic>
 #include <cstring>
 #include <mutex>
 #include <string>
@@ -39,6 +44,12 @@ namespace {
 
 constexpr UINT kCommitMessage = WM_APP + 1;
 constexpr UINT kCaretMessage = WM_APP + 2;
+constexpr UINT kTrackingMessage = WM_APP + 3;
+constexpr UINT_PTR kTrackingTimer = 1;
+struct IncomingCommit {
+  std::wstring text;
+  std::uint64_t id = 0, connection = 0;
+};
 
 std::wstring Utf8ToWide(const std::string& utf8) {
   if (utf8.empty()) return L"";
@@ -48,57 +59,12 @@ std::wstring Utf8ToWide(const std::string& utf8) {
   return wide;
 }
 
-int NumberAfter(const std::string& json, const char* key, bool* ok) {
-  const auto at = json.find(std::string("\"") + key + "\"");
-  if (at == std::string::npos) {
-    *ok = false;
-    return 0;
-  }
-  auto cursor = json.find(':', at);
-  if (cursor == std::string::npos) {
-    *ok = false;
-    return 0;
-  }
-  ++cursor;
-  while (cursor < json.size() && (json[cursor] == ' ' || json[cursor] == '\t')) ++cursor;
-  if (cursor >= json.size() || json[cursor] < '0' || json[cursor] > '9') {
-    *ok = false;
-    return 0;
-  }
-  int value = 0;
-  while (cursor < json.size() && json[cursor] >= '0' && json[cursor] <= '9') {
-    value = value * 10 + (json[cursor] - '0');
-    ++cursor;
-  }
-  *ok = true;
-  return value;
-}
-
-// Local reader so Task 10 can still introduce LoadSettings without this copy
-// already satisfying that test. Missing or unreadable files stay on the default.
 Hotkey ReadConfiguredHotkey() {
   wchar_t local[MAX_PATH];
   const DWORD count = GetEnvironmentVariableW(L"LOCALAPPDATA", local, MAX_PATH);
   if (count == 0 || count >= MAX_PATH) return DefaultHotkey();
-  std::wstring path(local, count);
-  path += L"\\VoiceIme\\config.json";
-  const HANDLE file = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
-                                   FILE_ATTRIBUTE_NORMAL, nullptr);
-  if (file == INVALID_HANDLE_VALUE) return DefaultHotkey();
-  char buffer[4096];
-  DWORD got = 0;
-  const BOOL read = ReadFile(file, buffer, sizeof(buffer), &got, nullptr);
-  CloseHandle(file);
-  if (!read || got == 0) return DefaultHotkey();
-  const std::string json(buffer, buffer + got);
-  bool mod_ok = false;
-  bool vk_ok = false;
-  const int modifiers = NumberAfter(json, "modifiers", &mod_ok);
-  const int vk = NumberAfter(json, "vk", &vk_ok);
-  if (!mod_ok || !vk_ok || vk <= 0 || vk > 255) return DefaultHotkey();
-  return Hotkey{modifiers, vk};
+  return LoadSettings(std::wstring(local, count) + L"\\VoiceIme\\config.json").hotkey;
 }
-
 enum class CompositionEdit { SetPreedit, Commit, Cancel };
 
 std::wstring ModuleDirectory() {
@@ -292,8 +258,13 @@ class VoiceService : public ITfTextInputProcessor {
   VoiceService()
       : key_sink_(this), thread_sink_(this), composition_sink_(this), attribute_provider_(this), pinyin_(&rime_) {
     bar_.SetSettingsHandler(&VoiceService::SettingsClicked, this);
+    bar_.SetCandidateHandler(&VoiceService::CandidateClicked, this);
   }
-  ~VoiceService() { Deactivate(); }
+  ~VoiceService() {
+    bar_.SetSettingsHandler(nullptr, nullptr);
+    bar_.SetCandidateHandler(nullptr, nullptr);
+    Deactivate();
+  }
 
   HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, void** out) override {
     if (out == nullptr) return E_POINTER;
@@ -324,12 +295,14 @@ class VoiceService : public ITfTextInputProcessor {
   HRESULT OnKeyUp(ITfContext* context, WPARAM vk, WINBOOL* eaten, bool down);
   void OnForeground(bool foreground) {
     foreground_ = foreground;
+    last_caret_sent_.clear();
     if (!foreground) bar_.Hide();
+    UpdateTracking();
   }
 
   void ReadLoop();
-  void HandleCommit(const std::wstring& text);
-  void HandleCaret();
+  void HandleCommit(const IncomingCommit& request);
+  void HandleCaret(bool force = false);
 
  private:
   class KeySink : public ITfKeyEventSink {
@@ -387,7 +360,10 @@ class VoiceService : public ITfTextInputProcessor {
     ULONG STDMETHODCALLTYPE Release() override { return owner_->Release(); }
     HRESULT STDMETHODCALLTYPE OnInitDocumentMgr(ITfDocumentMgr*) override { return S_OK; }
     HRESULT STDMETHODCALLTYPE OnUninitDocumentMgr(ITfDocumentMgr*) override { return S_OK; }
-    HRESULT STDMETHODCALLTYPE OnSetFocus(ITfDocumentMgr*, ITfDocumentMgr*) override { return S_OK; }
+    HRESULT STDMETHODCALLTYPE OnSetFocus(ITfDocumentMgr* current, ITfDocumentMgr* previous) override {
+      owner_->OnDocumentFocus(current, previous);
+      return S_OK;
+    }
     HRESULT STDMETHODCALLTYPE OnPushContext(ITfContext*) override { return S_OK; }
     HRESULT STDMETHODCALLTYPE OnPopContext(ITfContext*) override { return S_OK; }
 
@@ -464,8 +440,11 @@ class VoiceService : public ITfTextInputProcessor {
           insert == nullptr) {
         return E_NOINTERFACE;
       }
-      const HRESULT hr = insert->InsertTextAtSelection(cookie, TF_IAS_NOQUERY, text.c_str(),
-                                                        static_cast<LONG>(text.size()), nullptr);
+      ITfRange* inserted = nullptr;
+      const HRESULT hr = insert->InsertTextAtSelection(cookie, 0, text.c_str(),
+                                                        static_cast<LONG>(text.size()), &inserted);
+      if (SUCCEEDED(hr) && inserted != nullptr) MoveCaretToEnd(cookie, context, inserted);
+      if (inserted != nullptr) inserted->Release();
       insert->Release();
       return hr;
     }
@@ -473,6 +452,7 @@ class VoiceService : public ITfTextInputProcessor {
 
   struct CaretSession : StackSession {
     ITfContext* context = nullptr;
+    ITfRange* anchor_range = nullptr;
     int caret_x = 0;
     int caret_y = 0;
     int caret_w = 0;
@@ -483,15 +463,22 @@ class VoiceService : public ITfTextInputProcessor {
     int window_h = 0;
     HRESULT STDMETHODCALLTYPE DoEditSession(TfEditCookie cookie) override {
       if (context == nullptr) return S_OK;
+      UiDpiScope coordinates;
       TF_SELECTION selection{};
       ULONG fetched = 0;
-      const HRESULT selected = context->GetSelection(cookie, TF_DEFAULT_SELECTION, 1, &selection, &fetched);
+      HRESULT selected = E_FAIL;
+      if (anchor_range) {
+        selected = anchor_range->Clone(&selection.range);
+        fetched = SUCCEEDED(selected) ? 1 : 0;
+        selection.style.ase = TF_AE_START;
+      } else selected = context->GetSelection(cookie, TF_DEFAULT_SELECTION, 1, &selection, &fetched);
       ITfContextView* view = nullptr;
       if (FAILED(context->GetActiveView(&view)) || view == nullptr) {
         if (SUCCEEDED(selected) && selection.range != nullptr) selection.range->Release();
         return S_OK;
       }
       if (SUCCEEDED(selected) && fetched > 0 && selection.range != nullptr) {
+        selection.range->Collapse(cookie, selection.style.ase == TF_AE_START ? TF_ANCHOR_START : TF_ANCHOR_END);
         RECT rect{};
         WINBOOL clipped = FALSE;
         if (SUCCEEDED(view->GetTextExt(cookie, selection.range, &rect, &clipped))) {
@@ -540,9 +527,10 @@ class VoiceService : public ITfTextInputProcessor {
   };
 
   bool DocumentAcceptsText(ITfContext* context) const;
-  bool WriteClient(const Message& message);
+  bool WriteClient(const Message& message, std::uint64_t connection = 0);
   void RequestSettings();
   static void SettingsClicked(void* self);
+  static void CandidateClicked(void* self, int index);
   bool EnsureRime();
   bool PipeConnected();
   KeyState MakeKeyState(ITfContext* context, WPARAM vk, LPARAM lparam);
@@ -559,8 +547,12 @@ class VoiceService : public ITfTextInputProcessor {
   void ShowCandidates(ITfContext* context);
   void SyncAfterRime(ITfContext* context);
   void CancelFocusComposition();
+  void OnDocumentFocus(ITfDocumentMgr* current, ITfDocumentMgr* previous);
   void LaunchEngine();
   void EnsureWindow();
+  void UpdateTracking();
+  void TrackCaret();
+  bool OwnsForeground() const;
   ITfContext* FocusContext() const;
   static LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam);
 
@@ -572,6 +564,7 @@ class VoiceService : public ITfTextInputProcessor {
   PinyinController pinyin_;
   CandidateBar bar_;
   ITfComposition* composition_ = nullptr;
+  ITfContext* composition_context_ = nullptr;
   bool ending_composition_ = false;
   bool rime_ready_ = false;
   bool rime_failed_ = false;
@@ -580,9 +573,16 @@ class VoiceService : public ITfTextInputProcessor {
   TfClientId client_id_ = 0;
   DWORD thread_cookie_ = 0;
   bool advised_keys_ = false;
-  bool foreground_ = true;
-  bool active_ = false;
+  std::atomic<bool> foreground_{true};
+  std::atomic<bool> active_{false};
+  std::atomic<std::uint64_t> connection_generation_{0}, cancelled_commit_{0};
+  std::uint64_t handled_connection_ = ~std::uint64_t{0}, handled_id_ = 0;
+  bool handled_success_ = false;
   bool pending_toggle_ = false;
+  bool tracking_ = false;
+  bool candidate_anchor_known_ = false;
+  Rect candidate_anchor_{}, candidate_window_{};
+  std::string last_caret_sent_;
   int eaten_vk_ = 0;
   HWND host_ = nullptr;
   HANDLE pipe_ = INVALID_HANDLE_VALUE;
@@ -597,8 +597,8 @@ class VoiceService : public ITfTextInputProcessor {
 bool VoiceService::DocumentAcceptsText(ITfContext* context) const {
   if (context == nullptr) return false;
   TF_STATUS status{};
-  if (FAILED(context->GetStatus(&status))) return false;
-  if ((status.dwStaticFlags & TF_SD_READONLY) != 0) return false;
+  if (FAILED(context->GetStatus(&status))) return true;
+  if ((status.dwDynamicFlags & TF_SD_READONLY) != 0) return false;
   ITfCompartmentMgr* manager = nullptr;
   if (FAILED(context->QueryInterface(IID_ITfCompartmentMgr, reinterpret_cast<void**>(&manager))) || manager == nullptr) {
     return true;
@@ -616,22 +616,13 @@ bool VoiceService::DocumentAcceptsText(ITfContext* context) const {
   return !disabled;
 }
 
-bool WriteAll(HANDLE pipe, const std::string& bytes) {
-  if (bytes.empty()) return true;
-  OVERLAPPED overlap{};
-  overlap.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-  if (overlap.hEvent == nullptr) return false;
-  DWORD wrote = 0;
-  BOOL ok = WriteFile(pipe, bytes.data(), static_cast<DWORD>(bytes.size()), &wrote, &overlap);
-  if (!ok && GetLastError() == ERROR_IO_PENDING) ok = GetOverlappedResult(pipe, &overlap, &wrote, TRUE);
-  CloseHandle(overlap.hEvent);
-  return ok == TRUE && wrote == bytes.size();
-}
-
-bool VoiceService::WriteClient(const Message& message) {
+bool VoiceService::WriteClient(const Message& message, std::uint64_t connection) {
   std::lock_guard<std::mutex> lock(write_mu_);
+  if (connection != 0 && connection != connection_generation_.load()) return false;
   if (pipe_ == INVALID_HANDLE_VALUE || write_event_ == nullptr) return false;
-  outgoing_.push_back(Encode(message));
+  auto bytes = Encode(message);
+  if (bytes.empty()) return false;
+  outgoing_.push_back(std::move(bytes));
   SetEvent(write_event_);
   return true;
 }
@@ -667,7 +658,21 @@ void VoiceService::SettingsClicked(void* self) {
   static_cast<VoiceService*>(self)->RequestSettings();
 }
 
+void VoiceService::CandidateClicked(void* self, int index) {
+  auto* service = static_cast<VoiceService*>(self);
+  if (index < 0 || index >= static_cast<int>(service->pinyin_.view().page.size())) return;
+  ITfContext* context = service->FocusContext();
+  if (context != nullptr && service->DocumentAcceptsText(context)) {
+    service->rime_.ProcessKey(0x31 + index, false);
+    service->SyncAfterRime(context);
+  }
+  if (context != nullptr) context->Release();
+}
+
 void VoiceService::LaunchEngine() {
+#ifdef VOICEIME_TESTING
+  return;  // Integration executable must never start the installed engine.
+#endif
   HANDLE mutex = OpenMutexW(SYNCHRONIZE, FALSE, L"Local\\VoiceImeEngine");
   const bool running = mutex != nullptr;
   if (mutex != nullptr) CloseHandle(mutex);
@@ -710,7 +715,7 @@ LRESULT CALLBACK VoiceService::WindowProc(HWND hwnd, UINT message, WPARAM wparam
   auto* self = reinterpret_cast<VoiceService*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
   if (self == nullptr) return DefWindowProcW(hwnd, message, wparam, lparam);
   if (message == kCommitMessage) {
-    auto* text = reinterpret_cast<std::wstring*>(lparam);
+    auto* text = reinterpret_cast<IncomingCommit*>(lparam);
     if (text != nullptr) {
       self->HandleCommit(*text);
       delete text;
@@ -718,9 +723,11 @@ LRESULT CALLBACK VoiceService::WindowProc(HWND hwnd, UINT message, WPARAM wparam
     return 0;
   }
   if (message == kCaretMessage) {
-    self->HandleCaret();
+    self->HandleCaret(true);
     return 0;
   }
+  if (message == kTrackingMessage) { self->UpdateTracking(); self->TrackCaret(); return 0; }
+  if (message == WM_TIMER && wparam == kTrackingTimer) { self->TrackCaret(); return 0; }
   return DefWindowProcW(hwnd, message, wparam, lparam);
 }
 
@@ -735,30 +742,70 @@ ITfContext* VoiceService::FocusContext() const {
   return context;
 }
 
-void VoiceService::HandleCommit(const std::wstring& text) {
+void VoiceService::HandleCommit(const IncomingCommit& request) {
+  if (request.id == 0 || request.connection != connection_generation_.load()) return;
+  if (handled_connection_ != request.connection) {
+    handled_connection_ = request.connection; handled_id_ = 0;
+  }
+  if (request.id < handled_id_) return;
+  if (request.id == handled_id_) {
+    Message ack; ack.type = MsgType::InsertResult; ack.request_id = request.id;
+    ack.text = handled_success_ ? "ok" : "fail";
+    WriteClient(ack, request.connection); return;
+  }
   bool inserted = false;
-  ITfContext* context = FocusContext();
+  ITfContext* context = request.id > cancelled_commit_.load() && !request.text.empty() ? FocusContext() : nullptr;
   if (context != nullptr) {
+    if (DocumentAcceptsText(context)) {
     InsertSession session;
     session.context = context;
-    session.text = text;
+    session.text = request.text;
     HRESULT session_hr = E_FAIL;
-    context->RequestEditSession(client_id_, &session, TF_ES_SYNC | TF_ES_READWRITE, &session_hr);
-    inserted = SUCCEEDED(session_hr);
+    const auto request_hr = context->RequestEditSession(client_id_, &session, TF_ES_SYNC | TF_ES_READWRITE, &session_hr);
+    inserted = SUCCEEDED(request_hr) && SUCCEEDED(session_hr);
+    }
     context->Release();
   }
+  handled_id_ = request.id; handled_success_ = inserted;
   if (inserted) active_ = false;
   Message ack;
-  ack.type = MsgType::InsertAck;
+  ack.type = MsgType::InsertResult;
+  ack.request_id = request.id;
   ack.text = inserted ? "ok" : "fail";
-  WriteClient(ack);
+  WriteClient(ack, request.connection);
 }
 
-void VoiceService::HandleCaret() {
+bool VoiceService::OwnsForeground() const {
+  if (!foreground_) return false;
+#ifndef VOICEIME_TESTING
+  DWORD process = 0;
+  GetWindowThreadProcessId(GetForegroundWindow(), &process);
+  if (process != GetCurrentProcessId()) return false;
+#endif
+  return true;
+}
+
+void VoiceService::UpdateTracking() {
+  if (!host_) return;
+  const bool wanted = foreground_ && (active_ || pinyin_.view().composing);
+  if (wanted && !tracking_) tracking_ = SetTimer(host_, kTrackingTimer, 60, nullptr) != 0;
+  if (!wanted && tracking_) { KillTimer(host_, kTrackingTimer); tracking_ = false; }
+}
+
+void VoiceService::TrackCaret() {
+  UpdateTracking();
+  if (!OwnsForeground()) { bar_.Hide(); last_caret_sent_.clear(); return; }
+  if (active_) HandleCaret();
+  else if (composition_context_ && pinyin_.view().composing) ShowCandidates(composition_context_);
+}
+
+void VoiceService::HandleCaret(bool force) {
+  if (!OwnsForeground()) return;
   Message reply;
   reply.type = MsgType::Caret;
   ITfContext* context = FocusContext();
   if (context != nullptr) {
+    if (!DocumentAcceptsText(context)) { context->Release(); return; }
     CaretSession session;
     session.context = context;
     HRESULT session_hr = E_FAIL;
@@ -775,7 +822,11 @@ void VoiceService::HandleCaret() {
     }
     context->Release();
   }
-  WriteClient(reply);
+  // Chromium may briefly return TS_E_NOLAYOUT after an edit. Retain the last
+  // valid location rather than moving a visible popup to the fallback corner.
+  if (reply.caret_h <= 0 || reply.caret_w <= 0) return;
+  const auto bytes = Encode(reply);
+  if ((force || bytes != last_caret_sent_) && WriteClient(reply)) last_caret_sent_ = bytes;
 }
 
 void VoiceService::ReadLoop() {
@@ -783,12 +834,18 @@ void VoiceService::ReadLoop() {
     for (;;) {
       Message message;
       std::size_t used = 0;
-      if (!Decode(pending, &message, &used)) break;
+      const auto status = DecodeFrame(pending, &message, &used);
+      if (status == DecodeStatus::Invalid) return false;
+      if (status == DecodeStatus::Incomplete) return true;
       pending.erase(0, used);
-      if (message.type == MsgType::CommitDone && host_ != nullptr) {
-        PostMessageW(host_, kCommitMessage, 0, reinterpret_cast<LPARAM>(new std::wstring(Utf8ToWide(message.text))));
+      if (message.type == MsgType::InsertText && host_ != nullptr) {
+        auto* text = new IncomingCommit{Utf8ToWide(message.text), message.request_id, connection_generation_.load()};
+        if (!PostMessageW(host_, kCommitMessage, 0, reinterpret_cast<LPARAM>(text))) delete text;
+      } else if (message.type == MsgType::CancelInsert) {
+        cancelled_commit_.store(std::max(cancelled_commit_.load(), message.request_id));
       } else if (message.type == MsgType::Phase) {
         active_ = !message.text.empty() && message.text != "0";
+        if (host_) PostMessageW(host_, kTrackingMessage, 0, 0);
       } else if (message.type == MsgType::QueryCaret && host_ != nullptr && foreground_) {
         PostMessageW(host_, kCaretMessage, 0, 0);
       }
@@ -798,25 +855,24 @@ void VoiceService::ReadLoop() {
     LaunchEngine();
     // One thread owns the handle. A synchronous read and write on the same
     // pipe deadlock, so the UI thread only queues bytes and this loop writes them.
-    HANDLE pipe = CreateFileW(L"\\\\.\\pipe\\VoiceIme", GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING,
+#ifdef VOICEIME_TESTING
+    const auto pipe_name = L"\\\\.\\pipe\\VoiceImeTsfQA_" + std::to_wstring(GetCurrentProcessId());
+#else
+    const std::wstring pipe_name = L"\\\\.\\pipe\\VoiceIme";
+#endif
+    HANDLE pipe = CreateFileW(pipe_name.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING,
                                FILE_FLAG_OVERLAPPED, nullptr);
     if (pipe == INVALID_HANDLE_VALUE) {
       if (WaitForSingleObject(stop_event_, 100) == WAIT_OBJECT_0) return;
       continue;
     }
-    OVERLAPPED overlap{};
-    overlap.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-    if (overlap.hEvent == nullptr) {
-      CloseHandle(pipe);
-      if (WaitForSingleObject(stop_event_, 100) == WAIT_OBJECT_0) return;
-      continue;
-    }
     {
       std::lock_guard<std::mutex> lock(write_mu_);
+      ++connection_generation_;
+      cancelled_commit_ = 0;
       pipe_ = pipe;
     }
     std::string buffer;
-    char chunk[4096];
     bool failed = false;
     while (!failed && WaitForSingleObject(stop_event_, 0) != WAIT_OBJECT_0) {
       std::vector<std::string> mine;
@@ -827,50 +883,26 @@ void VoiceService::ReadLoop() {
       }
       if (!mine.empty()) {
         for (const std::string& bytes : mine) {
-          if (!WriteAll(pipe, bytes)) failed = true;
+          if (!WritePipeBytes(pipe, bytes, stop_event_)) { failed = true; break; }
         }
         continue;
       }
-      ResetEvent(overlap.hEvent);
-      DWORD got = 0;
-      const BOOL ok = ReadFile(pipe, chunk, sizeof(chunk), &got, &overlap);
-      if (!ok && GetLastError() == ERROR_IO_PENDING) {
-        HANDLE waits[3] = {overlap.hEvent, nullptr, nullptr};
-        DWORD count = 1;
-        if (write_event_ != nullptr) waits[count++] = write_event_;
-        if (stop_event_ != nullptr) waits[count++] = stop_event_;
-        const DWORD which = WaitForMultipleObjects(count, waits, FALSE, INFINITE);
-        if (which != WAIT_OBJECT_0) {
-          CancelIoEx(pipe, &overlap);
-          DWORD partial = 0;
-          if (GetOverlappedResult(pipe, &overlap, &partial, TRUE) && partial > 0) {
-            buffer.append(chunk, chunk + partial);
-            deliver(buffer);
-          }
-          if (which == WAIT_FAILED) failed = true;
-          continue;
-        }
-        if (!GetOverlappedResult(pipe, &overlap, &got, FALSE) || got == 0) {
-          failed = true;
-          continue;
-        }
-      } else if (!ok || got == 0) {
-        failed = true;
-        continue;
-      }
-      buffer.append(chunk, chunk + got);
-      deliver(buffer);
+      const PipeReadResult received = ReadPipeChunk(pipe, write_event_, stop_event_);
+      buffer += received.bytes;
+      failed = !deliver(buffer) || received.status == PipeReadStatus::Closed;
     }
     const bool stopping = stop_event_ != nullptr && WaitForSingleObject(stop_event_, 0) == WAIT_OBJECT_0;
     {
       std::lock_guard<std::mutex> lock(write_mu_);
+      ++connection_generation_;
       outgoing_.clear();
       if (!stopping && pipe_ == pipe) {
         CloseHandle(pipe_);
         pipe_ = INVALID_HANDLE_VALUE;
       }
     }
-    CloseHandle(overlap.hEvent);
+    active_ = false;
+    if (host_) PostMessageW(host_, kTrackingMessage, 0, 0);
     if (stopping) return;
   }
 }
@@ -906,6 +938,10 @@ HRESULT VoiceService::Activate(ITfThreadMgr* manager, TfClientId client_id) {
 }
 
 HRESULT VoiceService::Deactivate() {
+  if (host_) KillTimer(host_, kTrackingTimer);
+  tracking_ = false;
+  last_caret_sent_.clear();
+  candidate_anchor_known_ = false;
   CancelFocusComposition();
   bar_.Hide();
   rime_.Shutdown();
@@ -920,14 +956,16 @@ HRESULT VoiceService::Deactivate() {
     std::lock_guard<std::mutex> lock(write_mu_);
     reader = reader_;
   }
-  for (int attempt = 0; reader != nullptr && attempt < 50; ++attempt) {
+  if (reader != nullptr) {
     HANDLE pipe = INVALID_HANDLE_VALUE;
     {
       std::lock_guard<std::mutex> lock(write_mu_);
       pipe = pipe_;
     }
     if (pipe != INVALID_HANDLE_VALUE) CancelIoEx(pipe, nullptr);
-    if (WaitForSingleObject(reader, 200) == WAIT_OBJECT_0) break;
+    // Every pending pipe operation observes stop_event_. Keep its storage alive
+    // until the reader has drained cancellation and actually exited.
+    WaitForSingleObject(reader, INFINITE);
   }
   {
     std::lock_guard<std::mutex> lock(write_mu_);
@@ -966,6 +1004,10 @@ HRESULT VoiceService::Deactivate() {
     thread_cookie_ = 0;
   }
   if (host_ != nullptr) {
+    MSG pending{};
+    while (PeekMessageW(&pending, host_, kCommitMessage, kCommitMessage, PM_REMOVE)) {
+      delete reinterpret_cast<IncomingCommit*>(pending.lParam);
+    }
     DestroyWindow(host_);
     host_ = nullptr;
   }
@@ -1015,9 +1057,13 @@ KeyState VoiceService::MakeKeyState(ITfContext* context, WPARAM vk, LPARAM lpara
   state.voice_active = active_;
   state.composing = view.composing;
   state.candidate_count = static_cast<int>(view.page.size());
-  state.shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
-  state.ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
-  state.alt = (GetKeyState(VK_MENU) & 0x8000) != 0;
+  auto held = [](int key) {
+    return (GetAsyncKeyState(key) & 0x8000) != 0 || (GetKeyState(key) & 0x8000) != 0;
+  };
+  state.shift = held(VK_SHIFT) || held(VK_LSHIFT) || held(VK_RSHIFT);
+  state.ctrl = held(VK_CONTROL) || held(VK_LCONTROL) || held(VK_RCONTROL);
+  state.alt = held(VK_MENU) || held(VK_LMENU) || held(VK_RMENU);
+  state.win = held(VK_LWIN) || held(VK_RWIN);
   // Caps Lock is a toggle. The low bit is the locked state, not key-down.
   state.caps = (GetKeyState(VK_CAPITAL) & 0x0001) != 0;
   state.repeat = IsKeyRepeat(static_cast<unsigned int>(lparam));
@@ -1034,6 +1080,8 @@ void VoiceService::SendVoice(MsgType type, WPARAM vk, WINBOOL* eaten) {
   }
   if (type == MsgType::StartListen) active_ = true;
   if (type == MsgType::Cancel) active_ = false;
+  UpdateTracking();
+  if (active_) HandleCaret(true);
   eaten_vk_ = static_cast<int>(vk);
   if (eaten != nullptr) *eaten = TRUE;
 }
@@ -1090,6 +1138,8 @@ bool VoiceService::StartComposition(TfEditCookie cookie, ITfContext* context) {
   range->Release();
   if (FAILED(started) || created == nullptr) return false;
   composition_ = created;
+  composition_context_ = context;
+  composition_context_->AddRef();
   return true;
 }
 
@@ -1139,10 +1189,13 @@ void VoiceService::CancelComposition(TfEditCookie cookie) {
 }
 
 void VoiceService::ReleaseCompositionPointer() {
-  if (composition_ == nullptr) return;
+  candidate_anchor_known_ = false;
   ITfComposition* held = composition_;
   composition_ = nullptr;
-  held->Release();
+  ITfContext* context = composition_context_;
+  composition_context_ = nullptr;
+  if (held != nullptr) held->Release();
+  if (context != nullptr) context->Release();
 }
 
 void VoiceService::OnCompositionTerminated(TfEditCookie cookie, ITfComposition* composition) {
@@ -1158,27 +1211,40 @@ void VoiceService::OnCompositionTerminated(TfEditCookie cookie, ITfComposition* 
   if (ending_composition_) return;
   rime_.Clear();
   bar_.Hide();
+  UpdateTracking();
 }
 
 void VoiceService::ShowCandidates(ITfContext* context) {
+  if (!OwnsForeground()) { bar_.Hide(); return; }
   const RimeView& view = pinyin_.view();
   Rect caret{0, 0, 0, 0};
   Rect window{0, 0, 0, 0};
   if (context != nullptr && client_id_ != 0) {
     CaretSession session;
     session.context = context;
+    ITfRange* anchor = nullptr;
+    if (composition_ && context == composition_context_ && SUCCEEDED(composition_->GetRange(&anchor)))
+      session.anchor_range = anchor;
     HRESULT session_hr = E_FAIL;
     context->RequestEditSession(client_id_, &session, TF_ES_SYNC | TF_ES_READ, &session_hr);
+    if (anchor) anchor->Release();
     if (SUCCEEDED(session_hr)) {
       caret = Rect{session.caret_x, session.caret_y, session.caret_w, session.caret_h};
       window = Rect{session.window_x, session.window_y, session.window_w, session.window_h};
     }
   }
+  if (caret.w > 0 && caret.h > 0) {
+    candidate_anchor_ = caret; candidate_window_ = window; candidate_anchor_known_ = true;
+  } else if (candidate_anchor_known_) {
+    caret = candidate_anchor_; window = candidate_window_;
+  } else return; // Retry on the next tracking tick; do not flash at (0,0).
   bar_.Show(caret, window, view, pinyin_.mode());
 }
 
 void VoiceService::SyncAfterRime(ITfContext* context) {
   const RimeView& view = pinyin_.view();
+  UpdateTracking();
+  if (!view.composing) candidate_anchor_known_ = false;
   if (!view.commit.empty()) {
     RunComposition(context, CompositionEdit::Commit, Utf8ToWide(view.commit));
     if (view.composing && !view.preedit.empty()) {
@@ -1199,17 +1265,38 @@ void VoiceService::SyncAfterRime(ITfContext* context) {
 }
 
 void VoiceService::CancelFocusComposition() {
-  ITfContext* context = FocusContext();
+  ITfContext* context = composition_context_;
   if (context != nullptr) {
+    context->AddRef();
     RunComposition(context, CompositionEdit::Cancel, L"");
     context->Release();
   }
   ReleaseCompositionPointer();
 }
 
+void VoiceService::OnDocumentFocus(ITfDocumentMgr* current, ITfDocumentMgr* previous) {
+  if (current != previous) {
+    candidate_anchor_known_ = false;
+    last_caret_sent_.clear();
+    CancelFocusComposition();
+    rime_.Clear();
+    pending_toggle_ = false;
+    bar_.Hide();
+  }
+  if (active_) HandleCaret();
+  UpdateTracking();
+}
+
 HRESULT VoiceService::OnKey(ITfContext* context, WPARAM vk, LPARAM lparam, WINBOOL* eaten, bool down) {
   if (eaten != nullptr) *eaten = FALSE;
-  if (!foreground_) return S_OK;
+  // Focus notifications may be deferred. Never use an old document's range
+  // with the edit cookie supplied by a different context.
+  if (composition_context_ != nullptr && composition_context_ != context) {
+    CancelFocusComposition();
+    rime_.Clear();
+    bar_.Hide();
+    pending_toggle_ = false;
+  }
   const KeyState state = MakeKeyState(context, vk, lparam);
   const Hotkey hotkey = ReadConfiguredHotkey();
   const KeyAction action = RouteKey(state, hotkey).action;

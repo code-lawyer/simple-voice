@@ -10,9 +10,26 @@
 #include "rime_api.h"
 
 #include <filesystem>
+#include <mutex>
 #include <windows.h>
 
 namespace {
+
+// librime owns one runtime per process, not one runtime per text service.
+// Serialize its API across UI threads and finalize only after the last session.
+struct RimeRuntime {
+  std::mutex mutex;
+  std::size_t sessions = 0;
+  std::wstring shared_path;
+  std::wstring user_path;
+  std::string shared_utf8;
+  std::string user_utf8;
+};
+
+RimeRuntime& Runtime() {
+  static RimeRuntime runtime;
+  return runtime;
+}
 
 constexpr int kShiftMask = 1;
 constexpr int kKeyBackSpace = 0xff08;
@@ -136,6 +153,8 @@ RimeSession::~RimeSession() {
 
 bool RimeSession::Start(const std::wstring& shared_dir, const std::wstring& user_dir) {
   Shutdown();
+  RimeRuntime& runtime = Runtime();
+  std::lock_guard<std::mutex> lock(runtime.mutex);
   RimeApi* api = rime_get_api();
   if (api == nullptr || api->setup == nullptr || api->initialize == nullptr ||
       api->deployer_initialize == nullptr || api->start_maintenance == nullptr ||
@@ -145,57 +164,77 @@ bool RimeSession::Start(const std::wstring& shared_dir, const std::wstring& user
   std::error_code ec;
   std::filesystem::create_directories(std::filesystem::path(user_dir), ec);
   if (ec) return false;
-  shared_utf8_ = WideToUtf8(shared_dir);
-  user_utf8_ = WideToUtf8(user_dir);
-  if (shared_utf8_.empty() || user_utf8_.empty()) return false;
+  const auto shared_path = std::filesystem::weakly_canonical(shared_dir, ec).wstring();
+  if (ec) return false;
+  const auto user_path = std::filesystem::weakly_canonical(user_dir, ec).wstring();
+  if (ec) return false;
+  if (runtime.sessions != 0 &&
+      (_wcsicmp(runtime.shared_path.c_str(), shared_path.c_str()) != 0 ||
+       _wcsicmp(runtime.user_path.c_str(), user_path.c_str()) != 0)) {
+    // Reconfiguring a live runtime would invalidate another text service.
+    return false;
+  }
 
-  RIME_STRUCT(RimeTraits, traits);
-  traits.shared_data_dir = shared_utf8_.c_str();
-  traits.user_data_dir = user_utf8_.c_str();
-  traits.distribution_name = "VoiceIme";
-  traits.distribution_code_name = "voiceime";
-  traits.distribution_version = "1.0";
-  traits.app_name = "rime.voiceime";
-  traits.min_log_level = 2;
+  if (runtime.sessions == 0) {
+    runtime.shared_path = shared_path;
+    runtime.user_path = user_path;
+    runtime.shared_utf8 = WideToUtf8(shared_path);
+    runtime.user_utf8 = WideToUtf8(user_path);
+    if (runtime.shared_utf8.empty() || runtime.user_utf8.empty()) return false;
+    RIME_STRUCT(RimeTraits, traits);
+    traits.shared_data_dir = runtime.shared_utf8.c_str();
+    traits.user_data_dir = runtime.user_utf8.c_str();
+    traits.distribution_name = "Simple Voice";
+    traits.distribution_code_name = "voiceime";
+    traits.distribution_version = "0.1.0";
+    traits.app_name = "rime.voiceime";
+    traits.min_log_level = 2;
 
-  // RimeSetup registers the static modules. RimeInitialize, RimeDeployerInitialize,
-  // and RimeStartMaintenance are the 1.17 function-pointer names below.
-  api->setup(&traits);
-  api->initialize(&traits);
-  api->deployer_initialize(&traits);
-  if (api->start_maintenance(1) && api->join_maintenance_thread != nullptr) {
-    api->join_maintenance_thread();
+    api->setup(&traits);
+    api->initialize(&traits);
+    api->deployer_initialize(&traits);
+    if (api->start_maintenance(1) && api->join_maintenance_thread != nullptr) {
+      api->join_maintenance_thread();
+    }
   }
 
   const uintptr_t session = api->create_session();
   if (session == 0 || !api->select_schema(session, "voiceime")) {
     if (session != 0 && api->destroy_session != nullptr) api->destroy_session(session);
-    if (api->finalize != nullptr) api->finalize();
+    if (runtime.sessions == 0 && api->finalize != nullptr) api->finalize();
     return false;
   }
   api_ = api;
   session_ = session;
   ready_ = true;
+  ++runtime.sessions;
   Refresh();
   return true;
 }
 
 void RimeSession::Shutdown() {
+  RimeRuntime& runtime = Runtime();
+  std::lock_guard<std::mutex> lock(runtime.mutex);
   if (api_ == nullptr && !ready_) return;
   RimeApi* api = static_cast<RimeApi*>(api_);
   if (api != nullptr && session_ != 0 && api->destroy_session != nullptr) {
     api->destroy_session(session_);
   }
   session_ = 0;
-  if (api != nullptr && api->finalize != nullptr) api->finalize();
+  if (ready_ && runtime.sessions > 0 && --runtime.sessions == 0) {
+    if (api != nullptr && api->finalize != nullptr) api->finalize();
+    runtime.shared_path.clear();
+    runtime.user_path.clear();
+    runtime.shared_utf8.clear();
+    runtime.user_utf8.clear();
+  }
   api_ = nullptr;
   ready_ = false;
   view_ = {};
-  shared_utf8_.clear();
-  user_utf8_.clear();
 }
 
 RimeView RimeSession::ProcessKey(int vk, bool shift) {
+  std::lock_guard<std::mutex> lock(Runtime().mutex);
   if (ready_ && api_ != nullptr && session_ != 0) {
     int keycode = 0;
     int mask = 0;
@@ -209,6 +248,7 @@ RimeView RimeSession::ProcessKey(int vk, bool shift) {
 }
 
 void RimeSession::Clear() {
+  std::lock_guard<std::mutex> lock(Runtime().mutex);
   if (ready_ && api_ != nullptr && session_ != 0) {
     RimeApi* api = static_cast<RimeApi*>(api_);
     if (api->clear_composition != nullptr) api->clear_composition(session_);

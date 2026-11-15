@@ -1,64 +1,82 @@
-$ErrorActionPreference = "Stop"
-$root = Split-Path -Parent $PSScriptRoot
-$third = Join-Path $root "third_party\sherpa-onnx"
-$models = Join-Path $root "models"
-New-Item -ItemType Directory -Force -Path $third, $models | Out-Null
-
-function Get-Archive($url, $dest) {
-  if (Test-Path $dest) { return }
-  Write-Output "download $url"
-  curl.exe -L --fail --retry 3 -o $dest $url
-  if ($LASTEXITCODE -ne 0) { throw "download failed: $url" }
-}
-
-function Expand-Bz2($archive, $dest) {
-  New-Item -ItemType Directory -Force -Path $dest | Out-Null
-  tar.exe -xjf $archive -C $dest
-  if ($LASTEXITCODE -ne 0) { throw "extract failed: $archive" }
-}
-
-$runtimeUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/v2.0.1/sherpa-onnx-v2.0.1-win-x64-shared-MD-Release.tar.bz2"
-$runtimeArchive = Join-Path $third "sherpa-onnx-v2.0.1-win-x64-shared-MD-Release.tar.bz2"
-$runtimeDir = Join-Path $third "sherpa-onnx-v2.0.1-win-x64-shared-MD-Release"
-if (-not (Test-Path (Join-Path $runtimeDir "include"))) {
-  Get-Archive $runtimeUrl $runtimeArchive
-  Expand-Bz2 $runtimeArchive $third
-}
-
-$packs = @(
-  @{
-    Name = "streaming"
-    Url = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-ctc-zh-int8-2025-06-30.tar.bz2"
-    Folder = "sherpa-onnx-streaming-zipformer-ctc-zh-int8-2025-06-30"
-  },
-  @{
-    Name = "final"
-    Url = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-zipformer-ctc-zh-int8-2025-07-03.tar.bz2"
-    Folder = "sherpa-onnx-zipformer-ctc-zh-int8-2025-07-03"
-  },
-  @{
-    Name = "punct"
-    Url = "https://github.com/k2-fsa/sherpa-onnx/releases/download/punctuation-models/sherpa-onnx-punct-ct-transformer-zh-en-vocab272727-2024-04-12-int8.tar.bz2"
-    Folder = "sherpa-onnx-punct-ct-transformer-zh-en-vocab272727-2024-04-12-int8"
-  }
+param(
+  [string]$Root = (Split-Path -Parent $PSScriptRoot),
+  [switch]$ForPackage,
+  [switch]$Offline
 )
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
+$Root = [IO.Path]::GetFullPath($Root)
+$manifest = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'dependencies.json') -Raw | ConvertFrom-Json
 
-foreach ($pack in $packs) {
-  $dest = Join-Path $models $pack.Name
-  $marker = Join-Path $dest ".complete"
-  if (-not (Test-Path $marker)) {
-    $archive = Join-Path $models ($pack.Folder + ".tar.bz2")
-    Get-Archive $pack.Url $archive
-    if (Test-Path $dest) { Remove-Item -Recurse -Force $dest }
-    Expand-Bz2 $archive $models
-    $extracted = Join-Path $models $pack.Folder
-    if (Test-Path $extracted) {
-      if (Test-Path $dest) { Remove-Item -Recurse -Force $dest }
-      Rename-Item $extracted $dest
-    }
-    Remove-Item $archive -Force
-    Set-Content -Path $marker -Value $pack.Folder
+function Get-ChildPath([string]$Relative) {
+  $path = [IO.Path]::GetFullPath((Join-Path $Root $Relative))
+  if (-not $path.StartsWith($Root.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) {
+    throw "Dependency path must be inside the installation directory: $Relative"
   }
-  Write-Output ("{0}:" -f $pack.Name)
-  Get-ChildItem $dest -Filter *.onnx | ForEach-Object { Write-Output ("  " + $_.Name) }
+  return $path
 }
+
+function Test-Files([string]$Directory, $Files) {
+  foreach ($file in $Files.PSObject.Properties) {
+    $path = Join-Path $Directory $file.Name
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return $false }
+    if ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash -ne $file.Value) { return $false }
+  }
+  return $true
+}
+
+foreach ($pack in $manifest.artifacts) {
+  $destination = Get-ChildPath $pack.Destination
+  if (-not (Test-Files $destination $pack.Files)) {
+    $cache = Get-ChildPath '.downloads'
+    New-Item -ItemType Directory -Force -Path $cache | Out-Null
+    $archive = Join-Path $cache ($pack.Folder + '.tar.bz2')
+    $validArchive = (Test-Path -LiteralPath $archive -PathType Leaf) -and
+      ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -eq $pack.Sha256)
+    if (-not $validArchive) {
+      if ($Offline) { throw "Verified cache is missing for $($pack.Id). Run setup once with an internet connection." }
+      Write-Host "Downloading $($pack.Id) from the official sherpa-onnx release..."
+      $partial = $archive + '.partial'
+      & curl.exe --location --fail --retry 3 --connect-timeout 30 --output $partial $pack.Url
+      if ($LASTEXITCODE -ne 0) { throw "Download failed: $($pack.Url). Run setup again to retry." }
+      if ((Get-FileHash -LiteralPath $partial -Algorithm SHA256).Hash -ne $pack.Sha256) {
+        throw "SHA-256 mismatch for $($pack.Id); nothing was installed."
+      }
+      Move-Item -LiteralPath $partial -Destination $archive -Force
+    }
+    $stage = Get-ChildPath ('.downloads/extract-' + [Guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $stage | Out-Null
+    & tar.exe -xjf $archive -C $stage
+    if ($LASTEXITCODE -ne 0) { throw "Cannot extract $archive" }
+    $extracted = Join-Path $stage $pack.Folder
+    if (-not (Test-Files $extracted $pack.Files)) { throw "Extracted files failed verification: $($pack.Id)" }
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $destination) | Out-Null
+    # Keep an existing incomplete/older directory recoverable. Never delete user data.
+    $backup = $null
+    if (Test-Path -LiteralPath $destination) {
+      $backup = Get-ChildPath ($pack.Destination + '.previous-' + [Guid]::NewGuid().ToString('N'))
+      Move-Item -LiteralPath $destination -Destination $backup
+    }
+    try { Move-Item -LiteralPath $extracted -Destination $destination }
+    catch {
+      if ($backup -and -not (Test-Path -LiteralPath $destination)) {
+        Move-Item -LiteralPath $backup -Destination $destination
+      }
+      throw
+    }
+  }
+  Write-Host "Verified: $($pack.Id)"
+}
+
+if ($ForPackage) {
+  $runtime = $manifest.artifacts | Where-Object Id -eq 'runtime'
+  foreach ($name in @('sherpa-onnx-c-api.dll', 'onnxruntime.dll', 'onnxruntime_providers_shared.dll')) {
+    $target = Join-Path $Root $name
+    $expected = $runtime.Files.PSObject.Properties['lib/' + $name].Value
+    if (-not (Test-Path -LiteralPath $target -PathType Leaf) -or
+        (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash -ne $expected) {
+      Copy-Item -LiteralPath (Join-Path (Get-ChildPath $runtime.Destination) ('lib/' + $name)) -Destination $target -Force
+    }
+  }
+}
+Write-Host 'Local models are ready. Normal input does not require a network connection.'

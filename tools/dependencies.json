@@ -1,0 +1,50 @@
+{
+  "artifacts": [
+    {
+      "Folder": "sherpa-onnx-v2.0.1-win-x64-shared-MD-Release",
+      "Sha256": "ce987d5bfca42c74b54f7b3bbaaa8c1febe3c5cd0fea8f94be80ea30e72f1f61",
+      "Url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/v2.0.1/sherpa-onnx-v2.0.1-win-x64-shared-MD-Release.tar.bz2",
+      "Id": "runtime",
+      "Destination": "third_party/sherpa-onnx/sherpa-onnx-v2.0.1-win-x64-shared-MD-Release",
+      "Files": {
+        "include/sherpa-onnx/c-api/c-api.h": "36da0fda13a7c02eb79b3b3969818a759a2604aa5b60cd83ae1f6559f1a9ce8e",
+        "lib/sherpa-onnx-c-api.dll": "cf49e9ab5bac5e2d177fe14ae070cc4f52c791490333252150a745f9d03c1111",
+        "lib/onnxruntime.dll": "422d776ab0e3218260f7f628fcb84606aaa5c21116f720c8619a6da5e0b2e0f9",
+        "lib/onnxruntime_providers_shared.dll": "0190137dee4933261c065c5d030c3568a68c7aa43cad942b4726a07011738bc2"
+      }
+    },
+    {
+      "Folder": "sherpa-onnx-streaming-zipformer-ctc-zh-int8-2025-06-30",
+      "Sha256": "f2ab7a5deb02717801f6a5b26c751b42f8a2db891b07f5b095e6da7442081448",
+      "Url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-ctc-zh-int8-2025-06-30.tar.bz2",
+      "Id": "streaming",
+      "Destination": "models/streaming",
+      "Files": {
+        "model.int8.onnx": "24ffdc19ba9aaed5a6a9beaede1e087745217d82425cf4041bca0c696661801e",
+        "tokens.txt": "6193c7ea1c96d0d9a1e9652789b40d13a8a913b434a5451e93158f5a09fd6652"
+      }
+    },
+    {
+      "Folder": "sherpa-onnx-zipformer-ctc-zh-int8-2025-07-03",
+      "Sha256": "f3ad1814fea34c407eab0cc3df6f6b625419ac9a60d8aebd8efe772a8e85ef67",
+      "Url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-zipformer-ctc-zh-int8-2025-07-03.tar.bz2",
+      "Id": "final",
+      "Destination": "models/final",
+      "Files": {
+        "model.int8.onnx": "e291b9c468b651e2697caa09bc684326c3addc6a019e78eb537cfd1a8248ca07",
+        "tokens.txt": "6fed8c6c248516f38e7faa19404b57413e8ce259f1cbc1fa4aebc86eac32fdfd"
+      }
+    },
+    {
+      "Folder": "sherpa-onnx-punct-ct-transformer-zh-en-vocab272727-2024-04-12-int8",
+      "Sha256": "c0d5aa5f8eeb686032345e180bedf39319dc2e0556781c6264bcadba8328a6e1",
+      "Url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/punctuation-models/sherpa-onnx-punct-ct-transformer-zh-en-vocab272727-2024-04-12-int8.tar.bz2",
+      "Id": "punct",
+      "Destination": "models/punct",
+      "Files": {
+        "model.int8.onnx": "65a3fb9f5ad7bfb96bf69e0dc4481df97f6ee60513c1d94ce981ba6effd524b1"
+      }
+    }
+  ],
+  "schema": 1
+}

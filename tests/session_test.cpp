@@ -12,23 +12,40 @@ void SessionKeepsDraftUntilFinalThenEnterCommitsFinal() {
   std::string committed;
   CHECK(!s.TakeCommit(&committed));
   s.OnFinal("定稿。");
+  CHECK(s.phase() == Phase::Pending);
+  CHECK(s.box_text() == "定稿。");
+  CHECK(!s.TakeCommit(&committed));
+  s.Enter();
   CHECK(s.TakeCommit(&committed));
   CHECK(committed == "定稿。");
+  CHECK(!s.TakeLexiconWrite(&committed));
+  CHECK(s.phase() == Phase::Committing);
+  s.ConfirmInserted();
   CHECK(s.TakeLexiconWrite(&committed));
   CHECK(s.phase() == Phase::Idle);
   CHECK(!s.mic_open());
 }
 
-void EnterDuringListeningCommitsTheFinalNotTheDraft() {
+void EnterDuringListeningPreviewsBeforeSecondEnter() {
   Session s;
   s.Hotkey();
   s.OnDraft("草稿");
   s.Enter();
+  CHECK(s.phase() == Phase::Finalizing);
+  CHECK(!s.mic_open());
+  s.Enter(); // A second press while calibration is running must not queue an insert.
   s.OnSpeechEnded();
   s.OnFinal("定稿。");
   std::string committed;
+  CHECK(s.phase() == Phase::Pending);
+  CHECK(s.box_text() == "定稿。");
+  CHECK(!s.TakeCommit(&committed));
+  CHECK(!s.TakeLexiconWrite(&committed));
+  s.Enter();
   CHECK(s.TakeCommit(&committed));
   CHECK(committed == "定稿。");
+  CHECK(s.phase() == Phase::Committing);
+  s.ConfirmInserted();
   CHECK(s.phase() == Phase::Idle);
 }
 

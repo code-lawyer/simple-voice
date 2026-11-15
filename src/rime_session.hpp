@@ -26,7 +26,5 @@ class RimeSession : public Composer {
   void* api_ = nullptr;
   std::uintptr_t session_ = 0;
   bool ready_ = false;
-  std::string shared_utf8_;
-  std::string user_utf8_;
   RimeView view_{};
 };
