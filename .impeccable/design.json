@@ -85,7 +85,7 @@
         "iconIndex": -100,
         "iconReferenceSemantics": "Negative resource identifier explicitly referencing resource 100.",
         "treatment": "Static black mark on a white badge with a fine translucent outline.",
-        "registrationCategories": ["GUID_TFCAT_TIP_KEYBOARD", "GUID_TFCAT_DISPLAYATTRIBUTEPROVIDER", "GUID_TFCAT_TIPCAP_SYSTRAYSUPPORT"],
+        "registrationCategories": ["GUID_TFCAT_TIP_KEYBOARD", "GUID_TFCAT_DISPLAYATTRIBUTEPROVIDER", "GUID_TFCAT_TIPCAP_SYSTRAYSUPPORT", "GUID_TFCAT_TIPCAP_IMMERSIVESUPPORT"],
         "registrationApis": ["ITfCategoryMgr::RegisterCategory", "ITfInputProcessorProfileMgr::RegisterProfile"],
         "registrationSources": ["src/register_ime.cpp", "src/tsf_service.hpp"],
         "registrationStorage": {
@@ -93,8 +93,7 @@
           "migration": "Remove only this product's legacy HKCU mirror; do not recreate the mirrored profile and category tree.",
           "userEnablement": "EnableLanguageProfile retains the current user's Enable=1."
         },
-        "withdrawnCategories": ["GUID_TFCAT_TIPCAP_IMMERSIVESUPPORT"],
-        "registrationScope": "Desktop registration using keyboard, display-attribute, and system-tray categories only. AppContainer support is neither declared nor accepted.",
+        "registrationScope": "Supports full-trust desktop hosts including Windows Terminal. The service checks the process token before loading local dictionaries or starting its IPC reader.",
         "shellDisplayStatus": "Passed in the captured local desktop shell: the separate 中 mode and sound core brand icon are both visible."
       },
       "engineTray": {

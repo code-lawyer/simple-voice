@@ -15,7 +15,7 @@
 
 矢量路径由本项目原创，依据用户选定概念重新构建，不包含第三方 Logo。源路径和导出程序在 `tools/build-brand-icons.ps1`；可编辑 SVG 和原生 ICO 在 `assets/brand`；资源表在 `src/brand.rc`。预览由 `tools/render-brand-preview.ps1` 直接载入构建后的 DLL 并通过 Windows `DrawIconEx` 绘制，**不是实际任务栏截图**。
 
-参考 [Microsoft 输入法图标要求](https://learn.microsoft.com/en-us/windows/apps/develop/input/input-method-editor-requirements) 的多尺寸、32 位透明和品牌/模式分离约定。注册使用 `ITfCategoryMgr` 和 `ITfInputProcessorProfileMgr`，只声明已实现的 keyboard、display attribute 与系统托盘能力；迁移旧版完整 HKCU 注册镜像，由系统 API 保留当前用户启用状态。本机桌面 TSF 的真实任务栏已确认显示「中 + 声核」。AppContainer 未声明兼容、未完成验收。
+图标采用多尺寸、32 位透明及品牌与模式分离约定。注册使用 `ITfCategoryMgr` 和 `ITfInputProcessorProfileMgr`，迁移旧版完整 HKCU 注册镜像，由系统 API 保存当前用户启用状态。`rc.4` 增加 Windows 终端所需的兼容类别，输入服务仅在有权限的桌面进程访问本地数据。[Microsoft 输入法要求](https://learn.microsoft.com/en-us/windows/apps/develop/input/input-method-editor-requirements)
 
 实机发现 Windows 11 不会按 `TF_LBI_STYLE_TEXTCOLORICON` 为这组 32 位透明模式图标正确换色。因此模式按钮和托盘均明确加载黑/白资源，并在系统主题或显示配置广播后刷新。TSF 使用从不显示、不可激活的顶层工具窗口接收这些广播，不产生新界面或任务栏按钮。
 

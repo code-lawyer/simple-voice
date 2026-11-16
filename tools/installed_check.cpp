@@ -74,6 +74,17 @@ int Check(const std::filesystem::path& expected) {
   if (!enabled) throw std::runtime_error("VoiceIme language profile is disabled");
   std::puts("registered_profile_enabled=1");
 
+  ComPtr<ITfInputProcessorProfileMgr> profile_manager;
+  Hr(profiles.value->QueryInterface(IID_ITfInputProcessorProfileMgr,
+      reinterpret_cast<void**>(&profile_manager.value)), "get profile capabilities API");
+  TF_INPUTPROCESSORPROFILE registered{};
+  Hr(profile_manager.value->GetProfile(TF_PROFILETYPE_INPUTPROCESSOR, 0x0804,
+      CLSID_VoiceIme, GUID_VoiceImeProfile, nullptr, &registered), "read registered profile capabilities");
+  constexpr DWORD kPackagedDesktopCapability = 0x00010000; // TF_IPP_CAPS_IMMERSIVESUPPORT
+  if (!(registered.dwCaps & kPackagedDesktopCapability))
+    throw std::runtime_error("missing TSF category required by Windows Terminal");
+  std::printf("registered_profile_capabilities=%08lx\n", registered.dwCaps);
+
   // CoCreateInstance resolves COM registration; do not LoadLibrary by path.
   ComPtr<ITfTextInputProcessor> service;
   Hr(CoCreateInstance(CLSID_VoiceIme,nullptr,CLSCTX_INPROC_SERVER,

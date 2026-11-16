@@ -134,12 +134,10 @@ bool RefreshProfile(const std::wstring& dll) {
   HRESULT result=CoCreateInstance(CLSID_TF_CategoryMgr,nullptr,CLSCTX_INPROC_SERVER,
       IID_ITfCategoryMgr,reinterpret_cast<void**>(&categories));
   if(SUCCEEDED(result)) {
-    // Do not advertise AppContainer support: its data/broker paths have not
-    // been validated. Remove the provisional capability from early rc.3 builds.
-    if(!RemoveCategory(categories,kTipImmersiveCategory))result=E_FAIL;
+    // Windows Terminal requires this category even in its packaged full-trust
+    // process. The service checks the process token before using local data.
     for(const GUID category : {kTipKeyboardCategory,GUID_TFCAT_DISPLAYATTRIBUTEPROVIDER,
-                              kTipSystemTrayCategory}) {
-      if(FAILED(result))break;
+                              kTipSystemTrayCategory,kTipImmersiveCategory}) {
       result=categories->RegisterCategory(CLSID_VoiceIme,category,CLSID_VoiceIme);
       if(FAILED(result))break;
     }

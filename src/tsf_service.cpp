@@ -94,6 +94,19 @@ bool IsInputMethodEditor(HWND focus) {
   return lstrcmpW(name,L"SimpleVoicePreviewEditor")==0 || lstrcmpW(name,L"SimpleVoicePreferences")==0;
 }
 
+bool CanUseDesktopRuntime() {
+  // Packaged desktop hosts such as Windows Terminal can use the desktop
+  // runtime. AppContainers need a separate data and IPC integration.
+  HANDLE token = nullptr;
+  if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) return false;
+  DWORD app_container = 0;
+  DWORD written = 0;
+  const BOOL queried = GetTokenInformation(token, TokenIsAppContainer,
+      &app_container, sizeof(app_container), &written);
+  CloseHandle(token);
+  return queried && app_container == 0;
+}
+
 void MoveCaretToEnd(TfEditCookie cookie, ITfContext* context, ITfRange* range) {
   if (context == nullptr || range == nullptr) return;
   ITfRange* end = nullptr;
@@ -965,6 +978,7 @@ DWORD WINAPI VoiceReader(void* param) {
 HRESULT VoiceService::Activate(ITfThreadMgr* manager, TfClientId client_id) {
   if (manager == nullptr) return E_INVALIDARG;
   if (thread_mgr_ != nullptr) return E_UNEXPECTED;
+  if (!CanUseDesktopRuntime()) return E_ACCESSDENIED;
   thread_mgr_ = manager;
   thread_mgr_->AddRef();
   client_id_ = client_id;

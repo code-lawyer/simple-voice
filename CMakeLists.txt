@@ -143,7 +143,7 @@ add_executable(voiceime_tsf_integration tools/tsf_integration.cpp src/rime_sessi
 target_sources(voiceime_tsf_integration PRIVATE src/input_indicator.cpp)
 target_compile_definitions(voiceime_tsf_integration PRIVATE VOICEIME_TESTING _WIN32_WINNT=0x0601)
 target_link_libraries(voiceime_tsf_integration PRIVATE voiceime_core ole32 oleaut32 uuid user32 gdi32 comctl32)
-target_link_libraries(voiceime_tsf_integration PRIVATE oleacc)
+target_link_libraries(voiceime_tsf_integration PRIVATE oleacc advapi32)
 voiceime_link_librime(voiceime_tsf_integration)
 voiceime_copy_runtime(voiceime_tsf_integration)
 add_dependencies(voiceime_tsf_integration voiceime_rime_data)

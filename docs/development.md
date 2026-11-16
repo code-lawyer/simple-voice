@@ -61,7 +61,7 @@ UI 工具测试键盘、分页、编辑/恢复、可访问性对象、长文本�
 
 - [语音对比](research/asr-selection-2026-11-15.md)、`tools/asr-benchmark/`。
 - [拼音数据与候选评测](research/pinyin-selection-2026-11-15.md)、`tools/pinyin-data/`。
-- [当前回归证据](releases/v0.2.0-rc.3-validation.md)。
+- [当前回归证据](releases/v0.2.0-rc.4-validation.md)。
 
 `voiceime_installed_check.exe <安装目录>` 是另行部署后才运行的生产检查，会使用系统 COM 注册并可能启动生产引擎。
 不在本轮开发回归或 CI 中运行；不能把源码测试结果称为已安装版验证。

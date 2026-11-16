@@ -275,7 +275,7 @@ Simple Voice 的原生 Windows 浮层以可读文字和明确状态形成干净�
 **性格：** 小尺寸下可立即辨认的安静标记。品牌图形与输入模式使用各自的资源，字体和三套皮肤沿用既有规范。
 
 - **系统品牌徽标：** `brand-profile-badge` 使用黑标白底与细边，固定为资源 100；注册项 `IconIndex` 使用 `-100`，按明确的负资源 ID 引用。底板与标记整体作为资源缩放，不把透明底黑标直接用于未知背景。本机桌面任务栏已实拍确认独立「中」模式与声核品牌并列显示。
-- **品牌注册链路：** 通过 `ITfCategoryMgr::RegisterCategory` 与 `ITfInputProcessorProfileMgr::RegisterProfile` 注册，正式类别仅为 keyboard、display attribute 与 `GUID_TFCAT_TIPCAP_SYSTRAYSUPPORT`。HKLM 保存 COM 与官方 profile；迁移只清理本产品旧 HKCU 镜像，由 `EnableLanguageProfile` 保留用户侧 `Enable=1`。`IMMERSIVESUPPORT` 已撤回；不声明 AppContainer 支持，也未完成其验收。
+- **品牌注册链路。** 通过 `ITfCategoryMgr::RegisterCategory` 与 `ITfInputProcessorProfileMgr::RegisterProfile` 注册 keyboard、display attribute 和 system tray 类别。`rc.4` 增加 Windows 终端所需的 `IMMERSIVESUPPORT`。输入服务在 AppContainer 中放行键盘输入，将本地词库和语音服务的使用范围限定在桌面进程。HKLM 保存 COM 与 profile，迁移清理本产品旧 HKCU 镜像，由 `EnableLanguageProfile` 保存用户启用状态。
 - **引擎托盘：** 深色系统主题使用 `brand-mark-on-dark`，浅色主题使用 `brand-mark-on-light`，均为透明底。高对比度开启时，根据 `COLOR_WINDOWTEXT` 的明暗在黑白资源之间选择；这不是把任意系统前景色直接写入品牌资源。托盘大小按任务栏 DPI 从 16 逻辑像素换算，皮肤选择不改变品牌形状或主题判断。
 - **输入模式：** 独立 TSF 按钮显示「中」或「A」，程序通过 `ShellUsesLightIcons` 显式载入黑色或白色模式资源，主题与高对比判断和托盘一致。左键点击与 Shift 切换同一输入状态；不可编辑时按钮禁用。模式改变更新图标、文字和提示，可用状态改变通知系统刷新禁用状态。隐藏、不激活的 TSF 顶层窗口接收主题、系统设置、显示与 DPI 变更消息后通知模式图标刷新，不显示额外窗口或任务栏按钮。
 - **原生资源：** 七组 ICO 均提供 16、20、24、28、32、40、48、64、128、256 px 的 32 位透明图像；黑白声核与黑白「中 / A」另有可编辑 SVG。白色模式资源为 `mode-chinese-white`（105）与 `mode-english-white`（106）。16–48 px 是品牌小尺寸识别的主要检查范围，ICO 的其余尺寸仍使用同一几何。
@@ -338,7 +338,7 @@ Simple Voice 的原生 Windows 浮层以可读文字和明确状态形成干净�
 
 品牌证据在 `docs/design/brand/sound-core-preview.png`：`tools/render-brand-preview.ps1` 从构建后的 DLL 载入图标，通过 Windows `DrawIconEx` 绘制实际像素尺寸；其中模式示例为黑色版本。它证明所示资源渲染与静态图形表现，**不是实际任务栏截图**；系统安装后的入口显示、真实主题切换与交互由安装验收单独核对。资源来源、用途及复现方法见 `docs/design/brand/README.md`。
 
-本轮桌面实拍 `build-professional/rc3-taskbar-supported-registration.png` 已显示独立「中」模式与声核品牌图标，`GetActiveProfile` 返回 `caps=0x20000`。这是本机桌面 Shell 品牌入口显示通过的证据；不扩展为完整 UWP / AppContainer、跨版本或所有宿主的验收。
+`rc.3` 的桌面实拍 `build-professional/rc3-taskbar-supported-registration.png` 显示独立「中」模式与声核品牌图标，当时 `GetActiveProfile` 返回 `caps=0x20000`。`rc.4` 的终端兼容验证另见 [`rc.4` 验证记录](docs/releases/v0.2.0-rc.4-validation.md)。
 
 先前「中 简体」未显示品牌的故障范围收敛到旧注册与配置刷新链路：更换图标、索引或仅重启 `TextInputHost` 均未解决，清理并刷新配置后恢复。仅写回旧镜像未立即复现，不能把单个 HKCU 键认定为唯一根因。静态资源预览、注册成功与真实任务栏显示继续分开验证。
 
