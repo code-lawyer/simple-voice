@@ -1,0 +1,28 @@
+param([Parameter(Mandatory=$true)][string]$Root,[switch]$RequireSigned)
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
+$Root = [IO.Path]::GetFullPath($Root).TrimEnd('\')
+$manifest = Get-Content -LiteralPath (Join-Path $Root 'package-manifest.json') -Raw | ConvertFrom-Json
+if ($manifest.product -ne 'Simple Voice' -or $manifest.platform -ne 'windows-x64') { throw 'Unexpected package identity.' }
+$seen = @{}
+foreach ($entry in $manifest.files) {
+  if ([IO.Path]::IsPathRooted($entry.path) -or $entry.path.Contains(':')) { throw 'Invalid manifest path.' }
+  $file = [IO.Path]::GetFullPath((Join-Path $Root $entry.path))
+  if (-not $file.StartsWith($Root + '\', [StringComparison]::OrdinalIgnoreCase) -or $seen.ContainsKey($file)) { throw 'Unsafe or duplicate manifest path.' }
+  $seen[$file] = $true
+  $info = Get-Item -LiteralPath $file -ErrorAction Stop
+  if ($info.PSIsContainer -or ($info.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $info.Length -ne $entry.size -or
+      (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash -ne $entry.sha256) { throw "Package integrity check failed: $($entry.path)" }
+}
+$publisher = $null
+foreach ($name in @('voiceime_engine.exe','voiceime_model_worker.exe','voiceime_tsf.dll','voiceime_register.exe')) {
+  $file = Join-Path $Root $name
+  if (-not $seen.ContainsKey($file)) { throw "Required binary missing from manifest: $name" }
+  $signature = Get-AuthenticodeSignature -LiteralPath $file
+  if ($RequireSigned -or $manifest.version -notmatch '-rc\.') {
+    if ($signature.Status -ne 'Valid') { throw "A public stable release requires a valid publisher signature: $name" }
+    if ($publisher -and $publisher -ne $signature.SignerCertificate.Thumbprint) { throw 'Inconsistent package publisher.' }
+    $publisher = $signature.SignerCertificate.Thumbprint
+  }
+}
+Write-Host "Verified $($seen.Count) package files. Hashes detect corruption; publisher trust requires a valid signature."

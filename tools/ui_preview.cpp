@@ -302,8 +302,30 @@ int main(int argc, char** argv) {
     actions.save=[&](const InputPreferences& next){saved=next;return SaveInputPreferences((output/"input-preferences.ini").wstring(),next);};
     actions.skin=[](UiSkin){return true;}; actions.terms_changed=[&]{return lexicon.ExportTerms((output/"voiceime_personal.txt").wstring());};
     actions.input_code=[](const std::string&){return "qingyin";}; actions.diagnostics=[] {return L"Simple Voice RC · Windows x64\r\n语音模型：就绪 · 中英通用\r\n音频只在内存处理；诊断不包含输入正文。";};
+    ModelSettings selected,last_requested;int uses=0;ModelTaskState task=ModelTaskState::Idle;
+    bool reject=false;
+    const std::wstring failure=L"未能启用，请检查目录并重试。\r\n"+std::wstring(600,L'长');
+    actions.models=[&]{return selected;};
+    actions.model_status=[&](SpeechModel model){return model==selected.model?L"使用中 · 已准备":L"尚未安装 · 启用时自动下载并验证。";};
+    actions.model_task=[&]{return task;};
+    actions.use_model=[&](const ModelSettings& next)->std::wstring {last_requested=next;++uses;if(reject)return failure;selected=next;return L"已启用选择的模型。";};
+    actions.practice_status=[] {return L"测试预览";};
     preferences.Open(&lexicon,{},UiCurrentSkin(),actions,1);
     const HWND window=preferences.hwnd();
+    auto text=[&](int id) {
+      const auto control=GetDlgItem(window,id);
+      std::wstring value(GetWindowTextLengthW(control)+1,L'\0');
+      value.resize(GetWindowTextW(control,value.data(),static_cast<int>(value.size())));return value;
+    };
+    auto preferences_key=[&](int vk) {
+      MSG key{GetFocus(),WM_KEYDOWN,static_cast<WPARAM>(vk),1};
+      if(!preferences.Translate(&key)){TranslateMessage(&key);DispatchMessageW(&key);}
+      MSG pending{};
+      while(PeekMessageW(&pending,nullptr,0,0,PM_REMOVE))
+        if(!preferences.Translate(&pending)){TranslateMessage(&pending);DispatchMessageW(&pending);}
+      key={GetFocus(),WM_KEYUP,static_cast<WPARAM>(vk),1};
+      if(!preferences.Translate(&key)){TranslateMessage(&key);DispatchMessageW(&key);}
+    };
     check(SendDlgItemMessageW(window,31,LB_GETCOUNT,0,0)==100,"personal terms paginate instead of rendering an unbounded list");
     SendMessageW(window,WM_COMMAND,40,0);
     check(SendDlgItemMessageW(window,31,LB_GETCOUNT,0,0)==100,"next page remains bounded");
@@ -317,7 +339,39 @@ int main(int argc, char** argv) {
     SendMessageW(window,WM_COMMAND,37,0); check(lexicon.Search("轻音").empty(),"native delete removes selected term");
     SendMessageW(window,WM_COMMAND,38,0); check(lexicon.Search("轻音").size()==1,"native undo restores the deleted term");
     SetDlgItemTextW(window,30,L"没有这个匹配"); ok=Save(window,output/"preferences-empty-search.png") && ok;
-    for(int page:{0,2,3}) { preferences.Open(&lexicon,{},UiCurrentSkin(),actions,page); ok=Save(window,output/("preferences-page-"+std::to_string(page)+".png")) && ok; }
+    for(int page:{0,2,3,4,5}) { preferences.Open(&lexicon,{},UiCurrentSkin(),actions,page); ok=Save(window,output/("preferences-page-"+std::to_string(page)+".png")) && ok; }
+    preferences.Open(&lexicon,{},UiCurrentSkin(),actions,4);
+    SendMessageW(window,WM_TIMER,1,0);wchar_t practice[80]{};GetDlgItemTextW(window,75,practice,80);
+    check(std::wstring(practice)==L"测试预览","first-use preview refreshes in the native read-only field");
+    check(SendDlgItemMessageW(window,60,CB_GETCOUNT,0,0)==3,"new users see exactly three curated models");
+    check(!GetDlgItem(window,64) && !IsWindowEnabled(GetDlgItem(window,67)),"model page has one activation action and no idle cancellation");
+    SendDlgItemMessageW(window,60,CB_SETCURSEL,1,0);SendMessageW(window,WM_COMMAND,MAKEWPARAM(60,CBN_SELCHANGE),0);
+    check(!IsWindowEnabled(GetDlgItem(window,69)),"unsupported model hints are disabled");
+    check(text(62).find(L"当前模型：Qwen3-ASR")==0,"browsing a model does not label it as the active model");
+    SendMessageW(window,WM_COMMAND,63,0);check(uses==1 && selected.model==SpeechModel::SenseVoice,"model choice invokes the activation workflow");
+    selected.directories[1]=L"C:\\validated-after-opening";
+    SendMessageW(window,WM_COMMAND,63,0);
+    check(last_requested.directories[1]==selected.directories[1],"activation uses validated settings instead of a stale form snapshot");
+    task=ModelTaskState::Running;SetFocus(GetDlgItem(window,63));SendMessageW(window,WM_TIMER,1,0);
+    check(!IsWindowEnabled(GetDlgItem(window,63)) && !IsWindowEnabled(GetDlgItem(window,65)) && IsWindowEnabled(GetDlgItem(window,67)),"busy task disables duplicate activation but leaves cancellation available");
+    check(GetFocus()==GetDlgItem(window,67),"focus moves to cancellation when activation becomes busy");
+    task=ModelTaskState::Queued;SendMessageW(window,WM_TIMER,1,0);
+    check(IsWindowEnabled(GetDlgItem(window,63)) && IsWindowEnabled(GetDlgItem(window,67)),"a queued selection may be replaced or cancelled");
+    task=ModelTaskState::Idle;SendMessageW(window,WM_TIMER,1,0);
+    check(!IsWindowEnabled(GetDlgItem(window,67)) && GetFocus()==GetDlgItem(window,63),"completion restores focus to an available action");
+    SendDlgItemMessageW(window,62,EM_SETSEL,0,5);SendMessageW(window,WM_TIMER,1,0);
+    DWORD start=0,end=0;SendDlgItemMessageW(window,62,EM_GETSEL,reinterpret_cast<WPARAM>(&start),reinterpret_cast<LPARAM>(&end));
+    check(start==0 && end==5,"unchanged status polling preserves the user's text selection");
+    SetFocus(GetDlgItem(window,62));preferences_key(VK_TAB);
+    check(GetFocus()==GetDlgItem(window,63),"Tab leaves the read-only model status");
+    reject=true;SendMessageW(window,WM_COMMAND,63,0);reject=false;
+    check(text(11)==failure && (GetWindowLongPtrW(GetDlgItem(window,11),GWL_STYLE)&WS_VSCROLL),"long errors and backup paths stay selectable and scrollable");
+    SetFocus(GetDlgItem(window,11));preferences_key(VK_TAB);
+    check(GetFocus()==GetDlgItem(window,IDCANCEL),"Tab leaves a long operation message for Close");
+    preferences.Open(&lexicon,{},UiCurrentSkin(),actions,3);
+    SetFocus(GetDlgItem(window,75));preferences_key(VK_TAB);
+    check(GetFocus()==GetDlgItem(window,54),"Tab leaves first-use output for diagnostics");
+    preferences_key(VK_TAB);check(GetFocus()==GetDlgItem(window,55),"Tab leaves diagnostics for Copy");
     preferences.Open(&lexicon,{},UiCurrentSkin(),actions,0);
     for(UINT dpi:{144u,192u}) {
       SendMessageW(window,WM_DPICHANGED,MAKELONG(dpi,dpi),0);

@@ -1,4 +1,11 @@
 #include "harness.hpp"
+void ModelChoicesPersistAndRejectInvalidSettings();
+void ModelDownloadUsesCuratedIdAndCanBeCancelled();
+void BackupRestoresExplicitTermsAndSettings();
+void BackupCorruptionAndWriteFailurePreserveData();
+void InterruptedRestoreRecoversBeforeLoadingPreferences();
+void ModelSettingsSaveFailureKeepsWorkingChoice();
+void ModelChangesHaveExplicitRuntimeBoundaries();
 void RecognitionFormattingPreservesInformation();
 void RetiredAndUnauthenticatedFramesAreRejected();
 void PipePeersAndLogonAclAreVerified();
@@ -112,6 +119,13 @@ int main(int argc, char** argv) {
       {"vad.InitialSilenceAlsoStopsAtSixtySeconds", InitialSilenceAlsoStopsAtSixtySeconds},
       {"vad.InitialSilenceCountsTowardSpeechLimitAndResetClearsIt", InitialSilenceCountsTowardSpeechLimitAndResetClearsIt},
       {"lexicon.ConcurrentReadsWritesAndDeletesAreSerialized", ConcurrentLexiconReadsWritesAndDeletesAreSerialized},
+      {"models.ChoicesPersistAndRejectInvalidSettings", ModelChoicesPersistAndRejectInvalidSettings},
+      {"models.SaveFailureKeepsWorkingChoice", ModelSettingsSaveFailureKeepsWorkingChoice},
+      {"models.RuntimeBoundaries", ModelChangesHaveExplicitRuntimeBoundaries},
+      {"models.DownloadAndCancel", ModelDownloadUsesCuratedIdAndCanBeCancelled},
+      {"backup.RoundTrip", BackupRestoresExplicitTermsAndSettings},
+      {"backup.CorruptionAndWriteFailure", BackupCorruptionAndWriteFailurePreserveData},
+      {"backup.InterruptedRestore", InterruptedRestoreRecoversBeforeLoadingPreferences},
       {"rime.SessionsSurviveAnotherSessionShuttingDown", RimeSessionsSurviveAnotherSessionShuttingDown},
       {"rime.RejectsReconfigurationWhileAnotherSessionIsLive", RimeRejectsReconfigurationWhileAnotherSessionIsLive},
       {"rime.SessionsOnDifferentThreadsRemainIndependent", RimeSessionsOnDifferentThreadsRemainIndependent},

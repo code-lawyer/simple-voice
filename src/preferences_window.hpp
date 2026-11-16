@@ -2,12 +2,15 @@
 #include "settings.hpp"
 #include "lexicon.hpp"
 #include "ui_theme.hpp"
+#include "model_settings.hpp"
 #include <functional>
 #include <vector>
 
 struct AudioDevice { std::wstring id, name; };
 std::vector<AudioDevice> InputDevices();
 bool CopyUserText(HWND owner,const std::wstring& text);
+
+enum class ModelTaskState { Idle, Running, Queued };
 
 struct PreferencesActions {
   std::function<bool(const InputPreferences&)> save;
@@ -17,6 +20,15 @@ struct PreferencesActions {
   std::function<std::wstring()> diagnostics;
   std::function<std::string(const std::string&)> input_code;
   std::function<bool()> terms_changed;
+  std::function<ModelSettings()> models;
+  std::function<std::wstring(SpeechModel)> model_status;
+  std::function<std::wstring(const ModelSettings&)> use_model;
+  std::function<ModelTaskState()> model_task;
+  std::function<void()> cancel_model_operation;
+  std::function<std::wstring(const std::wstring&)> backup;
+  std::function<std::wstring(const std::wstring&)> restore;
+  std::function<std::wstring(int)> practice;
+  std::function<std::wstring()> practice_status;
 };
 
 class PreferencesWindow {
@@ -26,6 +38,7 @@ class PreferencesWindow {
             PreferencesActions actions,int page=0);
   bool Translate(MSG* message);
   void Close();
+  void ReloadInputs(InputPreferences preferences,UiSkin skin);
   HWND hwnd() const { return hwnd_; }
  private:
   struct Control { HWND hwnd; int page,x,y,w,h; };
@@ -51,6 +64,8 @@ class PreferencesWindow {
   void Page(int page);
   void Search();
   void Devices();
+  void Models();
+  ModelSettings SelectedModel() const;
   void Command(int id,int notification);
   void Status(const std::wstring& text);
   std::wstring Text(int id) const;

@@ -743,6 +743,8 @@ void VoiceService::LaunchEngine() {
   const DWORD count = GetModuleFileNameW(VoiceImeModule(), module_path, MAX_PATH);
   if (count == 0 || count >= MAX_PATH) return;
   std::wstring path(module_path, count);
+  const auto registered=RegisteredVoiceDll();
+  if((!registered.empty() && !SameFile(registered,path)) || LegacyVoiceEngineRunning())return;
   const auto slash = path.find_last_of(L"\\/");
   if (slash == std::wstring::npos) return;
   const std::wstring dir = path.substr(0, slash);

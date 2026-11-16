@@ -7,11 +7,32 @@
 #include <functiondiscoverykeys_devpkey.h>
 #include <ctime>
 #include <stdexcept>
+#include <shobjidl.h>
 
 namespace {
 enum { Tabs=10,StatusLine=11,Learning=20,HotkeyButton=21,Skin=22,SaveOptions=23,
   Query=30,Terms=31,Term=32,Code=33,AutoCode=34,SaveTerm=35,NewTerm=36,DeleteTerm=37,Undo=38,Previous=39,Next=40,Count=41,
-  Devices=50,RefreshDevices=51,Pause=52,Retry=53,Diagnostics=54,CopyDiagnostics=55,Guide=56,ChineseOnly=57 };
+  Devices=50,RefreshDevices=51,Pause=52,Retry=53,Diagnostics=54,CopyDiagnostics=55,Guide=56,ChineseOnly=57,
+  ModelChoice=60,ModelDescription=61,ModelState=62,ModelUse=63,ModelLocal=65,
+  ModelDefault=66,ModelCancel=67,ModelIdle=68,ModelHints=69,DataBackup=70,DataRestore=71,
+  PracticeToggle=72,PracticeConfirm=73,PracticeCancel=74,PracticeText=75 };
+std::wstring ChooseFolder(HWND owner,const wchar_t* title) {
+  const HRESULT initialized=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);
+  IFileOpenDialog* dialog=nullptr;std::wstring result;
+  if(SUCCEEDED(CoCreateInstance(CLSID_FileOpenDialog,nullptr,CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&dialog)))) {
+    dialog->SetOptions(FOS_PICKFOLDERS|FOS_FORCEFILESYSTEM|FOS_PATHMUSTEXIST|FOS_DONTADDTORECENT);
+    dialog->SetTitle(title);
+    if(SUCCEEDED(dialog->Show(owner))) {
+      IShellItem* item=nullptr;
+      if(SUCCEEDED(dialog->GetResult(&item))) {
+        PWSTR path=nullptr;if(SUCCEEDED(item->GetDisplayName(SIGDN_FILESYSPATH,&path))){result=path;CoTaskMemFree(path);}
+        item->Release();
+      }
+    }
+    dialog->Release();
+  }
+  if(SUCCEEDED(initialized))CoUninitialize();return result;
+}
 std::wstring WindowText(HWND hwnd) {
   const int length=GetWindowTextLengthW(hwnd);
   std::wstring text(static_cast<size_t>(length)+1,L'\0');
@@ -63,6 +84,7 @@ bool CopyUserText(HWND owner,const std::wstring& text) {
 
 PreferencesWindow::~PreferencesWindow() { Close(); }
 void PreferencesWindow::Close() {
+  if(hwnd_ && actions_.practice)actions_.practice(2);
   if(hwnd_) DestroyWindow(hwnd_); hwnd_=nullptr; controls_.clear();
   if(font_) DeleteObject(font_); font_=nullptr;
   if(heading_) DeleteObject(heading_); heading_=nullptr;
@@ -78,6 +100,7 @@ void PreferencesWindow::Open(Lexicon* lexicon,InputPreferences preferences,UiSki
   if(hwnd_) { Page(page); SetForegroundWindow(hwnd_); return; }
   UiDpiScope scope;
   lexicon_=lexicon; preferences_=preferences; skin_=skin; actions_=std::move(actions);
+  const auto models=actions_.models?actions_.models():ModelSettings{};
   offset_=0; editing_.clear(); have_undo_=false;
   INITCOMMONCONTROLSEX common{sizeof(common),ICC_TAB_CLASSES}; InitCommonControlsEx(&common);
   WNDCLASSW klass{}; klass.lpfnWndProc=Proc; klass.hInstance=GetModuleHandleW(nullptr);
@@ -89,8 +112,8 @@ void PreferencesWindow::Open(Lexicon* lexicon,InputPreferences preferences,UiSki
   Add(L"STATIC",L"轻音输入法",12,-1,24,20,630,32);
   Add(L"STATIC",L"Simple Voice  ·  本地识别，确认后写入",13,-1,24,60,630,24);
   HWND tabs=Add(WC_TABCONTROLW,L"",Tabs,-1,24,98,632,34,WS_TABSTOP);
-  const wchar_t* titles[]={L"输入与外观",L"我的词语",L"语音与设备",L"使用与诊断"};
-  for(int i=0;i<4;++i) { TCITEMW item{}; item.mask=TCIF_TEXT; item.pszText=const_cast<wchar_t*>(titles[i]); SendMessageW(tabs,TCM_INSERTITEMW,i,reinterpret_cast<LPARAM>(&item)); }
+  const wchar_t* titles[]={L"输入",L"我的词语",L"语音设备",L"使用诊断",L"本地模型",L"备份恢复"};
+  for(int i=0;i<6;++i) { TCITEMW item{}; item.mask=TCIF_TEXT; item.pszText=const_cast<wchar_t*>(titles[i]); SendMessageW(tabs,TCM_INSERTITEMW,i,reinterpret_cast<LPARAM>(&item)); }
   Add(L"BUTTON",L"记住拼音选词习惯(&L)",Learning,0,28,162,570,30,WS_TABSTOP|BS_AUTOCHECKBOX);
   SendDlgItemMessageW(hwnd_,Learning,BM_SETCHECK,preferences.learning?BST_CHECKED:BST_UNCHECKED,0);
   Add(L"STATIC",L"关闭后不读取或新增后台选词偏好。基础词表和“我的词语”仍可用。",101,0,28,200,608,48);
@@ -126,18 +149,44 @@ void PreferencesWindow::Open(Lexicon* lexicon,InputPreferences preferences,UiSki
   const int pauses_ms[]={500,800,1200,2000};
   for(int i=0;i<4;++i) { SendMessageW(pauses,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(pause_names[i])); if(preferences.pause_ms==pauses_ms[i]) SendMessageW(pauses,CB_SETCURSEL,i,0); }
   if(SendMessageW(pauses,CB_GETCURSEL,0,0)==CB_ERR) SendMessageW(pauses,CB_SETCURSEL,1,0);
-  Add(L"BUTTON",L"中文优先（不适合英语或中英混说）",ChineseOnly,2,28,344,608,30,WS_TABSTOP|BS_AUTOCHECKBOX);
-  SendDlgItemMessageW(hwnd_,ChineseOnly,BM_SETCHECK,preferences.chinese_only?BST_CHECKED:BST_UNCHECKED,0);
+  Add(L"STATIC",L"在“本地模型”中选择识别方案；实时草稿由程序管理。",ChineseOnly,2,28,344,608,30);
   Add(L"STATIC",L"录音只在你启动语音时开启，不上传、不保存音频。\n停顿后先校准并显示最终文本，确认无误后按 Enter 写入。\n识别不准确时，可在预览中编辑、恢复识别原文或复制。",110,2,28,392,608,92);
   Add(L"BUTTON",L"重新准备语音模型",Retry,2,28,510,242,34,WS_TABSTOP);
-  Add(L"STATIC",L"1  在可输入文字的位置，按语音快捷键开始。\n2  等待“正在听”后说话；停顿后自动校准。\n3  核对最终预览；Enter 写入，Esc 取消。\n\n录音中按 Enter 会先停录预览，再按一次才写入。\n右键预览可编辑、复制或主动保存个人词语。",111,3,28,156,608,174);
-  Add(L"EDIT",L"",Diagnostics,3,28,348,608,134,WS_TABSTOP|ES_MULTILINE|ES_READONLY|ES_AUTOVSCROLL|WS_VSCROLL);
+  Add(L"STATIC",L"按语音快捷键开始，等待“正在听”后说话。\n停顿后核对预览；Enter 写入，Esc 取消。\n你也可以在这里试用：结果只显示在下方。",111,3,28,152,608,82);
+  Add(L"BUTTON",L"开始 / 停止试用",PracticeToggle,3,28,248,188,34,WS_TABSTOP);
+  Add(L"BUTTON",L"确认试用文字",PracticeConfirm,3,228,248,188,34,WS_TABSTOP);
+  Add(L"BUTTON",L"取消试用",PracticeCancel,3,428,248,188,34,WS_TABSTOP);
+  Add(L"EDIT",L"点击开始后才会打开麦克风。",PracticeText,3,28,298,608,84,WS_TABSTOP|ES_MULTILINE|ES_READONLY|ES_AUTOVSCROLL|WS_VSCROLL);
+  Add(L"EDIT",L"",Diagnostics,3,28,398,608,84,WS_TABSTOP|ES_MULTILINE|ES_READONLY|ES_AUTOVSCROLL|WS_VSCROLL);
   Add(L"BUTTON",L"复制诊断信息",CopyDiagnostics,3,28,496,202,34,WS_TABSTOP);
   Add(L"BUTTON",L"已了解使用方法",Guide,3,246,496,202,34,WS_TABSTOP);
-  Add(L"STATIC",L"",StatusLine,-1,28,576,608,46);
+  Add(L"STATIC",L"选择识别模型(&R)",112,4,28,150,608,24);
+  HWND model_choices=Add(L"COMBOBOX",L"",ModelChoice,4,28,184,608,180,WS_TABSTOP|CBS_DROPDOWNLIST|WS_VSCROLL);
+  for(auto model:{SpeechModel::Qwen3,SpeechModel::SenseVoice,SpeechModel::Whisper})
+    SendMessageW(model_choices,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(SpeechModelLabel(model)));
+  if(models.model==SpeechModel::ChineseLegacy)
+    SendMessageW(model_choices,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(SpeechModelLabel(SpeechModel::ChineseLegacy)));
+  SendMessageW(model_choices,CB_SETCURSEL,static_cast<int>(models.model),0);
+  Add(L"STATIC",L"",ModelDescription,4,28,230,608,36);
+  Add(L"EDIT",L"",ModelState,4,28,270,608,80,WS_TABSTOP|ES_MULTILINE|ES_READONLY|ES_AUTOVSCROLL|WS_VSCROLL);
+  Add(L"BUTTON",L"启用所选模型(&A)",ModelUse,4,28,362,188,34,WS_TABSTOP|BS_DEFPUSHBUTTON);
+  Add(L"BUTTON",L"取消任务",ModelCancel,4,232,362,140,34,WS_TABSTOP);
+  Add(L"BUTTON",L"闲置 5 分钟后释放模型",ModelIdle,4,28,412,400,28,WS_TABSTOP|BS_AUTOCHECKBOX);
+  SendDlgItemMessageW(hwnd_,ModelIdle,BM_SETCHECK,models.idle_minutes?BST_CHECKED:BST_UNCHECKED,0);
+  Add(L"STATIC",L"常用专名（可选，用逗号分隔；仅 Qwen3-ASR）(&H)",113,4,28,452,608,24);
+  Add(L"EDIT",Utf8ToWide(models.hotwords).c_str(),ModelHints,4,28,484,608,30,WS_TABSTOP|ES_AUTOHSCROLL);
+  SendDlgItemMessageW(hwnd_,ModelHints,EM_SETLIMITTEXT,256,0);
+  Add(L"BUTTON",L"使用已有文件…",ModelLocal,4,28,530,176,32,WS_TABSTOP);
+  Add(L"BUTTON",L"恢复推荐模型",ModelDefault,4,218,530,176,32,WS_TABSTOP);
+  Add(L"STATIC",L"备份你的词语和设置",115,5,28,156,608,32);
+  Add(L"STATIC",L"包含手动保存的词语、快捷键、外观与输入设置。\n恢复前会自动备份当前数据，失败时保留原数据。\n\n模型、模型选择、录音和拼音自动学习统计不在此备份中。",116,5,28,206,608,124);
+  Add(L"BUTTON",L"创建备份…",DataBackup,5,28,358,200,38,WS_TABSTOP);
+  Add(L"BUTTON",L"从备份恢复…",DataRestore,5,248,358,200,38,WS_TABSTOP);
+  Add(L"EDIT",L"",StatusLine,-1,28,576,608,46,WS_TABSTOP|ES_MULTILINE|ES_READONLY|ES_AUTOVSCROLL|WS_VSCROLL);
   Add(L"BUTTON",L"保存设置(&A)",SaveOptions,-1,392,632,142,34,WS_TABSTOP|BS_DEFPUSHBUTTON);
   Add(L"BUTTON",L"关闭",IDCANCEL,-1,546,632,90,34,WS_TABSTOP);
   Devices(); Search(); Layout(); Page(page);
+  Models();
   if(actions_.diagnostics) Set(Diagnostics,actions_.diagnostics());
   SetTimer(hwnd_,1,1000,nullptr);
   ShowWindow(hwnd_,SW_SHOWNORMAL); SetForegroundWindow(hwnd_); SetFocus(tabs);
@@ -165,15 +214,52 @@ void PreferencesWindow::Scroll(int position) {
   for(const auto& control:controls_) MoveWindow(control.hwnd,UiPx(control.x,dpi_),UiPx(control.y,dpi_)-scroll_,UiPx(control.w,dpi_),UiPx(control.h,dpi_),TRUE);
 }
 void PreferencesWindow::Page(int page) {
-  page_=std::clamp(page,0,3); TabCtrl_SetCurSel(GetDlgItem(hwnd_,Tabs),page_);
+  page_=std::clamp(page,0,5); TabCtrl_SetCurSel(GetDlgItem(hwnd_,Tabs),page_);
   Scroll(0);
   for(const auto& control:controls_) ShowWindow(control.hwnd,control.page==-1 || control.page==page_?SW_SHOW:SW_HIDE);
   ShowWindow(GetDlgItem(hwnd_,SaveOptions),page_==0 || page_==2?SW_SHOW:SW_HIDE);
-  Status(page_==1?L"基础词表和选词统计由系统维护，不需要逐条清理。":L"设置保存后生效；麦克风和停顿时长在下一次录音使用。");
+  Status(page_==1?L"基础词表和选词统计由系统维护，不需要逐条清理。":page_==4?
+    L"选择后点击启用；缺少模型时会自动下载，验证成功再切换。":page_>=3?L"":L"设置保存后生效；麦克风和停顿时长在下一次录音使用。");
+}
+void PreferencesWindow::ReloadInputs(InputPreferences preferences,UiSkin skin) {
+  preferences_=preferences;skin_=skin;have_undo_=false;editing_.clear();offset_=0;
+  SendDlgItemMessageW(hwnd_,Learning,BM_SETCHECK,preferences.learning?BST_CHECKED:BST_UNCHECKED,0);
+  SendDlgItemMessageW(hwnd_,Skin,CB_SETCURSEL,static_cast<int>(skin),0);
+  const int pauses[]={500,800,1200,2000};
+  for(int i=0;i<4;++i)if(preferences.pause_ms==pauses[i])SendDlgItemMessageW(hwnd_,Pause,CB_SETCURSEL,i,0);
+  Devices();Search();
 }
 std::wstring PreferencesWindow::Text(int id) const { return WindowText(GetDlgItem(hwnd_,id)); }
-void PreferencesWindow::Set(int id,const std::wstring& text) { SetDlgItemTextW(hwnd_,id,text.c_str()); }
+void PreferencesWindow::Set(int id,const std::wstring& text) {
+  // Keep selection and scroll position while polling unchanged diagnostic text.
+  if(Text(id)!=text)SetDlgItemTextW(hwnd_,id,text.c_str());
+}
 void PreferencesWindow::Status(const std::wstring& text) { Set(StatusLine,text); }
+ModelSettings PreferencesWindow::SelectedModel() const {
+  // Only the engine's validated settings own local paths. A failed folder
+  // selection must not poison a later activation from this still-open window.
+  auto next=actions_.models?actions_.models():ModelSettings{};
+  next.model=static_cast<SpeechModel>(std::clamp<int>(static_cast<int>(SendDlgItemMessageW(hwnd_,ModelChoice,CB_GETCURSEL,0,0)),0,3));
+  next.idle_minutes=SendDlgItemMessageW(hwnd_,ModelIdle,BM_GETCHECK,0,0)==BST_CHECKED?5:0;
+  next.hotwords=WideToUtf8(Text(ModelHints));return next;
+}
+void PreferencesWindow::Models() {
+  const auto selected=SelectedModel();
+  const auto task=actions_.model_task?actions_.model_task():ModelTaskState::Idle;
+  const bool busy=task==ModelTaskState::Running;
+  const auto focus=GetFocus();
+  Set(ModelDescription,SpeechModelDescription(selected.model));
+  for(int id:{ModelChoice,ModelUse,ModelLocal,ModelDefault,ModelIdle})EnableWindow(GetDlgItem(hwnd_,id),!busy);
+  EnableWindow(GetDlgItem(hwnd_,ModelCancel),task!=ModelTaskState::Idle);
+  EnableWindow(GetDlgItem(hwnd_,ModelHints),!busy && selected.model==SpeechModel::Qwen3);
+  if(page_==4 && focus && IsChild(hwnd_,focus) && !IsWindowEnabled(focus))
+    SetFocus(GetDlgItem(hwnd_,busy?ModelCancel:ModelUse));
+  Set(ModelUse,busy?L"正在处理…":L"启用所选模型(&A)");
+  if(actions_.model_status) {
+    const auto active=actions_.models?actions_.models():ModelSettings{};
+    Set(ModelState,std::wstring(L"当前模型：")+SpeechModelLabel(active.model)+L"\r\n"+actions_.model_status(selected.model));
+  }
+}
 void PreferencesWindow::Devices() {
   devices_=InputDevices();
   if(!preferences_.microphone.empty() && std::none_of(devices_.begin(),devices_.end(),[&](const auto& d){return d.id==preferences_.microphone;}))
@@ -202,8 +288,36 @@ void PreferencesWindow::Search() {
   EnableWindow(GetDlgItem(hwnd_,SaveTerm),lexicon_!=nullptr); changing_=false;
 }
 void PreferencesWindow::Command(int id,int notification) {
-  if(changing_) return;
   try {
+  if(id>=PracticeToggle && id<=PracticeCancel) {
+    if(actions_.practice)Status(actions_.practice(id-PracticeToggle));
+    if(actions_.practice_status)Set(PracticeText,actions_.practice_status());return;
+  }
+  if(id==ModelChoice && notification==CBN_SELCHANGE) {Models();return;}
+  if(id==ModelCancel) {if(actions_.cancel_model_operation)actions_.cancel_model_operation();Status(L"已请求取消，模型选择保持不变。");Models();return;}
+  if(id==ModelUse || id==ModelLocal || id==ModelDefault) {
+    auto next=SelectedModel();
+    if(id==ModelDefault) {next.model=SpeechModel::Qwen3;next.directories[0].clear();next.hotwords.clear();}
+    if(id==ModelLocal) {
+      const auto folder=ChooseFolder(hwnd_,L"选择此模型完整的本地文件夹");if(folder.empty())return;
+      next.directories[static_cast<int>(next.model)]=folder;
+    }
+    if(actions_.use_model) {
+      Status(actions_.use_model(next));
+      SendDlgItemMessageW(hwnd_,ModelChoice,CB_SETCURSEL,static_cast<int>(next.model),0);
+      Set(ModelHints,Utf8ToWide(next.hotwords));Models();
+    }
+    return;
+  }
+  if(id==DataBackup || id==DataRestore) {
+    const auto folder=ChooseFolder(hwnd_,id==DataBackup?L"选择保存备份的位置":L"选择轻音备份文件夹");
+    if(!folder.empty()) {
+      if(id==DataBackup && actions_.backup)Status(actions_.backup(folder));
+      if(id==DataRestore && actions_.restore)Status(actions_.restore(folder));
+    }
+    return;
+  }
+  if(changing_) return;
     if(id==IDCANCEL) { Close(); return; }
     if(id==Query && notification==EN_CHANGE) { offset_=0; Search(); return; }
     if(id==Terms && notification==LBN_SELCHANGE) {
@@ -240,7 +354,6 @@ void PreferencesWindow::Command(int id,int notification) {
       else Status(L"未能保存，请稍后重试。");
     } else if(id==SaveOptions) {
       InputPreferences next=preferences_;
-      next.chinese_only=SendDlgItemMessageW(hwnd_,ChineseOnly,BM_GETCHECK,0,0)==BST_CHECKED;
       next.learning=SendDlgItemMessageW(hwnd_,Learning,BM_GETCHECK,0,0)==BST_CHECKED;
       const auto device=SendDlgItemMessageW(hwnd_,::Devices,CB_GETCURSEL,0,0);
       if(device>=0 && device<static_cast<LRESULT>(devices_.size())) next.microphone=devices_[device].id;
@@ -259,7 +372,7 @@ bool PreferencesWindow::Translate(MSG* message) {
   if(!hwnd_ || (message->hwnd!=hwnd_ && !IsChild(hwnd_,message->hwnd))) return false;
   if(message->message==WM_KEYDOWN && message->wParam==VK_ESCAPE) { Close(); return true; }
   if(message->message==WM_KEYDOWN && message->wParam==VK_TAB && (GetKeyState(VK_CONTROL)&0x8000)) {
-    Page((page_+((GetKeyState(VK_SHIFT)&0x8000)?3:1))%4); SetFocus(GetDlgItem(hwnd_,Tabs)); return true;
+    Page((page_+((GetKeyState(VK_SHIFT)&0x8000)?5:1))%6); SetFocus(GetDlgItem(hwnd_,Tabs)); return true;
   }
   const bool handled=IsDialogMessageW(hwnd_,message)!=FALSE;
   if(handled && message->message==WM_KEYDOWN && message->wParam==VK_TAB) {
@@ -276,7 +389,13 @@ LRESULT CALLBACK PreferencesWindow::Proc(HWND hwnd,UINT message,WPARAM wp,LPARAM
   auto* self=reinterpret_cast<PreferencesWindow*>(GetWindowLongPtrW(hwnd,GWLP_USERDATA));
   if(message==WM_NCCREATE) { self=static_cast<PreferencesWindow*>(reinterpret_cast<CREATESTRUCTW*>(lp)->lpCreateParams); self->hwnd_=hwnd; SetWindowLongPtrW(hwnd,GWLP_USERDATA,reinterpret_cast<LONG_PTR>(self)); }
   if(self) {
-    if(message==DM_GETDEFID) return MAKELONG(self->page_==1?SaveTerm:self->page_==3?IDCANCEL:SaveOptions,DC_HASDEFID);
+    if(message==WM_NEXTDLGCTL) {
+      // Read-only multiline EDIT controls forward Tab to their dialog parent.
+      const HWND next=lp?reinterpret_cast<HWND>(wp):GetNextDlgTabItem(hwnd,GetFocus(),wp!=0);
+      if(next)SetFocus(next);
+      return 0;
+    }
+    if(message==DM_GETDEFID) return MAKELONG(self->page_==1?SaveTerm:self->page_==4?ModelUse:self->page_>=3?IDCANCEL:SaveOptions,DC_HASDEFID);
     if(message==WM_VSCROLL) {
       SCROLLINFO info{sizeof(info),SIF_ALL}; GetScrollInfo(hwnd,SB_VERT,&info); int next=self->scroll_;
       switch(LOWORD(wp)) { case SB_TOP: next=0; break; case SB_BOTTOM: next=info.nMax; break;
@@ -288,7 +407,11 @@ LRESULT CALLBACK PreferencesWindow::Proc(HWND hwnd,UINT message,WPARAM wp,LPARAM
     if(message==WM_MOUSEWHEEL) { self->Scroll(self->scroll_-static_cast<short>(HIWORD(wp))*UiPx(84,self->dpi_)/WHEEL_DELTA); return 0; }
     if(message==WM_COMMAND) { self->Command(LOWORD(wp),HIWORD(wp)); return 0; }
     if(message==WM_NOTIFY && reinterpret_cast<NMHDR*>(lp)->idFrom==Tabs && reinterpret_cast<NMHDR*>(lp)->code==TCN_SELCHANGE) { self->Page(TabCtrl_GetCurSel(GetDlgItem(hwnd,Tabs))); return 0; }
-    if(message==WM_TIMER && self->actions_.diagnostics) { self->Set(Diagnostics,self->actions_.diagnostics()); return 0; }
+    if(message==WM_TIMER) {
+      if(self->actions_.diagnostics)self->Set(Diagnostics,self->actions_.diagnostics());
+      if(self->actions_.practice_status)self->Set(PracticeText,self->actions_.practice_status());
+      self->Models();return 0;
+    }
     if(message==WM_DPICHANGED) { self->dpi_=HIWORD(wp); self->Layout(); return 0; }
     if(message==WM_SETTINGCHANGE) { self->Layout(); return 0; }
     if(message==WM_CTLCOLORSTATIC || message==WM_CTLCOLORDLG) {

@@ -2,10 +2,8 @@
 
 #include "recognition_text.hpp"
 #include "audio_segments.hpp"
-#include "utf8.hpp"
 
 #include <algorithm>
-#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -13,6 +11,10 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include <thread>
+#include <condition_variable>
+#include <deque>
+#include <stdexcept>
 
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -25,15 +27,6 @@
 #endif
 
 namespace {
-
-std::string JoinPath(const std::string& dir, const std::string& name) {
-  if (dir.empty()) return name;
-  const char last = dir.back();
-  if (last == '/' || last == '\\') return dir + name;
-  return dir + "\\" + name;
-}
-
-bool Exists(const std::string& path) { return FileExistsUtf8(path); }
 
 void Missing(const std::string& path) { std::fprintf(stderr, "missing models: %s\n", path.c_str()); }
 
@@ -152,16 +145,12 @@ void Feed(Accept accept, const Stream* stream, const float* samples, std::size_t
 
 class SherpaRecognizer : public Recognizer {
  public:
-  SherpaRecognizer(const std::string& root,bool chinese_only) {
-    const auto streaming=JoinPath(root,"streaming-bilingual"),final=JoinPath(root,chinese_only?"final":"final-qwen");
-    streaming_model_=JoinPath(streaming,"encoder-epoch-99-avg-1.int8.onnx");
-    streaming_decoder_=JoinPath(streaming,"decoder-epoch-99-avg-1.onnx");
-    streaming_joiner_=JoinPath(streaming,"joiner-epoch-99-avg-1.int8.onnx");
-    streaming_tokens_=JoinPath(streaming,"tokens.txt");
-    final_model_=JoinPath(final,chinese_only?"model.int8.onnx":"conv_frontend.onnx");
-    final_tokens_=JoinPath(final,chinese_only?"tokens.txt":"tokenizer");
-    final_encoder_=JoinPath(final,"encoder.int8.onnx"); final_decoder_=JoinPath(final,"decoder.int8.onnx");
-    punct_model_=JoinPath(JoinPath(root,"punct"),"model.int8.onnx");
+  explicit SherpaRecognizer(const ModelFiles& files) {
+    streaming_model_=files.stream_encoder;streaming_decoder_=files.stream_decoder;
+    streaming_joiner_=files.stream_joiner;streaming_tokens_=files.stream_tokens;
+    final_model_=files.final_model;final_tokens_=files.final_tokens;
+    final_encoder_=files.final_encoder;final_decoder_=files.final_decoder;
+    punct_model_=files.punctuation;hotwords_=files.hotwords;
     if (!Bind(api_)) return;
     SherpaOnnxOnlineRecognizerConfig online{};
     std::memset(&online, 0, sizeof(online));
@@ -190,13 +179,23 @@ class SherpaRecognizer : public Recognizer {
     std::memset(&offline, 0, sizeof(offline));
     offline.feat_config.sample_rate = 16000;
     offline.feat_config.feature_dim = 80;
-    if(chinese_only) {
+    if(files.model==SpeechModel::ChineseLegacy) {
       offline.model_config.zipformer_ctc.model=final_model_.c_str(); offline.model_config.tokens=final_tokens_.c_str();
+    } else if(files.model==SpeechModel::SenseVoice) {
+      offline.model_config.sense_voice.model=final_model_.c_str();
+      offline.model_config.sense_voice.language="auto";
+      offline.model_config.sense_voice.use_itn=1;
+      offline.model_config.tokens=final_tokens_.c_str();
+    } else if(files.model==SpeechModel::Whisper) {
+      auto& w=offline.model_config.whisper;
+      w.encoder=final_encoder_.c_str();w.decoder=final_decoder_.c_str();
+      w.language="";w.task="transcribe";w.tail_paddings=-1;
+      offline.model_config.tokens=final_tokens_.c_str();
     } else {
       auto& q=offline.model_config.qwen3_asr;
       q.conv_frontend=final_model_.c_str(); q.encoder=final_encoder_.c_str(); q.decoder=final_decoder_.c_str();
       q.tokenizer=final_tokens_.c_str(); q.max_total_len=1024; q.max_new_tokens=512;
-      q.temperature=1e-6f; q.top_p=0.8f; q.seed=42; q.hotwords="";
+      q.temperature=1e-6f; q.top_p=0.8f; q.seed=42; q.hotwords=hotwords_.c_str();
     }
     offline.model_config.num_threads = 2;
     offline.model_config.provider = "cpu";
@@ -209,21 +208,22 @@ class SherpaRecognizer : public Recognizer {
 
     // Qwen already returns punctuation. Running a second punctuation model
     // produces duplicated full stops and commas; only CTC needs this stage.
-    if(!chinese_only) { ready_=true; return; }
-    SherpaOnnxOfflinePunctuationConfig punct{};
-    std::memset(&punct, 0, sizeof(punct));
-    punct.model.ct_transformer = punct_model_.c_str();
-    punct.model.num_threads = 1;
-    punct.model.provider = "cpu";
-    punct_ = api_.create_punct(&punct);
-    if (punct_ == nullptr) {
-      Missing(punct_model_);
-      return;
+    if(!punct_model_.empty()) {
+      SherpaOnnxOfflinePunctuationConfig punct{};
+      punct.model.ct_transformer = punct_model_.c_str();
+      punct.model.num_threads = 1;
+      punct.model.provider = "cpu";
+      punct_ = api_.create_punct(&punct);
+      if (punct_ == nullptr) { Missing(punct_model_);return; }
     }
     ready_ = true;
+    decode_thread_=std::thread([this]{DecodeLoop();});
   }
 
   ~SherpaRecognizer() override {
+    {std::lock_guard<std::mutex> lock(mu_);stopping_=true;chunks_.clear();}
+    work_.notify_all();
+    if(decode_thread_.joinable())decode_thread_.join();
     if (online_stream_ != nullptr && api_.destroy_online_stream != nullptr) api_.destroy_online_stream(online_stream_);
     if (online_ != nullptr && api_.destroy_online != nullptr) api_.destroy_online(online_);
     if (offline_ != nullptr && api_.destroy_offline != nullptr) api_.destroy_offline(offline_);
@@ -235,7 +235,9 @@ class SherpaRecognizer : public Recognizer {
 
   void AcceptAudio(const std::int16_t* samples, std::size_t count) override {
     std::lock_guard<std::mutex> lock(mu_);
-    if (!ready_ || samples == nullptr || count == 0) return;
+    if (!ready_ || finalizing_ || samples == nullptr || count == 0) return;
+    if(count>16000*61 || received_+count>16000*61)throw std::runtime_error("录音已达到长度上限。");
+    received_+=count;
     samples_.insert(samples_.end(), samples, samples + count);
     const std::vector<float> wave = ToFloat(samples, count);
     Feed(api_.accept_online, online_stream_, wave.data(), wave.size());
@@ -245,6 +247,13 @@ class SherpaRecognizer : public Recognizer {
       if (result->text != nullptr) partial_ = result->text;
       api_.destroy_online_result(result);
     }
+    // Commit a cut only after the complete 10–15 s search window exists.
+    // The offline worker never holds this lock while running inference.
+    while(samples_.size()>15*16000) {
+      const auto segment=SegmentAudio(samples_).front();
+      Queue(samples_.data(),segment.count,segment.forced);
+      samples_.erase(samples_.begin(),samples_.begin()+segment.count);
+    }
   }
 
   std::string Partial() const override {
@@ -253,27 +262,15 @@ class SherpaRecognizer : public Recognizer {
   }
 
   std::string Finalize() override {
-    std::lock_guard<std::mutex> lock(mu_);
-    if (!ready_ || samples_.empty()) { warning_="没有收到可识别的音频。请检查麦克风后重试。"; return {}; }
-    if(std::none_of(samples_.begin(),samples_.end(),[](auto sample){return sample>8 || sample< -8;})) return {};
-    std::string text;
-    bool incomplete=false;
-    for(const auto& part:SegmentAudio(samples_)) {
-      const auto begin=samples_.begin()+part.offset,end=begin+part.count;
-      if(std::none_of(begin,end,[](auto value){return value>8 || value< -8;})) continue;
-      const auto wave=ToFloat(samples_.data()+part.offset,part.count);
-      const auto* stream=api_.create_offline_stream(offline_);
-      if(!stream) { incomplete=true; continue; }
-      Feed(api_.accept_offline,stream,wave.data(),wave.size()); api_.decode_offline(offline_,stream);
-      const auto* result=api_.offline_result(stream);
-      std::string segment=result && result->text?result->text:"";
-      if(result) api_.destroy_offline_result(result); api_.destroy_offline_stream(stream);
-      if(segment.empty()) { incomplete=true; continue; }
-      if(!text.empty() && static_cast<unsigned char>(text.back())<128 && static_cast<unsigned char>(segment.front())<128 && text.back()!=' ') text+=' ';
-      text+=segment;
-      if(part.forced) warning_="长段语音缺少停顿，已分段校准。请编辑核对分段处，再确认写入。";
-    }
-    if(incomplete) warning_="部分语音没有得到最终文字。请编辑核对，或取消后分段重录。";
+    std::unique_lock<std::mutex> lock(mu_);
+    if (!ready_ || !received_) { warning_="没有收到可识别的音频。请检查麦克风后重试。"; return {}; }
+    if(finalizing_)return partial_;
+    finalizing_=true;Queue(samples_.data(),samples_.size(),false);samples_.clear();
+    work_.wait(lock,[this]{return stopping_ || (!decoding_ && chunks_.empty());});
+    if(!voiced_)return {};
+    std::string text=decoded_;
+    if(forced_) warning_="长段语音缺少停顿，已分段校准。请编辑核对分段处，再确认写入。";
+    if(incomplete_) warning_="部分语音没有得到最终文字。请编辑核对，或取消后分段重录。";
     original_=text;
     if (text.empty()) { warning_="最终识别没有得到文字。当前仅保留草稿，请编辑后确认。"; return partial_; }
     const char* punctuated = punct_?api_.add_punct(punct_, text.c_str()):nullptr;
@@ -286,10 +283,12 @@ class SherpaRecognizer : public Recognizer {
   }
 
   void Reset() override {
-    std::lock_guard<std::mutex> lock(mu_);
+    std::unique_lock<std::mutex> lock(mu_);
+    work_.wait(lock,[this]{return stopping_ || (!decoding_ && chunks_.empty());});
     samples_.clear();
     partial_.clear();
-    warning_.clear(); original_.clear();
+    warning_.clear(); original_.clear();decoded_.clear();received_=0;
+    voiced_=false;forced_=false;incomplete_=false;finalizing_=false;
     if (ready_) api_.reset_online(online_, online_stream_);
   }
 
@@ -301,12 +300,49 @@ class SherpaRecognizer : public Recognizer {
   }
 
  private:
+  void Queue(const std::int16_t* samples,std::size_t count,bool forced) {
+    if(!count || std::none_of(samples,samples+count,[](auto x){return x>8 || x< -8;}))return;
+    voiced_=true;forced_|=forced;
+    chunks_.emplace_back(samples,samples+count);work_.notify_all();
+  }
+  void DecodeLoop() {
+    for(;;) {
+      std::vector<std::int16_t> samples;
+      {std::unique_lock<std::mutex> lock(mu_);
+        work_.wait(lock,[this]{return stopping_ || !chunks_.empty();});
+        if(stopping_)return;
+        samples=std::move(chunks_.front());chunks_.pop_front();decoding_=true;
+      }
+      std::string text;
+      try {
+        const auto wave=ToFloat(samples.data(),samples.size());
+        const auto* stream=api_.create_offline_stream(offline_);
+        if(stream) {
+          Feed(api_.accept_offline,stream,wave.data(),wave.size());api_.decode_offline(offline_,stream);
+          const auto* result=api_.offline_result(stream);
+          if(result && result->text)text=result->text;
+          if(result)api_.destroy_offline_result(result);
+          api_.destroy_offline_stream(stream);
+        }
+      } catch(...) {}
+      {std::lock_guard<std::mutex> lock(mu_);
+        if(text.empty())incomplete_=true;
+        else {
+          if(!decoded_.empty() && static_cast<unsigned char>(decoded_.back())<128 &&
+             static_cast<unsigned char>(text.front())<128 && decoded_.back()!=' ')decoded_+=' ';
+          decoded_+=text;
+        }
+        decoding_=false;
+      }
+      work_.notify_all();
+    }
+  }
   std::string streaming_model_;
   std::string streaming_tokens_;
   std::string final_model_;
   std::string final_tokens_;
   std::string punct_model_;
-  std::string streaming_decoder_,streaming_joiner_,final_encoder_,final_decoder_,original_;
+  std::string streaming_decoder_,streaming_joiner_,final_encoder_,final_decoder_,original_,hotwords_;
   SherpaApi api_{};
   const SherpaOnnxOnlineRecognizer* online_ = nullptr;
   const SherpaOnnxOnlineStream* online_stream_ = nullptr;
@@ -317,6 +353,12 @@ class SherpaRecognizer : public Recognizer {
   std::vector<std::int16_t> samples_;
   std::string partial_;
   std::string warning_;
+  std::condition_variable work_;
+  std::deque<std::vector<std::int16_t>> chunks_;
+  std::thread decode_thread_;
+  std::string decoded_;
+  size_t received_=0;
+  bool stopping_=false,decoding_=false,finalizing_=false,voiced_=false,forced_=false,incomplete_=false;
 };
 
 #endif
@@ -324,15 +366,19 @@ class SherpaRecognizer : public Recognizer {
 }  // namespace
 
 std::unique_ptr<Recognizer> MakeSherpaRecognizer(const std::string& model_dir, bool chinese_only) {
-  std::vector<std::string> required={"streaming-bilingual/encoder-epoch-99-avg-1.int8.onnx","streaming-bilingual/decoder-epoch-99-avg-1.onnx",
-    "streaming-bilingual/joiner-epoch-99-avg-1.int8.onnx","streaming-bilingual/tokens.txt","punct/model.int8.onnx"};
-  if(chinese_only) { required.push_back("final/model.int8.onnx"); required.push_back("final/tokens.txt"); }
-  else for(const char* file:{"conv_frontend.onnx","encoder.int8.onnx","decoder.int8.onnx","tokenizer/vocab.json","tokenizer/merges.txt","tokenizer/tokenizer_config.json"}) required.push_back(std::string("final-qwen/")+file);
-  for(const auto& file:required) if(!Exists(JoinPath(model_dir,file))) { Missing(file); return nullptr; }
+  ModelSettings settings;if(chinese_only)settings.model=SpeechModel::ChineseLegacy;
+  return MakeSherpaRecognizer(model_dir,settings);
+}
+std::unique_ptr<Recognizer> MakeSherpaRecognizer(const std::string& model_dir,
+    const ModelSettings& settings,std::string* error) {
+  ModelFiles files;std::string reason;
+  if(!ResolveModelFiles(model_dir,settings,files,reason)) {if(error)*error=reason;return nullptr;}
 #if VOICEIME_HAS_SHERPA
-  auto recognizer=std::make_unique<SherpaRecognizer>(model_dir,chinese_only);
-  if(!recognizer->ready()) return nullptr; return recognizer;
+  auto recognizer=std::make_unique<SherpaRecognizer>(files);
+  if(!recognizer->ready()) {if(error)*error="模型未能加载，请检查文件是否匹配此型号。";return nullptr;}
+  if(error)error->clear();return recognizer;
 #else
+  if(error)*error="安装包缺少语音运行时，请修复安装。";
   Missing("sherpa-onnx headers were not present at build time"); return nullptr;
 #endif
 }

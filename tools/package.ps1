@@ -1,6 +1,7 @@
 param(
   [string]$BuildDir = 'build-release',
-  [string]$OutputDir = 'dist'
+  [string]$OutputDir = 'dist',
+  [switch]$RequireSigned
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -24,7 +25,7 @@ function Copy-PackageFile([string]$From, [string]$Relative) {
   Copy-Item -LiteralPath $From -Destination $to
 }
 
-foreach ($file in @('voiceime_engine.exe','voiceime_register.exe','voiceime_tsf.dll')) {
+foreach ($file in @('voiceime_engine.exe','voiceime_model_worker.exe','voiceime_register.exe','voiceime_tsf.dll')) {
   $path = Join-Path $build $file
   $info = (Get-Item -LiteralPath $path).VersionInfo
   if ($info.ProductName -ne 'Simple Voice' -or $info.FileVersion -ne $version) { throw "Unexpected product/version: $file" }
@@ -45,16 +46,15 @@ foreach ($file in @('jieba.dict.utf8','hmm_model.utf8','user.dict.utf8','idf.utf
   Copy-PackageFile (Join-Path $source "third_party/cppjieba/dict/$file") "third_party/cppjieba/dict/$file"
 }
 Copy-PackageFile (Join-Path $source 'third_party/cppjieba/LICENSE') 'third_party/cppjieba/LICENSE'
-foreach ($file in @('README.md','LICENSE','NOTICE','THIRD_PARTY_NOTICES.md','PRODUCT.md','DESIGN.md','docs/development.md','docs/ipc-security.md','docs/releases/v0.2.0-rc.1.md','docs/releases/v0.2.0-rc.1-validation.md','docs/releases/v0.2.0-rc.2.md','docs/releases/v0.2.0-rc.2-validation.md','docs/releases/v0.2.0-rc.3.md','docs/releases/v0.2.0-rc.3-validation.md','docs/releases/v0.2.0-rc.4.md','docs/releases/v0.2.0-rc.4-validation.md',"docs/releases/v$version.md", "docs/releases/v$version-validation.md",'docs/design/brand/README.md','docs/design/brand/sound-core-preview.png','docs/design/brand/windows-taskbar.png')) {
+foreach ($file in @('README.md','LICENSE','NOTICE','THIRD_PARTY_NOTICES.md',"docs/releases/v$version.md", "docs/releases/v$version-validation.md",'docs/design/brand/windows-taskbar.png')) {
   Copy-PackageFile (Join-Path $source $file) $file
 }
-foreach ($file in @('docs/plans/professional-release.md','docs/research/asr-selection-2026-11-15.md','docs/research/pinyin-selection-2026-11-15.md','docs/research/code-review-2026-11-15.md','docs/research/ui-review-2026-11-15.md')) {
-  Copy-PackageFile (Join-Path $source $file) $file
-}
+Copy-PackageFile (Join-Path $source 'docs/research/runtime-model-regression-2026-11-16.json') 'docs/research/runtime-model-regression-2026-11-16.json'
+Copy-PackageFile (Join-Path $source 'docs/research/code-review-2026-11-16.md') 'docs/research/code-review-2026-11-16.md'
 foreach ($file in @('install.cmd','uninstall.cmd','check.cmd','START-HERE.txt')) {
   Copy-PackageFile (Join-Path $source "packaging/$file") $file
 }
-foreach ($file in @('setup.ps1','download_models.ps1','dependencies.json')) {
+foreach ($file in @('setup.ps1','download_models.ps1','dependencies.json','verify_package.ps1','upgrade_status.ps1')) {
   Copy-PackageFile (Join-Path $source "tools/$file") "tools/$file"
 }
 foreach ($file in Get-ChildItem -LiteralPath (Join-Path $source 'licenses') -Filter '*.txt' -File) {
@@ -72,6 +72,7 @@ $files = @(Get-ChildItem -LiteralPath $package -Recurse -File | Sort-Object Full
 })
 $manifest = [ordered]@{product='Simple Voice';version=$version;platform='windows-x64';channel='release-candidate';modelsBundled=$false;files=$files}
 $manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $package 'package-manifest.json') -Encoding UTF8
+& (Join-Path $source 'tools/verify_package.ps1') -Root $package -RequireSigned:$RequireSigned
 $zip = Join-Path $output ($name + '.zip')
 Compress-Archive -LiteralPath $package -DestinationPath $zip -CompressionLevel Optimal -Force
 $digest = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -79,3 +80,8 @@ $digest = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvaria
 Write-Output "Package: $zip"
 Write-Output "SHA-256: $digest"
 Write-Output "Files: $($files.Count + 1)"
+# Staging is disposable once the verified archive and checksum exist.
+$stagePath = [IO.Path]::GetFullPath($stage)
+if (-not $stagePath.StartsWith($output.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase) -or
+    [IO.Path]::GetFileName($stagePath) -notmatch '^\.stage-[0-9a-f]{32}$') { throw 'Unsafe staging cleanup path.' }
+Remove-Item -LiteralPath $stagePath -Recurse -Force

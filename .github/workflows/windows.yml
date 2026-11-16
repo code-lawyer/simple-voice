@@ -59,7 +59,15 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           ./build/voiceime_engine.exe --check-chinese
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          ./build/voiceime_recognizer_smoke.exe
+          ./build/voiceime_recognizer_smoke.exe --model qwen3
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          ./tools/download_models.ps1 -OnlyModel sensevoice
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          ./build/voiceime_recognizer_smoke.exe --model sensevoice
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          ./tools/download_models.ps1 -OnlyModel whisper
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          ./build/voiceime_recognizer_smoke.exe --model whisper
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: Package without models or private data
         run: ./tools/package.ps1 -BuildDir build -OutputDir dist/ci

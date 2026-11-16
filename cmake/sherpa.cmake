@@ -1,5 +1,5 @@
 # sherpa-onnx v2.0.1 Windows x64 shared MD. The import library is MSVC, so the
-# engine loads sherpa-onnx-c-api.dll at runtime instead of linking the .lib.
+# model worker loads sherpa-onnx-c-api.dll at runtime instead of linking the .lib.
 set(VOICEIME_SHERPA_ROOT
     "${CMAKE_SOURCE_DIR}/third_party/sherpa-onnx/sherpa-onnx-v2.0.1-win-x64-shared-MD-Release")
 

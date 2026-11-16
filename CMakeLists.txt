@@ -28,6 +28,7 @@ add_library(voiceime_protocol STATIC
   src/pipe_io.cpp
   src/ipc_security.cpp
   src/settings.cpp
+  src/model_settings.cpp
   src/key_route.cpp)
 target_include_directories(voiceime_protocol PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_compile_definitions(voiceime_protocol PRIVATE _WIN32_WINNT=0x0601)
@@ -37,6 +38,9 @@ add_library(voiceime_core STATIC
   src/lexicon.cpp
   src/recognition_text.cpp
   src/segmenter.cpp
+  src/worker_recognizer.cpp
+  src/model_download.cpp
+  src/data_backup.cpp
   src/vad.cpp
   src/resample.cpp
   src/session.cpp
@@ -45,7 +49,7 @@ target_include_directories(voiceime_core PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/src
   ${CMAKE_CURRENT_SOURCE_DIR}/third_party/sqlite
   ${CMAKE_CURRENT_SOURCE_DIR}/third_party/cppjieba/include)
-target_link_libraries(voiceime_core PUBLIC voiceime_protocol)
+target_link_libraries(voiceime_core PUBLIC voiceime_protocol bcrypt)
 target_compile_definitions(voiceime_core PRIVATE SQLITE_THREADSAFE=1 SQLITE_OMIT_LOAD_EXTENSION _WIN32_WINNT=0x0601)
 if(MSVC)
   set_source_files_properties(third_party/sqlite/sqlite3.c PROPERTIES COMPILE_OPTIONS /w)
@@ -56,20 +60,33 @@ endif()
 add_executable(voiceime_tests tests/main.cpp tests/utf8_test.cpp tests/lexicon_test.cpp tests/segmenter_test.cpp tests/vad_test.cpp tests/session_test.cpp tests/place_test.cpp tests/ipc_test.cpp tests/tsf_load_test.cpp tests/settings_test.cpp tests/key_route_test.cpp tests/pinyin_controller_test.cpp tests/rime_session_test.cpp tests/candidate_test.cpp)
 target_link_libraries(voiceime_tests PRIVATE voiceime_core)
 target_sources(voiceime_tests PRIVATE tests/pipe_io_test.cpp tests/ipc_security_test.cpp tests/concurrency_test.cpp tests/hardening_test.cpp tests/text_safety_test.cpp)
+target_sources(voiceime_tests PRIVATE tests/model_settings_test.cpp)
+target_sources(voiceime_tests PRIVATE tests/data_backup_test.cpp)
+target_sources(voiceime_tests PRIVATE tests/model_download_test.cpp)
 enable_testing()
 add_test(NAME voiceime.unit COMMAND voiceime_tests)
-set_tests_properties(voiceime.unit PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" TIMEOUT 60)
+set_tests_properties(voiceime.unit PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" TIMEOUT 120)
 target_include_directories(voiceime_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
 file(TO_CMAKE_PATH "${CMAKE_SOURCE_DIR}" VOICEIME_SOURCE_DIR_CMAKE)
 target_compile_definitions(voiceime_tests PRIVATE "VOICEIME_SOURCE_DIR=\"${VOICEIME_SOURCE_DIR_CMAKE}\"")
 
-add_executable(voiceime_engine src/engine_main.cpp src/confirm_box.cpp src/hotkey_dialog.cpp src/preferences_window.cpp src/sherpa_recognizer.cpp src/voiceime_engine.rc src/version.rc)
+add_executable(voiceime_engine src/engine_main.cpp src/confirm_box.cpp src/hotkey_dialog.cpp src/preferences_window.cpp src/voiceime_engine.rc src/version.rc)
 set_source_files_properties(src/voiceime_engine.rc PROPERTIES OBJECT_DEPENDS "${CMAKE_SOURCE_DIR}/src/voiceime_engine.manifest")
 target_link_options(voiceime_engine PRIVATE "-specs=${CMAKE_SOURCE_DIR}/cmake/no-default-manifest.specs")
 target_link_libraries(voiceime_engine PRIVATE voiceime_core ole32 uuid user32 gdi32 shell32 comctl32)
 target_compile_definitions(voiceime_engine PRIVATE _WIN32_WINNT=0x0601)
 include(cmake/sherpa.cmake)
-voiceime_use_sherpa(voiceime_engine)
+
+add_executable(voiceime_model_worker src/model_worker_main.cpp src/sherpa_recognizer.cpp src/version.rc)
+target_link_libraries(voiceime_model_worker PRIVATE voiceime_core)
+target_compile_definitions(voiceime_model_worker PRIVATE _WIN32_WINNT=0x0601)
+voiceime_use_sherpa(voiceime_model_worker)
+add_dependencies(voiceime_engine voiceime_model_worker)
+add_custom_command(TARGET voiceime_engine POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:voiceime_engine>/tools"
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    "${CMAKE_SOURCE_DIR}/tools/download_models.ps1" "${CMAKE_SOURCE_DIR}/tools/dependencies.json"
+    "$<TARGET_FILE_DIR:voiceime_engine>/tools")
 
 function(voiceime_copy_runtime target)
   if(MINGW)
@@ -134,10 +151,10 @@ voiceime_copy_runtime(voiceime_ui_check)
 
 # Test host uses the production engine with compile-time pipe/data isolation
 # and synthetic capture. It never connects to the installed input method.
-add_executable(voiceime_engine_testhost src/engine_main.cpp src/confirm_box.cpp src/hotkey_dialog.cpp src/preferences_window.cpp src/sherpa_recognizer.cpp)
+add_executable(voiceime_engine_testhost src/engine_main.cpp src/confirm_box.cpp src/hotkey_dialog.cpp src/preferences_window.cpp)
 target_compile_definitions(voiceime_engine_testhost PRIVATE VOICEIME_TESTING _WIN32_WINNT=0x0601)
 target_link_libraries(voiceime_engine_testhost PRIVATE voiceime_core ole32 uuid user32 gdi32 shell32 comctl32)
-voiceime_use_sherpa(voiceime_engine_testhost)
+add_dependencies(voiceime_engine_testhost voiceime_model_worker)
 voiceime_copy_runtime(voiceime_engine_testhost)
 add_executable(voiceime_engine_integration tools/engine_integration.cpp)
 target_link_libraries(voiceime_engine_integration PRIVATE voiceime_core)
@@ -177,6 +194,20 @@ add_test(NAME voiceime.popup COMMAND voiceime_popup_regression)
 set_tests_properties(voiceime.popup PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" TIMEOUT 30)
 
 # Brand resources are embedded in binaries, including the production-code fixtures.
+voiceime_copy_runtime(voiceime_model_worker)
+add_executable(voiceime_model_worker_testhost src/model_worker_main.cpp src/sherpa_recognizer.cpp)
+target_compile_definitions(voiceime_model_worker_testhost PRIVATE VOICEIME_WORKER_TESTING _WIN32_WINNT=0x0601)
+target_link_libraries(voiceime_model_worker_testhost PRIVATE voiceime_core)
+voiceime_use_sherpa(voiceime_model_worker_testhost)
+voiceime_copy_runtime(voiceime_model_worker_testhost)
+add_executable(voiceime_model_worker_integration tools/model_worker_integration.cpp)
+target_include_directories(voiceime_model_worker_integration PRIVATE tests)
+target_link_libraries(voiceime_model_worker_integration PRIVATE voiceime_core)
+voiceime_copy_runtime(voiceime_model_worker_integration)
+add_dependencies(voiceime_model_worker_integration voiceime_model_worker_testhost)
+add_test(NAME voiceime.model_worker COMMAND voiceime_model_worker_integration)
+set_tests_properties(voiceime.model_worker PROPERTIES TIMEOUT 30)
+
 foreach(target voiceime_engine voiceime_tsf voiceime_register voiceime_engine_testhost voiceime_tsf_integration)
   target_sources(${target} PRIVATE src/brand.rc)
 endforeach()

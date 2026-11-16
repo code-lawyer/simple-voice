@@ -15,6 +15,14 @@ try {
   $engine = Join-Path $root 'voiceime_engine.exe'
   $registrar = Join-Path $root 'voiceime_register.exe'
   $dll = Join-Path $root 'voiceime_tsf.dll'
+  & (Join-Path $PSScriptRoot 'verify_package.ps1') -Root $root
+  . (Join-Path $PSScriptRoot 'upgrade_status.ps1')
+  $upgrade = Get-SimpleVoiceUpgradeState $root
+  if ($upgrade.OldComponents.Count) {
+    Write-Host 'Older components are still loaded. Save your work; sign out and in after installation.' -ForegroundColor Yellow
+    $upgrade.OldComponents | Format-Table Pid,Process,Kind,Path -AutoSize | Out-Host
+  }
+  if ($upgrade.UnreadableProcesses) { Write-Host "Some processes could not be inspected ($($upgrade.UnreadableProcesses)); sign-out is still required after upgrading." }
   foreach ($file in @($engine, $registrar, $dll)) {
     if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw "Extract the complete release ZIP first. Missing: $file" }
   }
@@ -87,6 +95,7 @@ try {
     }
     Write-Host 'Installed Simple Voice. Sign out of Windows and sign in again, then choose Simple Voice / Qingyin with Win+Space.'
     Write-Host 'Keep this folder in place. Sign-in refreshes any previously loaded input-method DLLs.'
+    if ($upgrade.RequiresSignOut) { exit 3010 }
   } else {
     foreach ($hive in @('HKEY_CURRENT_USER','HKEY_LOCAL_MACHINE')) {
       if ((Test-Path -LiteralPath "Registry::$hive\Software\Classes\CLSID\$clsid") -or

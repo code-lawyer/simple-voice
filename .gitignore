@@ -24,3 +24,6 @@ third_party/sherpa-onnx/
 
 
 build-professional/
+
+# Recoverable local archive of superseded planning and machine-specific notes.
+/.local-archive/

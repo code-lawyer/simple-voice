@@ -58,6 +58,22 @@ std::wstring ScopeName(const wchar_t* prefix) {
 
 std::wstring VoicePipeName() { return ScopeName(L"\\\\.\\pipe\\SimpleVoice.v2."); }
 std::wstring VoiceMutexName() { return ScopeName(L"Local\\SimpleVoice.v2."); }
+std::wstring RegisteredVoiceDll() {
+  const wchar_t* key=L"Software\\Classes\\CLSID\\{A4C1E2B0-7D34-4F91-9A62-5E18C3704B21}\\InProcServer32";
+  for(HKEY hive:{HKEY_CURRENT_USER,HKEY_LOCAL_MACHINE}) {
+    HKEY handle=nullptr;
+    if(RegOpenKeyExW(hive,key,0,KEY_QUERY_VALUE|KEY_WOW64_64KEY,&handle)!=ERROR_SUCCESS)continue;
+    wchar_t value[32768]{};DWORD bytes=sizeof(value),type=0;
+    const auto status=RegQueryValueExW(handle,nullptr,nullptr,&type,reinterpret_cast<BYTE*>(value),&bytes);RegCloseKey(handle);
+    if(status==ERROR_SUCCESS && type==REG_SZ && bytes>=sizeof(wchar_t) && bytes<=sizeof(value) && value[bytes/sizeof(wchar_t)-1]==0)
+      return std::wstring(value);
+  }
+  return {};
+}
+bool LegacyVoiceEngineRunning() {
+  HANDLE old=OpenMutexW(SYNCHRONIZE,FALSE,L"Local\\VoiceImeEngine");
+  if(old){CloseHandle(old);return true;}return GetLastError()==ERROR_ACCESS_DENIED;
+}
 std::wstring ExecutableDirectory() {
   std::vector<wchar_t> path(32768);
   const DWORD size = GetModuleFileNameW(nullptr, path.data(), static_cast<DWORD>(path.size()));

@@ -2,8 +2,10 @@
 #include "pipe_io.hpp"
 #include "ipc_security.hpp"
 #include "settings.hpp"
+#include "model_settings.hpp"
 #include "sqlite3.h"
 #include "lexicon.hpp"
+#include "data_backup.hpp"
 #include "utf8.hpp"
 #include <windows.h>
 #include <algorithm>
@@ -11,6 +13,7 @@
 #include <ctime>
 #include <deque>
 #include <filesystem>
+#include <fstream>
 #include <stdexcept>
 #include <string>
 
@@ -158,7 +161,7 @@ BOOL CALLBACK FindEngine(HWND hwnd, LPARAM arg) {
 class Host {
  public:
   Host(const std::filesystem::path& executable, const std::filesystem::path& data, const wchar_t* fixture,
-       const wchar_t* transcript=nullptr) {
+       const wchar_t* transcript=nullptr,const wchar_t* download_program=nullptr) {
     static int serial = 0;
     id_ = std::to_wstring(GetCurrentProcessId()) + L"_" + std::to_wstring(++serial);
     std::filesystem::create_directories(data);
@@ -166,6 +169,7 @@ class Host {
     SetEnvironmentVariableW(L"VOICEIME_TEST_DATA", data.c_str());
     SetEnvironmentVariableW(L"VOICEIME_TEST_CAPTURE", fixture);
     SetEnvironmentVariableW(L"VOICEIME_TEST_TRANSCRIPT", transcript);
+    SetEnvironmentVariableW(L"VOICEIME_TEST_DOWNLOAD_PROGRAM",download_program);
     SetEnvironmentVariableW(L"VOICEIME_TEST_FOREGROUND",std::to_wstring(GetCurrentProcessId()).c_str());
     std::wstring command = L"\"" + executable.wstring() + L"\" --fake";
     STARTUPINFOW startup{};
@@ -178,6 +182,7 @@ class Host {
     SetEnvironmentVariableW(L"VOICEIME_TEST_DATA", nullptr);
     SetEnvironmentVariableW(L"VOICEIME_TEST_CAPTURE", nullptr);
     SetEnvironmentVariableW(L"VOICEIME_TEST_TRANSCRIPT", nullptr);
+    SetEnvironmentVariableW(L"VOICEIME_TEST_DOWNLOAD_PROGRAM",nullptr);
     SetEnvironmentVariableW(L"VOICEIME_TEST_FOREGROUND", nullptr);
     Require(created != FALSE, "isolated test engine starts");
     CloseHandle(process_.hThread);
@@ -219,6 +224,28 @@ class Host {
   HANDLE job_ = nullptr;
   std::wstring id_;
 };
+
+void DownloadFixture(const std::filesystem::path& program,bool complete) {
+  std::filesystem::create_directories(program/"tools");
+  std::ofstream script(program/"tools/download_models.ps1");
+  script<<R"PS(param([string]$Root,[string]$OnlyModel,[string]$StatusFile)
+$ErrorActionPreference='Stop'
+[IO.File]::AppendAllText((Join-Path $Root 'download-count.txt'),'1')
+Start-Sleep -Milliseconds 250
+)PS";
+  if(complete)script<<R"PS($files=@('streaming-bilingual/encoder-epoch-99-avg-1.int8.onnx',
+'streaming-bilingual/decoder-epoch-99-avg-1.onnx','streaming-bilingual/joiner-epoch-99-avg-1.int8.onnx',
+'streaming-bilingual/tokens.txt','final-qwen/conv_frontend.onnx','final-qwen/encoder.int8.onnx',
+'final-qwen/decoder.int8.onnx','final-qwen/tokenizer/vocab.json','final-qwen/tokenizer/merges.txt',
+'final-qwen/tokenizer/tokenizer_config.json')
+foreach($file in $files) {
+  $path=Join-Path (Join-Path $Root 'models') $file
+  [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($path)) | Out-Null
+  [IO.File]::WriteAllText($path,'test fixture only')
+}
+)PS";
+  script<<"[IO.File]::WriteAllText($StatusFile,'fixture completed')\nexit 0\n";
+}
 
 void IndependentClient(const std::filesystem::path& executable, const std::wstring& pipe,
                        const wchar_t* mode, std::uintptr_t window = 0) {
@@ -273,6 +300,7 @@ int main(int argc, char** argv) {
     GetModuleFileNameW(nullptr, own, MAX_PATH);
     const auto host = std::filesystem::path(own).parent_path() / "voiceime_engine_testhost.exe";
     const auto output = std::filesystem::absolute(argc > 1 ? argv[1] : "build/engine-integration");
+    if(argc<3 || (std::string(argv[2])!="--practice-only" && std::string(argv[2])!="--review-only")) {
     {
       Host engine(host,output/"authorization",L"manual");
       Client origin(engine.Pipe()); origin.Phase("0");
@@ -635,12 +663,13 @@ int main(int argc, char** argv) {
       const auto data=output/"model-selection-race";
       std::filesystem::create_directories(data);
       InputPreferences initial; initial.guide_dismissed=true; Require(SaveInputPreferences((data/"preferences.ini").wstring(),initial),"model profile fixture starts bilingual");
+      Require(SaveModelSettings((data/"speech-models.ini").wstring(),{}),"model profile fixture resets the selected model");
       Host engine(host,data,L"slow-final"); Client client(engine.Pipe()); client.Phase("0");
       client.Send(MsgType::StartListen); client.Phase("1");
       SendMessageW(engine.Window(),WM_COMMAND,3,0);
       const auto settings=engine.Window(L"SimpleVoicePreferences"); Require(settings!=nullptr,"native preferences open during recording");
-      SendDlgItemMessageW(settings,57,BM_SETCHECK,BST_CHECKED,0); SendMessageW(settings,WM_COMMAND,23,0);
-      Require(LoadInputPreferences((data/"preferences.ini").wstring()).chinese_only,"changed model preference is saved for next utterance");
+      SendDlgItemMessageW(settings,60,CB_SETCURSEL,1,0); SendMessageW(settings,WM_COMMAND,63,0);
+      Require(LoadModelSettings((data/"speech-models.ini").wstring()).model==SpeechModel::Qwen3,"recording keeps the old model until the replacement is validated");
       client.Send(MsgType::StartListen); client.Phase("2"); client.Phase("3");
       wchar_t text[2048]{}; GetWindowTextW(engine.Window(),text,2048);
       Require(std::wstring(text).find(L"假字。")!=std::wstring::npos,"stop hotkey finishes the current model without discarding the draft");
@@ -680,6 +709,7 @@ int main(int argc, char** argv) {
       std::filesystem::create_directories(data);
       InputPreferences initial; initial.guide_dismissed=true;
       Require(SaveInputPreferences((data/"preferences.ini").wstring(),initial),"editor generation fixture starts bilingual");
+      Require(SaveModelSettings((data/"speech-models.ini").wstring(),{}),"preview generation resets the selected model");
       Host engine(host,data,L"model-slow"); Client client(engine.Pipe()); client.Phase("0");
       client.Send(MsgType::StartListen); client.Phase("3"); client.Phase("1"); Sleep(40);
       client.Send(MsgType::Enter); client.Phase("2"); client.Phase("3");
@@ -688,7 +718,7 @@ int main(int argc, char** argv) {
       Require(editor!=nullptr,"previous utterance has an editable preview");
       SendMessageW(engine.Window(),WM_COMMAND,3,0);
       const auto settings=engine.Window(L"SimpleVoicePreferences");
-      SendDlgItemMessageW(settings,57,BM_SETCHECK,BST_CHECKED,0); SendMessageW(settings,WM_COMMAND,23,0);
+      SendDlgItemMessageW(settings,60,CB_SETCURSEL,1,0); SendMessageW(settings,WM_COMMAND,63,0);
       client.Send(MsgType::StartListen); client.Phase("3");
       Require(!IsWindow(editor),"accepting a queued recording closes the previous utterance editor");
       SendMessageW(engine.Window(),WM_COMMAND,5,0);
@@ -696,6 +726,115 @@ int main(int argc, char** argv) {
       client.Send(MsgType::Enter);
       Require(client.Quiet(100),"Enter while preparing cannot insert the previous utterance");
       client.Phase("1"); client.Send(MsgType::Cancel); client.Phase("0"); engine.Stop();
+    }
+    {
+      Host engine(host,output/"model-reset-failure",L"reset-error");Client client(engine.Pipe());client.Phase("0");
+      client.Send(MsgType::StartListen);client.Phase("3");
+      wchar_t message[2048]{};GetWindowTextW(engine.Window(),message,2048);
+      Require(std::wstring(message).find(L"模型未能开始")!=std::wstring::npos,"model reset failure gives retry guidance without killing the engine");
+      client.Send(MsgType::Enter);Require(client.Quiet(80),"model reset error is never inserted as user text");
+      client.Send(MsgType::Cancel);client.Phase("0");engine.Stop();
+    }
+    }
+    if(argc<3 || std::string(argv[2])!="--practice-only") {
+    for(const auto* fixture:{L"reset-hang",L"audio-hang"}) {
+      Host engine(host,output/fixture,fixture);Client client(engine.Pipe());client.Phase("0");
+      client.Send(MsgType::StartListen);client.Phase("1");Sleep(80);
+      if(std::wstring(fixture)==L"audio-hang") {
+        const auto began=GetTickCount64();client.Send(MsgType::Enter);client.Phase("2");
+        Require(GetTickCount64()-began<250,"stopping a blocked audio request immediately exposes cancellable finalization");
+      }
+      const auto began=GetTickCount64();client.Send(MsgType::Cancel);client.Phase("0");
+      Require(GetTickCount64()-began<250,"blocked reset or audio cannot hold the UI cancellation path");
+      engine.Stop();
+    }
+    for(bool complete:{true,false}) {
+      const auto data=output/(std::string(complete?"download-complete-":"download-incomplete-")+std::to_string(GetTickCount64()));
+      const auto program=data/"fixture-program";DownloadFixture(program,complete);
+      Host engine(host,data,L"normal",nullptr,program.c_str());Client client(engine.Pipe());client.Phase("0");
+      SendMessageW(engine.Window(),WM_COMMAND,3,0);const auto settings=engine.Window(L"SimpleVoicePreferences");
+      Require(settings!=nullptr,"download request opens the real preferences flow");
+      SendDlgItemMessageW(settings,68,BM_SETCHECK,BST_UNCHECKED,0);
+      Require(SendMessageW(GetDlgItem(settings,69),WM_SETTEXT,0,reinterpret_cast<LPARAM>(L"审查专名"))!=0,"download request accepts explicit name hints");
+      wchar_t hints[128]{};SendMessageW(GetDlgItem(settings,69),WM_GETTEXT,128,reinterpret_cast<LPARAM>(hints));
+      Require(std::wstring(hints)==L"审查专名","download fixture reads back the actual edit control contents");
+      SendMessageW(settings,WM_COMMAND,63,0);
+      Require(!IsWindowEnabled(GetDlgItem(settings,63)),"model activation is disabled while its request is in flight");
+      // Synthetic WM_COMMAND intentionally bypasses disabled controls to verify
+      // the engine independently rejects competing activation requests.
+      SendDlgItemMessageW(settings,60,CB_SETCURSEL,1,0);SendMessageW(settings,WM_COMMAND,63,0);
+      const auto deadline=GetTickCount64()+8000;
+      while(!IsWindowEnabled(GetDlgItem(settings,63)) && GetTickCount64()<deadline) {Sleep(20);SendMessageW(settings,WM_TIMER,1,0);}
+      Require(IsWindowEnabled(GetDlgItem(settings,63)),"download validation completes without leaving a busy settings page");
+      const auto selected=LoadModelSettings((data/"speech-models.ini").wstring());
+      if(complete) {
+        Require(selected.model==SpeechModel::Qwen3 && selected.idle_minutes==0 && selected.hotwords=="审查专名",
+            "automatic download retains the full requested settings and rejects a competing activation");
+        Require(!selected.directories[0].empty(),"downloaded preset resolves from the isolated data directory");
+      } else {
+        Sleep(700);std::ifstream count(data/"download-count.txt");std::string starts;std::getline(count,starts);
+        Require(starts=="1","incomplete shared model files report failure instead of an automatic download loop");
+        Require(!std::filesystem::exists(data/"speech-models.ini"),"incomplete downloads leave the prior model selection untouched");
+      }
+      engine.Stop();
+    }
+    {
+      const auto data=output/("restore-model-choice-"+std::to_string(GetTickCount64()));
+      const auto source=data/"backup-source";std::filesystem::create_directories(source);
+      InputPreferences legacy;legacy.chinese_only=true;
+      Require(SaveInputPreferences((source/"preferences.ini").wstring(),legacy),"legacy backup contains its original input preferences");
+      std::filesystem::path backup;
+      {Lexicon terms((source/"lexicon.sqlite").string());backup=CreateDataBackup(terms,source.wstring(),data.wstring());}
+      std::filesystem::create_directories(data/"restore-fixture");
+      std::filesystem::copy_file(backup/"SimpleVoice.backup",data/"restore-fixture/SimpleVoice.backup");
+      Host engine(host,data,L"normal");Client client(engine.Pipe());client.Phase("0");
+      Require(SendMessageW(engine.Window(),WM_APP+101,0,0)!=0,"engine restores legacy settings through the production restore action");
+      Require(LoadInputPreferences((data/"preferences.ini").wstring()).chinese_only,"legacy preference bytes were actually restored");
+      Require(LoadModelSettings((data/"speech-models.ini").wstring(),true).model==SpeechModel::Qwen3,
+          "restore pins the current model so a restart cannot import the backup's legacy model preference");
+      engine.Stop();
+    }
+    }
+    {
+      Host engine(host,output/"first-use-practice",L"slow-final");Client client(engine.Pipe());client.Phase("0");
+      SendMessageW(engine.Window(),WM_COMMAND,3,0);
+      const auto settings=engine.Window(L"SimpleVoicePreferences");Require(settings!=nullptr,"first-use practice is available in native preferences");
+      SendMessageW(settings,WM_COMMAND,72,0);client.Phase("1");Sleep(45);
+      SendMessageW(settings,WM_COMMAND,72,0);client.Phase("2");client.Phase("3");
+      SendMessageW(settings,WM_TIMER,1,0);wchar_t preview[2048]{};SendMessageW(GetDlgItem(settings,75),WM_GETTEXT,2048,reinterpret_cast<LPARAM>(preview));
+      Require(std::wstring(preview).find(L"假字。")!=std::wstring::npos,"practice displays calibrated text from the production capture path");
+      SendMessageW(settings,WM_COMMAND,73,0);client.Phase("0");
+      Require(client.Quiet(80),"practice confirmation never inserts into the external client");
+      SendMessageW(GetDlgItem(settings,75),WM_GETTEXT,2048,reinterpret_cast<LPARAM>(preview));Require(std::wstring(preview).find(L"已确认")!=std::wstring::npos,"practice retains its own confirmed result");
+      SendMessageW(settings,WM_COMMAND,72,0);client.Phase("1");
+      SendMessageW(settings,WM_CLOSE,0,0);client.Phase("0");
+      Require(client.Quiet(80),"closing first-use practice cancels capture without inserting");engine.Stop();
+    }
+    {
+      const auto data=output/("practice-model-choice-"+std::to_string(GetTickCount64()));
+      Host engine(host,data,L"normal");Client client(engine.Pipe());client.Phase("0");
+      SendMessageW(engine.Window(),WM_COMMAND,3,0);const auto settings=engine.Window(L"SimpleVoicePreferences");
+      SendMessageW(settings,WM_COMMAND,72,0);client.Phase("1");Sleep(40);
+      SendDlgItemMessageW(settings,60,CB_SETCURSEL,1,0);SendMessageW(settings,WM_COMMAND,63,0);
+      SendMessageW(settings,WM_COMMAND,72,0);client.Phase("2");client.Phase("3");
+      SendMessageW(settings,WM_COMMAND,73,0);client.Phase("0");
+      SendMessageW(settings,WM_COMMAND,72,0);
+      const auto deadline=GetTickCount64()+3000;
+      while(LoadModelSettings((data/"speech-models.ini").wstring()).model!=SpeechModel::SenseVoice && GetTickCount64()<deadline)Sleep(10);
+      Require(LoadModelSettings((data/"speech-models.ini").wstring()).model==SpeechModel::SenseVoice,
+          "the next practice validates the deferred model before opening capture");
+      SendMessageW(settings,WM_COMMAND,72,0);client.Phase("1");SendMessageW(settings,WM_COMMAND,74,0);client.Phase("0");engine.Stop();
+    }
+    {
+      Host engine(host,output/"practice-unknown",L"normal",L"这是<unk>");Client client(engine.Pipe());client.Phase("0");
+      SendMessageW(engine.Window(),WM_COMMAND,3,0);const auto settings=engine.Window(L"SimpleVoicePreferences");
+      SendMessageW(settings,WM_COMMAND,72,0);client.Phase("1");Sleep(40);
+      SendMessageW(settings,WM_COMMAND,72,0);client.Phase("2");client.Phase("3");
+      SendMessageW(settings,WM_COMMAND,73,0);SendMessageW(settings,WM_TIMER,1,0);
+      wchar_t text[2048]{};SendMessageW(GetDlgItem(settings,75),WM_GETTEXT,2048,reinterpret_cast<LPARAM>(text));
+      Require(std::wstring(text).find(L"已确认")==std::wstring::npos && std::wstring(text).find(L"<unk>")!=std::wstring::npos,
+          "practice does not acknowledge unknown speech as a successful final preview");
+      SendMessageW(settings,WM_COMMAND,74,0);client.Phase("0");engine.Stop();
     }
     std::printf("%d engine integration checks passed (isolated pipe, synthetic capture)\n", checks);
     return 0;

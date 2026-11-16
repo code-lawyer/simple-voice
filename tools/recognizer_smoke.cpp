@@ -1,4 +1,6 @@
 #include "sherpa_recognizer.hpp"
+#include "worker_recognizer.hpp"
+#include "utf8.hpp"
 #include "session.hpp"
 #include "resample.hpp"
 #include <windows.h>
@@ -43,9 +45,16 @@ static std::vector<std::int16_t> ReadWave(const char* file) {
 }
 
 static std::string Fold(std::string text) { for(char& c:text) if(c>='A'&&c<='Z') c+=32; return text; }
+static ModelSettings selected;
+static bool isolated=false;
+static std::unique_ptr<Recognizer> MakeTestRecognizer(bool chinese=false) {
+  if(!isolated)return MakeSherpaRecognizer("models",chinese);
+  std::string error;auto result=MakeWorkerRecognizer("models",selected,&error);
+  if(!result)std::fprintf(stderr,"%s\n",error.c_str());return result;
+}
 static int Corpus(const char* path,bool chinese) {
   using Clock=std::chrono::steady_clock;
-  auto recognizer=MakeSherpaRecognizer("models",chinese);
+  auto recognizer=MakeTestRecognizer(chinese);
   if(!recognizer) return 2;
   std::ifstream list(path); std::string line; int passed=0,failed=0;
   while(std::getline(list,line)) {
@@ -73,15 +82,24 @@ static int Corpus(const char* path,bool chinese) {
     if(ok)++passed;else ++failed;
   }
   PROCESS_MEMORY_COUNTERS memory{};GetProcessMemoryInfo(GetCurrentProcess(),&memory,sizeof(memory));
-  std::printf("corpus_passed=%d corpus_failed=%d peak_working_set_mib=%.1f\n",passed,failed,memory.PeakWorkingSetSize/1048576.0);
+  std::printf("corpus_passed=%d corpus_failed=%d host_peak_mib=%.1f model_worker_peak_mib=%.1f\n",passed,failed,memory.PeakWorkingSetSize/1048576.0,recognizer->PeakMemoryBytes()/1048576.0);
   return passed>0&&failed==0?0:1;
 }
 int main(int argc,char** argv) {
+  if(argc>=3 && std::string(argv[1])=="--model") {
+    bool found=false;
+    for(auto m:{SpeechModel::Qwen3,SpeechModel::SenseVoice,SpeechModel::Whisper,SpeechModel::ChineseLegacy})
+      if(std::string(argv[2])==SpeechModelId(m)){selected.model=m;found=true;}
+    if(!found)return 2;isolated=true;
+    if(argc>=4)selected.directories[static_cast<int>(selected.model)]=Utf8ToWide(argv[3]);
+    if(argc>=5)return Corpus(argv[4],false);
+    argc=1;
+  }
   if(argc>=2) return Corpus(argv[1],argc>=3 && std::string(argv[2])=="--chinese");
   SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
   using Clock = std::chrono::steady_clock;
   const auto began = Clock::now();
-  auto recognizer = MakeSherpaRecognizer("models");
+  auto recognizer = MakeTestRecognizer();
   if (!recognizer) return 2;
   std::printf("model_load_ms=%lld\n", static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - began).count()));
   if (!recognizer->Finalize().empty()) return 1;
@@ -113,7 +131,7 @@ int main(int argc,char** argv) {
   }
   PROCESS_MEMORY_COUNTERS memory{};
   GetProcessMemoryInfo(GetCurrentProcess(), &memory, sizeof(memory));
-  std::printf("working_set_mib=%.1f peak_working_set_mib=%.1f\n", memory.WorkingSetSize / 1048576.0, memory.PeakWorkingSetSize / 1048576.0);
+  std::printf("host_working_set_mib=%.1f host_peak_working_set_mib=%.1f model_worker_peak_mib=%.1f\n", memory.WorkingSetSize / 1048576.0, memory.PeakWorkingSetSize / 1048576.0,recognizer->PeakMemoryBytes()/1048576.0);
   std::puts("3 real-model fixtures passed; recognizer has no personal-dictionary dependency");
   return 0;
 }

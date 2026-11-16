@@ -6,24 +6,25 @@
 
 Windows 本地拼音与中英语音输入法。干净的界面，明确的确认，留在本机的声音。
 
-[公开版本](https://github.com/code-lawyer/simple-voice/releases) · [使用说明](#怎么用) · [源码构建](docs/development.md) · [反馈问题](https://github.com/code-lawyer/simple-voice/issues)
+[公开版本](https://github.com/code-lawyer/simple-voice/releases) · [使用说明](#怎么用) · [源码构建](https://github.com/code-lawyer/simple-voice/blob/main/docs/development.md) · [反馈问题](https://github.com/code-lawyer/simple-voice/issues)
 
 ![钛银语音预览浮层](docs/design/skins/titanium-voice.png)
 
 </div>
 
-当前版本 **v0.2.0-rc.5** 是 **Windows Intel/AMD x64** 发布候选。
-[本轮变化](docs/releases/v0.2.0-rc.5.md) · [验证结果与限制](docs/releases/v0.2.0-rc.5-validation.md)。
+**v0.2.0-rc.6** 是 **Windows Intel/AMD x64** 发布候选。
+[本轮变化](docs/releases/v0.2.0-rc.6.md) · [验证结果与限制](docs/releases/v0.2.0-rc.6-validation.md)。
 
 切换到轻音输入法后，Windows 任务栏会显示「声核」标识，旁边的「中」或「A」表示当前输入模式。点击模式图标可以切换中英文。[任务栏实拍](docs/design/brand/windows-taskbar.png)
 
 ## 能做什么
 
 - **拼音与英文**：Rime 全拼、简拼、部分错拼容错；中文词组、英语单词与短语补全。Enter 保留原始输入，空格选择候选。
-- **中英本地语音**：双语 Zipformer 流式草稿，Qwen3-ASR 0.6B INT8 定稿；可切换中文优先模型。停顿后先预览最终文本，再确认写入。
+- **可选本地语音模型**：默认 Qwen3-ASR；设置中可选择 SenseVoiceSmall 或 Whisper Turbo，启用时自动下载并验证。停顿后先预览最终文本，再确认写入。
 - **保留表达**：取消无上下文同音替换，不用旧整句覆盖新数字或专名。可编辑预览、恢复识别原文、复制文字；无法识别的占位符需要补全后再确认。
 - **三层词库**：公共基础数据、后台拼音偏好、明确添加的“我的词语”。普通语音确认不再自动收集常用词或整句。
 - **可管理的设置**：词语搜索、分页、修改、删除与单次撤销；麦克风选择、输入电平、停顿时长、模型准备与重试。
+- **试用和备份**：在设置页练习录音、预览和确认；备份个人词语与输入设置，恢复前自动保存旧数据。模型加载失败保留原方案，取消会停止计算，闲置自动释放模型。
 - **三套内置皮肤**：钛银、极昼、深空；输入浮层随皮肤切换，设置使用统一中性色和原生控件，高对比度优先。
 
 模型识别仍可能出错。“最终预览”指本次将写入的文本已经确定，不代表内容保证正确。
@@ -78,20 +79,23 @@ CPU 即可运行。中英模型在本机集成样本测试中峰值工作集约 
 | 极昼 | ![极昼语音框](docs/design/skins/daylight-voice.png) | ![极昼候选条](docs/design/skins/daylight-candidate.png) |
 | 深空 | ![深空语音框](docs/design/skins/deep-space-voice.png) | ![深空候选条](docs/design/skins/deep-space-candidate.png) |
 
-[视觉规范](DESIGN.md)。设置和预览编辑器使用 Windows 原生可键盘操作控件。
+[视觉规范](https://github.com/code-lawyer/simple-voice/blob/main/DESIGN.md)。设置和预览编辑器使用 Windows 原生可键盘操作控件。
 
 ## 本地数据与词库
 
 日常输入不需要账号或网络，不上传音频、不保存录音文件。确认和编辑前的识别文本仅在内存中。
 语音控制管道校验当前登录身份、输入法宿主及前台话轮；这不隔离已进入受信任宿主的同账号
-恶意代码。具体范围及升级兼容要求见 [本地 IPC 约定](docs/ipc-security.md)。
+恶意代码。具体范围及升级兼容要求见 [本地 IPC 约定](https://github.com/code-lawyer/simple-voice/blob/main/docs/ipc-security.md)。
 为兼容旧版，数据继续保存在 `%LOCALAPPDATA%\VoiceIme\`：
 
 | 文件 / 目录 | 用途 |
 | --- | --- |
 | `config.json` | 语音快捷键 |
 | `appearance.json` | 浮层皮肤 |
-| `preferences.ini` | 学习开关、设备、停顿、语音模型选择与引导状态 |
+| `preferences.ini` | 学习开关、设备、停顿与引导状态；保留旧版模型迁移字段 |
+| `speech-models.ini` | 当前语音型号、已有模型目录、闲置释放时间与显式专名提示 |
+| `models\` | 从设置页下载的本地模型；安装目录中已有的模型也会复用 |
+| `backups\` | 恢复前自动保存的个人词语与输入设置备份 |
 | `lexicon.sqlite` | 显式个人词语及兼容保留的旧记录 |
 | `rime\` | 后台拼音偏好、编译索引和显式词语的候选快照 |
 
@@ -116,7 +120,7 @@ CPU 即可运行。中英模型在本机集成样本测试中峰值工作集约 
 
 ## 开发与许可
 
-[构建和测试](docs/development.md) · [统一产品方案](PRODUCT.md) · [本轮开发测试计划](docs/plans/professional-release.md)
+[构建和测试](https://github.com/code-lawyer/simple-voice/blob/main/docs/development.md) · [统一产品方案](https://github.com/code-lawyer/simple-voice/blob/main/PRODUCT.md) · [当前发行计划](https://github.com/code-lawyer/simple-voice/blob/main/docs/plans/public-release-sprint.md)
 
 代码使用 [Apache-2.0](LICENSE)。第三方代码、数据和模型分别遵循其原有许可，
 详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。感谢 Rime、sherpa-onnx、Qwen、

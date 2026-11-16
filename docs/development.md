@@ -33,7 +33,7 @@ cmake -S . -B build-dev -G Ninja -DCMAKE_BUILD_TYPE=Release `
 
 ## 验证层次
 
-CTest 四组：单元/并发，模拟采音的真实引擎 IPC，真实 Windows TSF 隔离宿主，原生浮层稳定性。
+CTest 五组：单元/并发，模拟采音的真实引擎 IPC，真实 Windows TSF 隔离宿主，原生浮层稳定性，模型 worker 故障恢复。
 不修改系统注册、生产词库或用户窗口。包括不安全改写、迁移/保留期限、拼音英语路由、
 组合光标、原生编辑器语音状态隔离、切换模型/取消迟到回调和写入断线保护。
 IPC v2 还覆盖连接身份、前台授权、话轮关联、跨应用确认和快捷键配置通知。
@@ -64,14 +64,14 @@ UI 工具测试键盘、分页、编辑/恢复、可访问性对象、长文本�
 
 - [语音对比](research/asr-selection-2026-11-15.md)、`tools/asr-benchmark/`。
 - [拼音数据与候选评测](research/pinyin-selection-2026-11-15.md)、`tools/pinyin-data/`。
-- [当前回归证据](releases/v0.2.0-rc.5-validation.md)。
+- [当前回归证据](releases/v0.2.0-rc.6-validation.md)。
 
 `voiceime_installed_check.exe <安装目录>` 是另行部署后才运行的生产检查，会使用系统 COM 注册并可能启动生产引擎。
 不在本轮开发回归或 CI 中运行；不能把源码测试结果称为已安装版验证。
 
 ## CI 与打包
 
-`.github/workflows/windows.yml` 使用 Windows 2022 + MSYS2 UCRT64，执行构建、四组 CTest、
+`.github/workflows/windows.yml` 使用 Windows 2022 + MSYS2 UCRT64，执行构建、五组 CTest、
 原生控件检查及包生成。手动 workflow_dispatch 可勾选真实模型加载/样本 smoke。
 推送或打开 Pull Request 会触发工作流，构建与测试结果见 [GitHub Actions](https://github.com/code-lawyer/simple-voice/actions/workflows/windows.yml)。
 CI 使用固定哈希的 SDK，MSYS2 编译器跟随软件包仓库版本，二进制字节可能随工具链而异。
@@ -80,12 +80,13 @@ CI 使用固定哈希的 SDK，MSYS2 编译器跟随软件包仓库版本，二�
 ./tools/package.ps1 -BuildDir build -OutputDir dist/rc
 ```
 
-版本取自 `src/product.hpp`，三份 PE 版本必须一致。公开词表按 `rime-data/SHA256SUMS`
+版本取自 `src/product.hpp`，四份 PE 版本必须一致（引擎、模型 worker、TSF DLL、注册助手）。公开词表按 `rime-data/SHA256SUMS`
 逐文件校验后打包；其余采用明确白名单。模型、SDK、测试程序、个人数据和本机原始日志不进入 ZIP。
 包内 `package-manifest.json` 记录每个文件的 SHA-256；ZIP 另附 `.sha256`。
 
 发布前应在全新解压目录、与源码无关的当前目录运行 `tools/setup.ps1 -Action Check`，
-校验两套模型；再按照真人验收清单决定公开发行。`install.cmd` 会请求管理员注册，
+校验默认及兼容模型；可选的 SenseVoiceSmall、Whisper Turbo 另以隔离样本验证。
+再按照真人验收清单决定公开发行。`install.cmd` 会请求管理员注册，
 `Check` 不注册。版本升级使用新目录；注册后注销再登录，避免宿主保留旧 DLL。
 
 兼容标识仍为 `voiceime_*`、`%LOCALAPPDATA%\VoiceIme` 及既有 TSF GUID。

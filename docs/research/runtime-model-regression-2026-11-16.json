@@ -1,0 +1,609 @@
+{
+  "note": "Diagnostic observations only. TTS and upstream ASR example text are not independent natural-speech acceptance. PASS in logs means runtime/text-preservation invariants, not transcription accuracy.",
+  "hashes": {
+    "legacy_zh_0": "668bf8df51a10027b84d5d8816a1ce11ae93545538dc05cfe2aa6811d399c250",
+    "legacy_zh_1": "30edbabea84ca4c076f5b43bb44495f436f6711319c32a200d3fc5c67c1fee1d",
+    "legacy_zh_8k": "0ed3bddacf0a23477d2b3c07ff9c24ad9c1fc3b31cdd47cb0773441e8e045cde",
+    "tts_english_sentence": "c8ada3d267519bd3c2cd1d810e8b0c54dc49fd60c9965a9bb39f4d7dfeb21d5c",
+    "tts_english_short": "4e976b32fdff7b4a7098d15f7748ca30d25b69814003188b184a64f857e5bd30",
+    "tts_english_terms": "d8c541087c3e87ea66ec515e000dc506f9f1c05efdde22f71fc24aa44b31774f",
+    "official_mixed_always": "8bfb42c963e623ebab31b81ff4404867d07d3102507c87ac14577c4c61663b8c",
+    "sense_en_gold": "eb1eb008904465b74c304aad8342e8c7d3c6e61ffe9f66adcaca9cf0f76a93f4",
+    "sense_zh_hours": "b77f1794fe374a0ba1ee1dc458bfaf9349496cbbfc32780c50ba3c5a7ad8e373",
+    "fsdd_zero": "eea86018ce1730baaf7f5dd6ec88c1f727dd90203521a9115b489310a248ea05",
+    "fsdd_one": "d57a29689b0abf1ab609ab401dd4053dbc18c317a4ed9ebed6a9aa034e9bab0a",
+    "fsdd_seven": "3074f5a5db8a3588bc8616c5888fa25bbac2c71728d14a6b413baf89d779ef70",
+    "fsdd_nine": "3a5c85a22f6646a4fd5f51b486bb647c86dbb17b13339fd8a22ed1b307749bca",
+    "qwen_zh_numbers": "33f85268f7fbad6b3152b9ab051edab1a85082fde66bccff61d7f5ef7b437e58",
+    "zip_mixed_weekdays": "7d93384ca14702cc584a7a33fe2fed92e89e708549161cb12ea38c916882103b",
+    "silence_2s": "20eaebffe1816e0ffa6f7f854f5ef4ea80d5349faaf0ce1fec1b713e7fde58fa",
+    "stress_60s": "c3a138e122c6096cffb36aed340cd8e65fb9af85ac51375d9fee1b7fa17e3f3c"
+  },
+  "models": {
+    "qwen3": {
+      "cases": [
+        {
+          "id": "legacy_zh_0",
+          "invariants": "PASS",
+          "durationSeconds": 5.61,
+          "finalWaitMs": 1183,
+          "text": "对我做了介绍啊。那么我想说的是呢，大家如果对我的研究感兴趣呢。",
+          "warning": "",
+          "referenceKind": "upstream_asr_example_not_gold"
+        },
+        {
+          "id": "legacy_zh_1",
+          "invariants": "PASS",
+          "durationSeconds": 5.15,
+          "finalWaitMs": 1200,
+          "text": "重点呢，想谈三个问题。首先呢，就是这一轮全球金融动荡的表现。",
+          "warning": "",
+          "referenceKind": "regression_only"
+        },
+        {
+          "id": "legacy_zh_8k",
+          "invariants": "PASS",
+          "durationSeconds": 4.52,
+          "finalWaitMs": 848,
+          "text": "深入的分析这一次全球金融动荡背后的根源。",
+          "warning": "",
+          "referenceKind": "regression_only"
+        },
+        {
+          "id": "tts_english_sentence",
+          "invariants": "PASS",
+          "durationSeconds": 3.01,
+          "finalWaitMs": 733,
+          "text": "Please open the project and save the file.",
+          "warning": "",
+          "referenceKind": "known_tts_prompt",
+          "wordScore": {
+            "errors": 0,
+            "referenceWords": 8
+          }
+        },
+        {
+          "id": "tts_english_short",
+          "invariants": "PASS",
+          "durationSeconds": 1.65,
+          "finalWaitMs": 654,
+          "text": "Hello, world.",
+          "warning": "",
+          "referenceKind": "known_tts_prompt",
+          "wordScore": {
+            "errors": 0,
+            "referenceWords": 2
+          }
+        },
+        {
+          "id": "tts_english_terms",
+          "invariants": "PASS",
+          "durationSeconds": 6.24,
+          "finalWaitMs": 972,
+          "text": "GitHub, Python, Simple Voice, Codex.",
+          "warning": "",
+          "referenceKind": "known_tts_prompt",
+          "wordScore": {
+            "errors": 0,
+            "referenceWords": 5
+          }
+        },
+        {
+          "id": "official_mixed_always",
+          "invariants": "PASS",
+          "durationSeconds": 5.1,
+          "finalWaitMs": 1107,
+          "text": "这是第一种，第二种叫“呃与always”，always什么意思啊？",
+          "warning": "",
+          "referenceKind": "upstream_asr_example_not_gold"
+        },
+        {
+          "id": "sense_en_gold",
+          "invariants": "PASS",
+          "durationSeconds": 7.15,
+          "finalWaitMs": 1259,
+          "text": "The tribal chief then called for the boy and presented him with fifty pieces of gold.",
+          "warning": "",
+          "referenceKind": "upstream_asr_example_not_gold",
+          "wordScore": {
+            "errors": 2,
+            "referenceWords": 15
+          }
+        },
+        {
+          "id": "sense_zh_hours",
+          "invariants": "PASS",
+          "durationSeconds": 5.59,
+          "finalWaitMs": 895,
+          "text": "開放時間：早上9點至下午5點。",
+          "warning": "",
+          "referenceKind": "upstream_asr_example_not_gold"
+        },
+        {
+          "id": "fsdd_zero",
+          "invariants": "PASS",
+          "durationSeconds": 0.64,
+          "finalWaitMs": 379,
+          "text": "Zero.",
+          "warning": "",
+          "referenceKind": "dataset_label",
+          "wordScore": {
+            "errors": 0,
+            "referenceWords": 1
+          }
+        },
+        {
+          "id": "fsdd_one",
+          "invariants": "PASS",
+          "durationSeconds": 0.37,
+          "finalWaitMs": 298,
+          "text": "",
+          "warning": "最终识别没有得到文字。当前仅保留草稿，请编辑后确认。",
+          "referenceKind": "dataset_label",
+          "wordScore": {
+            "errors": 1,
+            "referenceWords": 1
+          }
+        },
+        {
+          "id": "fsdd_seven",
+          "invariants": "PASS",
+          "durationSeconds": 0.43,
+          "finalWaitMs": 348,
+          "text": "Seven.",
+          "warning": "",
+          "referenceKind": "dataset_label",
+          "wordScore": {
+            "errors": 0,
+            "referenceWords": 1
+          }
+        },
+        {
+          "id": "fsdd_nine",
+          "invariants": "PASS",
+          "durationSeconds": 0.36,
+          "finalWaitMs": 317,
+          "text": "",
+          "warning": "最终识别没有得到文字。当前仅保留草稿，请编辑后确认。",
+          "referenceKind": "dataset_label",
+          "wordScore": {
+            "errors": 1,
+            "referenceWords": 1
+          }
+        },
+        {
+          "id": "qwen_zh_numbers",
+          "invariants": "PASS",
+          "durationSeconds": 22.83,
+          "finalWaitMs": 2465,
+          "text": "拨号，请再说一次，请说出你要拨打的号码：幺三五八幺八八七五五七。一三五八二八八八幺八八。七百米，有线速摄像头，线速一百公里。九正九正。九六九九正九正，不是九六。",
+          "warning": "长段语音缺少停顿，已分段校准。请编辑核对分段处，再确认写入。",
+          "referenceKind": "publisher_transcript"
+        },
+        {
+          "id": "zip_mixed_weekdays",
+          "invariants": "PASS",
+          "durationSeconds": 10.05,
+          "finalWaitMs": 1549,
+          "text": "昨天是 Monday。Today is 礼拜二。The day after tomorrow is 星期三。",
+          "warning": "",
+          "referenceKind": "regression_only"
+        },
+        {
+          "id": "silence_2s",
+          "invariants": "PASS",
+          "durationSeconds": 2,
+          "finalWaitMs": 15,
+          "text": "",
+          "warning": "",
+          "referenceKind": "synthetic_silence"
+        },
+        {
+          "id": "stress_60s",
+          "invariants": "PASS",
+          "durationSeconds": 60,
+          "finalWaitMs": 1216,
+          "text": "Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file.",
+          "warning": "",
+          "referenceKind": "synthetic_repeated_tts",
+          "wordScore": {
+            "errors": 0,
+            "referenceWords": 144
+          }
+        }
+      ],
+      "ttsWer": 0,
+      "stressWer": 0
+    },
+    "sensevoice": {
+      "cases": [
+        {
+          "id": "legacy_zh_0",
+          "invariants": "PASS",
+          "durationSeconds": 5.61,
+          "finalWaitMs": 127,
+          "text": "对我做了介绍啊，那么我想说的是呢，大家如果对我的研究感兴趣呢嗯。",
+          "warning": "",
+          "referenceKind": "upstream_asr_example_not_gold"
+        },
+        {
+          "id": "legacy_zh_1",
+          "invariants": "PASS",
+          "durationSeconds": 5.15,
+          "finalWaitMs": 111,
+          "text": "重点呢想谈三个问题。首先呢就是这一轮全球金融动荡的表现。",
+          "warning": "",
+          "referenceKind": "regression_only"
+        },
+        {
+          "id": "legacy_zh_8k",
+          "invariants": "PASS",
+          "durationSeconds": 4.52,
+          "finalWaitMs": 110,
+          "text": "深度的分析这一次全球金融动荡背后的根源。",
+          "warning": "",
+          "referenceKind": "regression_only"
+        },
+        {
+          "id": "tts_english_sentence",
+          "invariants": "PASS",
+          "durationSeconds": 3.01,
+          "finalWaitMs": 79,
+          "text": "Please open the project and save the file.",
+          "warning": "",
+          "referenceKind": "known_tts_prompt",
+          "wordScore": {
+            "errors": 0,
+            "referenceWords": 8
+          }
+        },
+        {
+          "id": "tts_english_short",
+          "invariants": "PASS",
+          "durationSeconds": 1.65,
+          "finalWaitMs": 63,
+          "text": "Hello world.",
+          "warning": "",
+          "referenceKind": "known_tts_prompt",
+          "wordScore": {
+            "errors": 0,
+            "referenceWords": 2
+          }
+        },
+        {
+          "id": "tts_english_terms",
+          "invariants": "PASS",
+          "durationSeconds": 6.24,
+          "finalWaitMs": 140,
+          "text": "GHub Python Sple voice Codex.",
+          "warning": "",
+          "referenceKind": "known_tts_prompt",
+          "wordScore": {
+            "errors": 2,
+            "referenceWords": 5
+          }
+        },
+        {
+          "id": "official_mixed_always",
+          "invariants": "PASS",
+          "durationSeconds": 5.1,
+          "finalWaitMs": 111,
+          "text": "这是第一种。第二种叫呃与OSOS什么意思啊？",
+          "warning": "",
+          "referenceKind": "upstream_asr_example_not_gold"
+        },
+        {
+          "id": "sense_en_gold",
+          "invariants": "PASS",
+          "durationSeconds": 7.15,
+          "finalWaitMs": 158,
+          "text": "The tribal chieftain called for the boy and presented him with 50 pieces of code.",
+          "warning": "",
+          "referenceKind": "upstream_asr_example_not_gold",
+          "wordScore": {
+            "errors": 2,
+            "referenceWords": 15
+          }
+        },
+        {
+          "id": "sense_zh_hours",
+          "invariants": "PASS",
+          "durationSeconds": 5.59,
+          "finalWaitMs": 124,
+          "text": "开饭时间早上9点至下午5点。",
+          "warning": "",
+          "referenceKind": "upstream_asr_example_not_gold"
+        },
+        {
+          "id": "fsdd_zero",
+          "invariants": "PASS",
+          "durationSeconds": 0.64,
+          "finalWaitMs": 48,
+          "text": "0ero.",
+          "warning": "",
+          "referenceKind": "dataset_label",
+          "wordScore": {
+            "errors": 1,
+            "referenceWords": 1
+          }
+        },
+        {
+          "id": "fsdd_one",
+          "invariants": "PASS",
+          "durationSeconds": 0.37,
+          "finalWaitMs": 31,
+          "text": "1.",
+          "warning": "",
+          "referenceKind": "dataset_label",
+          "wordScore": {
+            "errors": 1,
+            "referenceWords": 1
+          }
+        },
+        {
+          "id": "fsdd_seven",
+          "invariants": "PASS",
+          "durationSeconds": 0.43,
+          "finalWaitMs": 31,
+          "text": "7even.",
+          "warning": "",
+          "referenceKind": "dataset_label",
+          "wordScore": {
+            "errors": 1,
+            "referenceWords": 1
+          }
+        },
+        {
+          "id": "fsdd_nine",
+          "invariants": "PASS",
+          "durationSeconds": 0.36,
+          "finalWaitMs": 31,
+          "text": "9.",
+          "warning": "",
+          "referenceKind": "dataset_label",
+          "wordScore": {
+            "errors": 1,
+            "referenceWords": 1
+          }
+        },
+        {
+          "id": "qwen_zh_numbers",
+          "invariants": "PASS",
+          "durationSeconds": 22.83,
+          "finalWaitMs": 252,
+          "text": "拨号13581887557。135828881889层9层969层9层不是96。",
+          "warning": "长段语音缺少停顿，已分段校准。请编辑核对分段处，再确认写入。",
+          "referenceKind": "publisher_transcript"
+        },
+        {
+          "id": "zip_mixed_weekdays",
+          "invariants": "PASS",
+          "durationSeconds": 10.05,
+          "finalWaitMs": 205,
+          "text": "昨天是monday，today is礼拜2the day after tomorrow是星期三。",
+          "warning": "",
+          "referenceKind": "regression_only"
+        },
+        {
+          "id": "silence_2s",
+          "invariants": "PASS",
+          "durationSeconds": 2,
+          "finalWaitMs": 16,
+          "text": "",
+          "warning": "",
+          "referenceKind": "synthetic_silence"
+        },
+        {
+          "id": "stress_60s",
+          "invariants": "PASS",
+          "durationSeconds": 60,
+          "finalWaitMs": 174,
+          "text": "Please open the project and save the file and file project and file please the project and save the file. Please open the project and save the file project and save file project and file open the project and save the file. Please open the project and save the file project and save file project and file open the project and save the file. Please open the project and save the file project and save file project and file open the project and save the file. Please open the project and file open the project and save the file.",
+          "warning": "",
+          "referenceKind": "synthetic_repeated_tts",
+          "wordScore": {
+            "errors": 45,
+            "referenceWords": 144
+          }
+        }
+      ],
+      "ttsWer": 0.13333333333333333,
+      "stressWer": 0.3125
+    },
+    "whisper": {
+      "cases": [
+        {
+          "id": "legacy_zh_0",
+          "invariants": "PASS",
+          "durationSeconds": 5.61,
+          "finalWaitMs": 2837,
+          "text": "对我做了介绍我想说的是大家如果对我的研究感兴趣呢",
+          "warning": "",
+          "referenceKind": "upstream_asr_example_not_gold"
+        },
+        {
+          "id": "legacy_zh_1",
+          "invariants": "PASS",
+          "durationSeconds": 5.15,
+          "finalWaitMs": 2825,
+          "text": "重点想谈三个问题首先就是这一轮全球金融动荡的表现",
+          "warning": "",
+          "referenceKind": "regression_only"
+        },
+        {
+          "id": "legacy_zh_8k",
+          "invariants": "PASS",
+          "durationSeconds": 4.52,
+          "finalWaitMs": 2445,
+          "text": "深入地分析这一次全球金融动荡背后的根源",
+          "warning": "",
+          "referenceKind": "regression_only"
+        },
+        {
+          "id": "tts_english_sentence",
+          "invariants": "PASS",
+          "durationSeconds": 3.01,
+          "finalWaitMs": 1809,
+          "text": "Please open the project and save the file",
+          "warning": "",
+          "referenceKind": "known_tts_prompt",
+          "wordScore": {
+            "errors": 0,
+            "referenceWords": 8
+          }
+        },
+        {
+          "id": "tts_english_short",
+          "invariants": "PASS",
+          "durationSeconds": 1.65,
+          "finalWaitMs": 1474,
+          "text": "Hello world!",
+          "warning": "",
+          "referenceKind": "known_tts_prompt",
+          "wordScore": {
+            "errors": 0,
+            "referenceWords": 2
+          }
+        },
+        {
+          "id": "tts_english_terms",
+          "invariants": "PASS",
+          "durationSeconds": 6.24,
+          "finalWaitMs": 2304,
+          "text": "GitHub Python Simple voice Codecs",
+          "warning": "",
+          "referenceKind": "known_tts_prompt",
+          "wordScore": {
+            "errors": 1,
+            "referenceWords": 5
+          }
+        },
+        {
+          "id": "official_mixed_always",
+          "invariants": "PASS",
+          "durationSeconds": 5.1,
+          "finalWaitMs": 2398,
+          "text": "这是第一种第二种叫 呃 于OSOS什么意思啊",
+          "warning": "",
+          "referenceKind": "upstream_asr_example_not_gold"
+        },
+        {
+          "id": "sense_en_gold",
+          "invariants": "PASS",
+          "durationSeconds": 7.15,
+          "finalWaitMs": 2924,
+          "text": "The tribal chieftain called for the boy and presented him with 50 pieces of gold.",
+          "warning": "",
+          "referenceKind": "upstream_asr_example_not_gold",
+          "wordScore": {
+            "errors": 1,
+            "referenceWords": 15
+          }
+        },
+        {
+          "id": "sense_zh_hours",
+          "invariants": "PASS",
+          "durationSeconds": 5.59,
+          "finalWaitMs": 2364,
+          "text": "开放时间早上9点至下午5点",
+          "warning": "",
+          "referenceKind": "upstream_asr_example_not_gold"
+        },
+        {
+          "id": "fsdd_zero",
+          "invariants": "PASS",
+          "durationSeconds": 0.64,
+          "finalWaitMs": 1295,
+          "text": "Zero.",
+          "warning": "",
+          "referenceKind": "dataset_label",
+          "wordScore": {
+            "errors": 0,
+            "referenceWords": 1
+          }
+        },
+        {
+          "id": "fsdd_one",
+          "invariants": "PASS",
+          "durationSeconds": 0.37,
+          "finalWaitMs": 1289,
+          "text": "one",
+          "warning": "",
+          "referenceKind": "dataset_label",
+          "wordScore": {
+            "errors": 0,
+            "referenceWords": 1
+          }
+        },
+        {
+          "id": "fsdd_seven",
+          "invariants": "PASS",
+          "durationSeconds": 0.43,
+          "finalWaitMs": 1264,
+          "text": "seven",
+          "warning": "",
+          "referenceKind": "dataset_label",
+          "wordScore": {
+            "errors": 0,
+            "referenceWords": 1
+          }
+        },
+        {
+          "id": "fsdd_nine",
+          "invariants": "PASS",
+          "durationSeconds": 0.36,
+          "finalWaitMs": 1234,
+          "text": "nine",
+          "warning": "",
+          "referenceKind": "dataset_label",
+          "wordScore": {
+            "errors": 0,
+            "referenceWords": 1
+          }
+        },
+        {
+          "id": "qwen_zh_numbers",
+          "invariants": "PASS",
+          "durationSeconds": 22.83,
+          "finalWaitMs": 6111,
+          "text": "请再说一次请说出您要拨打的号码1358188 提5不提来一三五八二八八八八八八九九九九九九九九九九九九九九九九九九九九九九九九九九九九九九九九九九九九九九九九九九九九九九九九九九九九九九九九九九九九九九九九",
+          "warning": "长段语音缺少停顿，已分段校准。请编辑核对分段处，再确认写入。",
+          "referenceKind": "publisher_transcript"
+        },
+        {
+          "id": "zip_mixed_weekdays",
+          "invariants": "PASS",
+          "durationSeconds": 10.05,
+          "finalWaitMs": 3569,
+          "text": "昨天是 Monday. Today is 禮拜二. The day after tomorrow 是星期三。",
+          "warning": "",
+          "referenceKind": "regression_only"
+        },
+        {
+          "id": "silence_2s",
+          "invariants": "PASS",
+          "durationSeconds": 2,
+          "finalWaitMs": 16,
+          "text": "",
+          "warning": "",
+          "referenceKind": "synthetic_silence"
+        },
+        {
+          "id": "stress_60s",
+          "invariants": "PASS",
+          "durationSeconds": 60,
+          "finalWaitMs": 2877,
+          "text": "Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. please open the project and save the file please open the project and save the file",
+          "warning": "",
+          "referenceKind": "synthetic_repeated_tts",
+          "wordScore": {
+            "errors": 24,
+            "referenceWords": 144
+          }
+        }
+      ],
+      "ttsWer": 0.06666666666666667,
+      "stressWer": 0.16666666666666666
+    }
+  }
+}

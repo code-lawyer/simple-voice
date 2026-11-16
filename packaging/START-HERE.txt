@@ -1,4 +1,4 @@
-Simple Voice / 轻音输入法 0.2.0-rc.5
+Simple Voice / 轻音输入法 0.2.0-rc.6
 
 1. 将整个压缩包解压到长期保留的文件夹。不要在 ZIP 中直接运行。
 2. 如果没有安装 Microsoft Visual C++ x64 运行库，请先安装：

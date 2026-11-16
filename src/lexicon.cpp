@@ -9,6 +9,7 @@
 #include <fstream>
 #include <sstream>
 #include <filesystem>
+#include <set>
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -169,6 +170,26 @@ bool Lexicon::Delete(const std::string& text) {
   std::lock_guard<std::mutex> lock(db_->mutex);
   Statement drop(db_->raw,"DELETE FROM personal_terms WHERE text=?1");
   drop.Text(1,text); drop.Done(); return sqlite3_changes(db_->raw)>0;
+}
+void Lexicon::ReplaceTerms(const std::vector<Entry>& rows,const std::function<void()>& update) {
+  if(rows.size()>10000)throw std::invalid_argument("备份词语数量超出限制");
+  std::set<std::string> seen;
+  for(const auto& row:rows) {
+    if(row.text.empty() || CodePointCount(row.text)>128 ||
+       !MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,row.text.data(),static_cast<int>(row.text.size()),nullptr,0) ||
+       std::any_of(row.text.begin(),row.text.end(),[](unsigned char c){return c<32 || c==127;}) ||
+       row.pinyin.empty() || row.pinyin.size()>256 ||
+       std::any_of(row.pinyin.begin(),row.pinyin.end(),[](char c){return c<'a'||c>'z';}) ||
+       row.count<0 || row.count>1000000 || row.last_commit_unix<0 || !seen.insert(row.text).second)
+      throw std::invalid_argument("备份词语格式无效");
+  }
+  std::lock_guard<std::mutex> lock(db_->mutex);
+  Transaction transaction(db_->raw);Exec(db_->raw,"DELETE FROM personal_terms");
+  Statement add(db_->raw,"INSERT INTO personal_terms(text,pinyin,count,last_commit_unix,kind) VALUES(?1,?2,?3,?4,'user')");
+  for(const auto& row:rows) {
+    add.Text(1,row.text);add.Text(2,row.pinyin);add.Int(3,row.count);add.Int(4,row.last_commit_unix);add.Done();add.Reset();
+  }
+  if(update)update();transaction.Commit();
 }
 bool Lexicon::ExportTerms(const std::wstring& file) {
   auto rows=Search("",10000);

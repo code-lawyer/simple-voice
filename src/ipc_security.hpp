@@ -8,6 +8,8 @@ std::wstring VoicePipeName();
 std::wstring VoiceMutexName();
 std::wstring ExecutableDirectory();
 bool SameFile(const std::wstring& first, const std::wstring& second);
+std::wstring RegisteredVoiceDll();
+bool LegacyVoiceEngineRunning();
 
 class PipeSecurity {
  public:

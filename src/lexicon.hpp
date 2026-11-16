@@ -4,6 +4,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <functional>
 
 struct Entry {
   std::string text;
@@ -32,6 +33,9 @@ class Lexicon {
   int LegacyCount();
   void ClearLegacy();
   bool ExportTerms(const std::wstring& file);
+  // Validate before opening the transaction. A failed accompanying settings
+  // update rolls the dictionary back with the same transaction.
+  void ReplaceTerms(const std::vector<Entry>& terms, const std::function<void()>& settings_update = {});
 
  private:
   struct Db;
