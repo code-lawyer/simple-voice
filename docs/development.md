@@ -36,6 +36,9 @@ cmake -S . -B build-dev -G Ninja -DCMAKE_BUILD_TYPE=Release `
 CTest 四组：单元/并发，模拟采音的真实引擎 IPC，真实 Windows TSF 隔离宿主，原生浮层稳定性。
 不修改系统注册、生产词库或用户窗口。包括不安全改写、迁移/保留期限、拼音英语路由、
 组合光标、原生编辑器语音状态隔离、切换模型/取消迟到回调和写入断线保护。
+IPC v2 还覆盖连接身份、前台授权、话轮关联、跨应用确认和快捷键配置通知。
+测试须使用普通桌面用户令牌；受限沙箱令牌可能被身份校验或 Windows TSF 拒绝。
+权限边界、夹具范围和同时升级 DLL/引擎的要求见 [本地 IPC 约定](ipc-security.md)。
 
 ```powershell
 foreach ($skin in @('titanium','daylight','deep-space')) {
@@ -61,7 +64,7 @@ UI 工具测试键盘、分页、编辑/恢复、可访问性对象、长文本�
 
 - [语音对比](research/asr-selection-2026-11-15.md)、`tools/asr-benchmark/`。
 - [拼音数据与候选评测](research/pinyin-selection-2026-11-15.md)、`tools/pinyin-data/`。
-- [当前回归证据](releases/v0.2.0-rc.4-validation.md)。
+- [当前回归证据](releases/v0.2.0-rc.5-validation.md)。
 
 `voiceime_installed_check.exe <安装目录>` 是另行部署后才运行的生产检查，会使用系统 COM 注册并可能启动生产引擎。
 不在本轮开发回归或 CI 中运行；不能把源码测试结果称为已安装版验证。

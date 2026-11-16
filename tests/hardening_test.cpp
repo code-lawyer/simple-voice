@@ -58,7 +58,7 @@ void MalformedFramesAreRejectedWithoutConsumingOrLooping() {
   for (int i = 0; i < 2000; ++i) {
     seed = seed * 1664525u + 1013904223u;
     std::size_t used = 1;
-    auto frame = Frame(seed, 3);
+    auto frame = Frame(seed, 15);
     const auto status = DecodeFrame(frame, nullptr, &used);
     CHECK(status != DecodeStatus::Complete || (used > 0 && used <= frame.size()));
   }
@@ -81,7 +81,7 @@ void CorrelatedFramesSurviveFragmentationAndHaveBounds() {
   message.type = MsgType::CancelInsert; message.text.clear();
   CHECK(Decode(Encode(message), &decoded, &used)); CHECK(decoded.request_id == message.request_id);
   message.request_id = 0; CHECK(Encode(message).empty());
-  message.type = MsgType::Draft; message.text.assign(kMaxFrameLength + 1, 'x');
+  message.type = MsgType::InsertText; message.request_id = 1; message.text.assign(kMaxFrameLength + 1, 'x');
   CHECK(Encode(message).empty());
 }
 
@@ -148,9 +148,9 @@ void LegacyPhraseRetentionStartsOnceAndExpiresAfter365Days() {
   {
     Lexicon lex(db.path);
     CHECK(db.Scalar("SELECT last_seen_unix FROM seen_phrase") == upgraded - 10000);
-    lex.Apply("", {}, upgraded + 366 * 86400LL);
+    lex.Commit("", upgraded + 366 * 86400LL);
     CHECK(db.Scalar("SELECT count(*) FROM seen_phrase") == 0);
-    lex.Commit("第一次出现的完整长句", {}, upgraded + 366 * 86400LL);
+    lex.Commit("第一次出现的完整长句", upgraded + 366 * 86400LL);
     CHECK(lex.Recent(10).empty());
     CHECK(db.Scalar("SELECT count(*) FROM seen_phrase") == 0);
   }

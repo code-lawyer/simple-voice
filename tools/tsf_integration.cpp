@@ -264,6 +264,20 @@ class PipeServer {
     }
     CloseHandle(operation.hEvent);
     if (!connected) { CloseHandle(pipe_); pipe_=INVALID_HANDLE_VALUE; throw std::runtime_error("TSF pipe connect timeout"); }
+    Deadline timeout;
+    Message hello; std::size_t used=0;
+    while(DecodeFrame(buffer_,&hello,&used)==DecodeStatus::Incomplete) {
+      const auto read=ReadPipeChunk(pipe_,nullptr,timeout.event,20);
+      buffer_+=read.bytes;
+      if(read.status!=PipeReadStatus::Data)throw std::runtime_error("TSF handshake timeout");
+    }
+    Check(DecodeFrame(buffer_,&hello,&used)==DecodeStatus::Complete && hello.type==MsgType::ClientHello,
+          "TSF reader introduces its host window before sending commands");
+    const auto peer=PipeClientPeer(pipe_);
+    Check(peer && peer->owns_window(reinterpret_cast<HWND>(hello.client_window),
+          ExecutableDirectory()+L"\\voiceime_tsf_integration.exe"),"TSF handshake identifies its actual module and process");
+    buffer_.erase(0,used);
+    Message ready; ready.type=MsgType::ServerReady; Raw(Encode(ready)); Phase("0");
   }
   ~PipeServer() { if (pipe_!=INVALID_HANDLE_VALUE) CloseHandle(pipe_); }
   void Raw(const std::string& bytes) {
@@ -275,7 +289,7 @@ class PipeServer {
     Raw(Encode(message));
   }
   void Phase(const char* value) {
-    Message message; message.type=MsgType::Phase; message.text=value; Raw(Encode(message));
+    Message message; message.type=MsgType::Phase; message.text=value; message.state_id=++state_id_; Raw(Encode(message));
   }
   void QueryCaret() { Message message; message.type=MsgType::QueryCaret; Raw(Encode(message)); }
   Message Caret(int expected_y) {
@@ -337,6 +351,7 @@ class PipeServer {
   }
  private:
   HANDLE pipe_=INVALID_HANDLE_VALUE;
+  std::uint64_t state_id_=0;
   std::string buffer_;
 };
 MSG QueuedInsert(std::uint64_t id) {
@@ -360,6 +375,8 @@ int main(int argc,char** argv) {
     std::filesystem::create_directories(data / "VoiceIme");
     // Environment is private to this disposable executable, not the desktop.
     SetEnvironmentVariableW(L"LOCALAPPDATA",data.c_str());
+    const auto hotkey_path=(data/"VoiceIme"/"config.json").string();
+    Check(SaveSettings(hotkey_path,Settings{DefaultHotkey()}),"reset isolated hotkey fixture");
     Hr(CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED),"initialize COM");
     CheckIndicatorContract();
     ITfThreadMgrEx* thread=nullptr;
@@ -386,6 +403,13 @@ int main(int argc,char** argv) {
       Hr(thread->SetFocus(doc.manager),"focus document");
       VoiceService service;
       Hr(service.Activate(thread,id),"activate production text service");
+      Check(service.CachedHotkeyForTest().vk==DefaultHotkey().vk,"TSF loads the hotkey on activation");
+      Check(SaveSettings(hotkey_path,Settings{Hotkey{0,VK_F8}}),"save a changed hotkey in isolated preferences");
+      Check(service.CachedHotkeyForTest().vk==DefaultHotkey().vk,"TSF keeps its current key decision until notified");
+      SendMessageW(service.IndicatorMessageWindowForTest(),HotkeyChangedMessage(),0,0);
+      Check(service.CachedHotkeyForTest().vk==VK_F8,"hotkey change notification refreshes the active TSF service");
+      Check(SaveSettings(hotkey_path,Settings{DefaultHotkey()}),"restore isolated default hotkey");
+      SendMessageW(service.IndicatorMessageWindowForTest(),HotkeyChangedMessage(),0,0);
       ITfLangBarItemMgr* language_bar=nullptr;
       Hr(thread->QueryInterface(IID_ITfLangBarItemMgr,reinterpret_cast<void**>(&language_bar)),"get real language bar manager");
       ITfLangBarItem* item=nullptr;

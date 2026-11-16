@@ -12,9 +12,8 @@ Windows 本地拼音与中英语音输入法。干净的界面，明确的确认
 
 </div>
 
-当前源码版本 **v0.2.0-rc.4**，仅支持 **Windows Intel/AMD x64**。这是发布候选，
-不是已经完成真人验收的正式版。公开下载以 Releases 实际附件为准。
-[本轮变化](docs/releases/v0.2.0-rc.4.md) · [验证结果与限制](docs/releases/v0.2.0-rc.4-validation.md)。
+当前版本 **v0.2.0-rc.5** 是 **Windows Intel/AMD x64** 发布候选。
+[本轮变化](docs/releases/v0.2.0-rc.5.md) · [验证结果与限制](docs/releases/v0.2.0-rc.5-validation.md)。
 
 切换到轻音输入法后，Windows 任务栏会显示「声核」标识，旁边的「中」或「A」表示当前输入模式。点击模式图标可以切换中英文。[任务栏实拍](docs/design/brand/windows-taskbar.png)
 
@@ -84,6 +83,8 @@ CPU 即可运行。中英模型在本机集成样本测试中峰值工作集约 
 ## 本地数据与词库
 
 日常输入不需要账号或网络，不上传音频、不保存录音文件。确认和编辑前的识别文本仅在内存中。
+语音控制管道校验当前登录身份、输入法宿主及前台话轮；这不隔离已进入受信任宿主的同账号
+恶意代码。具体范围及升级兼容要求见 [本地 IPC 约定](docs/ipc-security.md)。
 为兼容旧版，数据继续保存在 `%LOCALAPPDATA%\VoiceIme\`：
 
 | 文件 / 目录 | 用途 |

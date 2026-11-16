@@ -17,6 +17,7 @@
 
 #include "ipc.hpp"
 #include "pipe_io.hpp"
+#include "ipc_security.hpp"
 
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -56,7 +57,7 @@ constexpr UINT kCaptureReadyMessage = WM_APP + 10;
 constexpr UINT_PTR kInsertTimer = 1;
 constexpr UINT_PTR kAnchorTimer = 2;
 using ClientId = std::uintptr_t;
-struct ClientConnection { ClientId id; HANDLE pipe; DWORD process; };
+struct ClientConnection { ClientId id; HANDLE pipe; std::shared_ptr<IpcPeer> peer; HWND window = nullptr; };
 struct ClientWorker { std::thread thread; std::shared_ptr<std::atomic<bool>> finished; };
 constexpr UINT kTrayMessage = WM_APP + 4;
 constexpr UINT kQuitCommand = 1;
@@ -78,14 +79,14 @@ std::wstring PipeName() {
 #ifdef VOICEIME_TESTING
   return L"\\\\.\\pipe\\VoiceImeQA_" + TestEnvironment(L"VOICEIME_TEST_ID");
 #else
-  return L"\\\\.\\pipe\\VoiceIme";
+  return VoicePipeName();
 #endif
 }
 std::wstring MutexName() {
 #ifdef VOICEIME_TESTING
   return L"Local\\VoiceImeQA_" + TestEnvironment(L"VOICEIME_TEST_ID");
 #else
-  return L"Local\\VoiceImeEngine";
+  return VoiceMutexName();
 #endif
 }
 
@@ -195,7 +196,7 @@ int CheckInstallation(bool chinese_only=false) {
     return 2;
   }
   Segmenter segmenter(dict);
-  auto recognizer = MakeSherpaRecognizer(ModelDir(), &segmenter, nullptr, chinese_only);
+  auto recognizer = MakeSherpaRecognizer(ModelDir(), chinese_only);
   if (!recognizer) return 2;
   std::printf("%s %s: dictionaries and %s speech models loaded.\n", kProductName, SIMPLE_VOICE_VERSION, chinese_only?"Chinese-preferred":"bilingual");
   std::puts("No microphone, input-method registration or personal data was accessed.");
@@ -215,6 +216,8 @@ class FakeRecognizer : public Recognizer {
   std::string Finalize() override {
 #ifdef VOICEIME_TESTING
     if (TestEnvironment(L"VOICEIME_TEST_CAPTURE")==L"slow-final") Sleep(250);
+    const auto transcript=TestEnvironment(L"VOICEIME_TEST_TRANSCRIPT");
+    if(!transcript.empty())return WideToUtf8(transcript);
 #endif
     return Partial() + "。";
   }
@@ -231,7 +234,10 @@ class FakeRecognizer : public Recognizer {
 class EngineLock {
  public:
   EngineLock() {
-    handle_ = CreateMutexW(nullptr, FALSE, MutexName().c_str());
+    PipeSecurity security;
+    const auto name = MutexName();
+    if (name.empty() || !security.attributes()) return;
+    handle_ = CreateMutexW(security.attributes(), FALSE, name.c_str());
     if (handle_ == nullptr) return;
     const DWORD waited = WaitForSingleObject(handle_, 0);
     owned_ = waited == WAIT_OBJECT_0 || waited == WAIT_ABANDONED;
@@ -253,7 +259,10 @@ class Engine {
 
  private:
   LRESULT OnMessage(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam);
-  void OnPipe(ClientId sender, const Message& message);
+  void OnPipe(ClientId sender, const Message& message, bool resumed = false);
+  bool ForegroundClientAllowed(ClientId sender) const;
+  void ResumeQueuedStart();
+  Message StateMessage();
   void ShowMenu(HWND hwnd);
   void OpenPreferences(int page=0);
   void BeginPrepare();
@@ -267,7 +276,7 @@ class Engine {
   void UpdateBox();
   void CaptureMain(int generation,std::wstring microphone);
   void PipeMain();
-  void ClientLoop(ClientId id, HANDLE pipe);
+  void ClientLoop(ClientId id, HANDLE pipe, std::shared_ptr<IpcPeer> peer);
   void ReapClients();
   void LoseInsertConfirmation();
   void LexiconWarning(const char* diagnostic);
@@ -301,6 +310,7 @@ class Engine {
   bool preparing_=false, fake_=false, recognizer_chinese_=false, preparing_chinese_=false;
 #ifdef VOICEIME_TESTING
   int prepare_attempts_=0;
+  DWORD test_foreground_ = 0;
 #endif
   std::string model_error_;
   ClientId queued_start_=0;
@@ -318,6 +328,12 @@ class Engine {
   ClientId commit_client_ = 0;
   bool insert_uncertain_ = false;
   std::uint64_t utterance_generation_ = 0;
+  ClientId start_client_ = 0;
+  std::uint64_t start_from_state_ = 0;
+  std::uint64_t utterance_state_floor_ = 0;
+  std::uint64_t state_id_ = 1, published_utterance_ = 0;
+  Phase published_phase_ = Phase::Idle;
+  std::string published_preview_;
   std::string lexicon_warning_;
   std::atomic<bool> stop_capture_{false};
   std::atomic<bool> stop_pipe_{false};
@@ -325,7 +341,7 @@ class Engine {
   HANDLE listen_pipe_ = INVALID_HANDLE_VALUE;
   std::vector<ClientConnection> clients_;
   std::vector<ClientWorker> client_threads_;
-  std::mutex write_mu_;
+  mutable std::mutex write_mu_;
   HANDLE write_event_ = nullptr;
   HANDLE stop_event_ = nullptr;
   std::vector<std::pair<ClientId, std::string>> outgoing_;
@@ -335,7 +351,6 @@ class Engine {
   Settings settings_{DefaultHotkey()};
   std::wstring skin_path_;
   std::string config_path_;
-  std::vector<std::string> recent_menu_;
   HotkeyDialog hotkey_dialog_;
   bool caret_known_ = false;
   DWORD caret_process_ = 0;
@@ -355,6 +370,7 @@ int Engine::Run(bool fake) {
 #ifdef VOICEIME_TESTING
   if (TestEnvironment(L"VOICEIME_TEST_ID").empty() || TestEnvironment(L"VOICEIME_TEST_DATA").empty()) return 3;
   fake = true;
+  test_foreground_ = std::wcstoul(TestEnvironment(L"VOICEIME_TEST_FOREGROUND").c_str(), nullptr, 10);
 #endif
   EngineLock instance_lock;
   if (!instance_lock.owned()) {
@@ -472,6 +488,10 @@ bool Engine::SaveRecordedHotkey(void* self, Hotkey next) {
   updated.hotkey = next;
   if (!SaveSettings(engine->config_path_, updated)) return false;
   engine->settings_ = updated;
+#ifndef VOICEIME_TESTING
+  const auto message = HotkeyChangedMessage();
+  if (message) SendNotifyMessageW(HWND_BROADCAST, message, 0, 0);
+#endif
   return true;
 }
 void Engine::UpdateBox() {
@@ -506,7 +526,7 @@ void Engine::UpdateBox() {
 bool Engine::WriteClient(const Message& message, ClientId target) {
   std::lock_guard<std::mutex> lock(write_mu_);
   if (write_event_ == nullptr || std::none_of(clients_.begin(), clients_.end(),
-      [target](const auto& client) { return client.id == target; })) return false;
+      [target](const auto& client) { return client.id == target && client.window; })) return false;
   auto bytes = Encode(message);
   if (bytes.empty()) return false;
   outgoing_.emplace_back(target, std::move(bytes));
@@ -519,17 +539,28 @@ void Engine::Broadcast(const Message& message) {
   if (write_event_ == nullptr) return;
   const std::string bytes = Encode(message);
   if (bytes.empty()) return;
-  for (const auto& client : clients_) outgoing_.emplace_back(client.id, bytes);
+  for (const auto& client : clients_) if (client.window) outgoing_.emplace_back(client.id, bytes);
   if (!clients_.empty()) SetEvent(write_event_);
 }
 
-void Engine::PublishPhase() {
-  if (session_.phase()==Phase::Idle) KillTimer(box_.hwnd(),kAnchorTimer);
-  else SetTimer(box_.hwnd(),kAnchorTimer,80,nullptr);
+Message Engine::StateMessage() {
+  const auto preview = session_.phase() == Phase::Pending ? session_.box_text() : std::string();
+  if (published_phase_ != session_.phase() || published_utterance_ != utterance_generation_ || published_preview_ != preview) {
+    ++state_id_;
+    published_phase_ = session_.phase();
+    published_utterance_ = utterance_generation_;
+    published_preview_ = preview;
+  }
   Message phase;
   phase.type = MsgType::Phase;
   phase.text = std::to_string(static_cast<int>(session_.phase()));
-  Broadcast(phase);
+  phase.state_id = state_id_;
+  return phase;
+}
+void Engine::PublishPhase() {
+  if (session_.phase()==Phase::Idle) KillTimer(box_.hwnd(),kAnchorTimer);
+  else SetTimer(box_.hwnd(),kAnchorTimer,80,nullptr);
+  Broadcast(StateMessage());
 }
 
 void Engine::RequestCaret() {
@@ -542,7 +573,7 @@ void Engine::StoreLexicon() {
   std::string stored;
   if (!session_.TakeLexiconWrite(&stored) || !lexicon_) return;
   try {
-  lexicon_->Commit(stored, {}, static_cast<std::int64_t>(std::time(nullptr)));
+  lexicon_->Commit(stored, static_cast<std::int64_t>(std::time(nullptr)));
   ExportTerms();
   lexicon_warning_.clear();
   } catch (const std::exception& e) { LexiconWarning(e.what()); }
@@ -737,14 +768,52 @@ void Engine::BeginPrepare() {
       prepared_.reset(); PostMessageW(box_.hwnd(),kPreparedMessage,0,0); return;
     }
 #endif
-    try { prepared_=fake_?std::make_unique<FakeRecognizer>():MakeSherpaRecognizer(ModelDir(),segmenter_.get(),nullptr,preparing_chinese_); }
+    try { prepared_=fake_?std::make_unique<FakeRecognizer>():MakeSherpaRecognizer(ModelDir(),preparing_chinese_); }
     catch(...) { prepared_.reset(); }
     PostMessageW(box_.hwnd(),kPreparedMessage,0,0);
   });
 }
-void Engine::OnPipe(ClientId sender, const Message& message) {
+bool Engine::ForegroundClientAllowed(ClientId sender) const {
+  DWORD foreground = ForegroundProcessId();
+#ifdef VOICEIME_TESTING
+  foreground = test_foreground_;  // Fixture input; identity/window checks are unchanged.
+#endif
+  std::lock_guard<std::mutex> lock(write_mu_);
+  for (const auto& client : clients_) {
+    if (client.id != sender || !client.window || !client.peer->alive() || client.peer->id() != foreground) continue;
+    DWORD owner = 0;
+    return IsWindow(client.window) && GetWindowThreadProcessId(client.window, &owner) && owner == foreground;
+  }
+  return false;
+}
+void Engine::ResumeQueuedStart() {
+  const auto pending = queued_start_;
+  queued_start_ = 0;
+  if (!pending) return;
+  if (!ForegroundClientAllowed(pending)) {
+    session_.Escape(); mic_error_.clear(); UpdateBox(); PublishPhase();
+    return;
+  }
+  Message start; start.type = MsgType::StartListen; start.state_id = StateMessage().state_id;
+  OnPipe(pending, start, true);
+}
+void Engine::OnPipe(ClientId sender, const Message& message, bool resumed) {
+  // Receipts belong to the original insertion client even after focus moves.
+  // New actions require the verified foreground host and the current preview.
+  if (message.type != MsgType::InsertResult && !ForegroundClientAllowed(sender)) return;
+  if (IsVoiceControl(message.type) && message.state_id != StateMessage().state_id) {
+    // The pipe preserves command order. A quick Esc/stop after Start may
+    // precede its phase reply, but must still control that same accepted Start.
+    // An old Enter can never use this exception to confirm a final preview.
+    const bool follows_start = sender == start_client_ && message.state_id == start_from_state_ &&
+        (message.type == MsgType::Cancel ||
+         ((message.type == MsgType::Enter || message.type == MsgType::StartListen) && session_.phase() == Phase::Listening));
+    const bool cancels_same_utterance = message.type == MsgType::Cancel && utterance_state_floor_ &&
+        message.state_id >= utterance_state_floor_ && message.state_id < state_id_;
+    if (!follows_start && !cancels_same_utterance) { WriteClient(StateMessage(), sender); return; }
+  }
   if(message.type==MsgType::PersonalTermUsed) {
-    if(lexicon_) try { lexicon_->Commit(message.text,{},std::time(nullptr)); ExportTerms(); }
+    if(lexicon_) try { lexicon_->Commit(message.text,std::time(nullptr)); ExportTerms(); }
       catch(const std::exception& error) { LexiconWarning(error.what()); }
     return;
   }
@@ -775,7 +844,7 @@ void Engine::OnPipe(ClientId sender, const Message& message) {
     GetWindowThreadProcessId(GetForegroundWindow(),&foreground_process);
     {
       std::lock_guard<std::mutex> lock(write_mu_);
-      for (const auto& client:clients_) if(client.id==sender) client_process=client.process;
+      for (const auto& client:clients_) if(client.id==sender) client_process=client.peer->id();
     }
     if (!client_process || client_process!=foreground_process) return;
     caret_process_=client_process;
@@ -829,6 +898,9 @@ void Engine::OnPipe(ClientId sender, const Message& message) {
   if(session_.phase()==Phase::Finalizing || session_.phase()==Phase::Committing) return;
   // Invalidate the previous editor as soon as a new utterance is accepted,
   // including paths that wait for preparation or a cancelled finalizer.
+  if (!resumed) {
+    start_client_ = sender; start_from_state_ = message.state_id; utterance_state_floor_ = state_id_ + 1;
+  }
   ++utterance_generation_;
   preview_editor_.Close(); original_text_.clear();
   if(preparing_ || (finalize_thread_.joinable() && session_.phase()!=Phase::Finalizing)) {
@@ -854,6 +926,9 @@ void Engine::OnPipe(ClientId sender, const Message& message) {
 }
 
 LRESULT Engine::OnMessage(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
+#ifdef VOICEIME_TESTING
+  if (message == WM_APP + 100) { test_foreground_ = static_cast<DWORD>(wparam); return 0; }
+#endif
   static const UINT taskbar_created=RegisterWindowMessageW(L"TaskbarCreated");
   if(taskbar_created && message==taskbar_created) { tray_added_=false;AddTray();return 0; }
   if(message==WM_SETTINGCHANGE || message==WM_THEMECHANGED || message==WM_DPICHANGED || message==WM_DISPLAYCHANGE) {
@@ -861,6 +936,9 @@ LRESULT Engine::OnMessage(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
   }
   if (message == kClientGoneMessage) {
     if (insert_id_ != 0 && static_cast<ClientId>(wparam) == insert_client_) LoseInsertConfirmation();
+    if (queued_start_ == static_cast<ClientId>(wparam)) {
+      queued_start_ = 0; session_.Escape(); mic_error_.clear(); UpdateBox(); PublishPhase();
+    }
     return 0;
   }
   if (message == WM_TIMER && wparam == kInsertTimer) { LoseInsertConfirmation(); return 0; }
@@ -877,7 +955,20 @@ LRESULT Engine::OnMessage(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
     return 0;
   }
   if (message == kAnnounceMessage) {
-    PublishPhase();
+    // Publish the handshake and its initial state together, before this peer
+    // becomes eligible for broadcasts (including QueryCaret during a start).
+    Message ready; ready.type = MsgType::ServerReady;
+    const auto phase = StateMessage();
+    const auto id = static_cast<ClientId>(wparam);
+    std::lock_guard<std::mutex> lock(write_mu_);
+    for (auto& client : clients_) {
+      if (client.id != id || client.window) continue;
+      outgoing_.emplace_back(id, Encode(ready));
+      outgoing_.emplace_back(id, Encode(phase));
+      client.window = reinterpret_cast<HWND>(lparam);
+      SetEvent(write_event_);
+      break;
+    }
     return 0;
   }
   if(message==kPreparedMessage) {
@@ -885,9 +976,8 @@ LRESULT Engine::OnMessage(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
     preparing_=false;
     if(prepared_) { recognizer_=std::move(prepared_); recognizer_chinese_=preparing_chinese_; }
     else { model_error_="语音模型未能准备。请在设置中重试，或重新安装完整模型。"; mic_error_=model_error_; }
-    const auto pending=queued_start_; queued_start_=0;
-    if(pending && recognizer_) { Message start; start.type=MsgType::StartListen; OnPipe(pending,start); }
-    else { UpdateBox(); PublishPhase(); }
+    if(queued_start_ && recognizer_) ResumeQueuedStart();
+    else { queued_start_=0; UpdateBox(); PublishPhase(); }
     return 0;
   }
   if(message==kCaptureReadyMessage) { if(static_cast<int>(wparam)==capture_generation_) UpdateBox(); return 0; }
@@ -897,8 +987,7 @@ LRESULT Engine::OnMessage(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
       if(final_error_.empty()) PublishFinal(final_result_);
       else { mic_error_=final_error_; session_.RestorePending(session_.box_text()); UpdateBox(); PublishPhase(); }
     }
-    const auto pending=queued_start_; queued_start_=0;
-    if(pending) { Message start; start.type=MsgType::StartListen; OnPipe(pending,start); }
+    ResumeQueuedStart();
     return 0;
   }
   if (message == kPartialMessage) {
@@ -972,8 +1061,15 @@ LRESULT Engine::OnMessage(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
   return DefWindowProcW(hwnd, message, wparam, lparam);
 }
 
-void Engine::ClientLoop(ClientId id, HANDLE pipe) {
-  PostMessageW(box_.hwnd(), kAnnounceMessage, 0, 0);
+void Engine::ClientLoop(ClientId id, HANDLE pipe, std::shared_ptr<IpcPeer> peer) {
+  bool authenticated = false;
+  const auto handshake_deadline = GetTickCount64() + 3000;
+  PipeDeadline deadline;
+#ifdef VOICEIME_TESTING
+  const auto module = ExecutableDirectory() + L"\\voiceime_engine_integration.exe";
+#else
+  const auto module = ExecutableDirectory() + L"\\voiceime_tsf.dll";
+#endif
   std::string buffer;
   auto take_outgoing = [this, id] {
     std::vector<std::string> mine;
@@ -989,7 +1085,7 @@ void Engine::ClientLoop(ClientId id, HANDLE pipe) {
     if (outgoing_.empty() && write_event_ != nullptr) ResetEvent(write_event_);
     return mine;
   };
-  auto deliver = [this, id](std::string& pending) {
+  auto deliver = [this, id, &authenticated, &peer, &module](std::string& pending) {
     for (;;) {
       Message decoded;
       std::size_t used = 0;
@@ -997,6 +1093,15 @@ void Engine::ClientLoop(ClientId id, HANDLE pipe) {
       if (status == DecodeStatus::Invalid) return false;
       if (status == DecodeStatus::Incomplete) return true;
       pending.erase(0, used);
+      if (!authenticated) {
+        if (decoded.type != MsgType::ClientHello) return false;
+        const auto window = reinterpret_cast<HWND>(static_cast<std::uintptr_t>(decoded.client_window));
+        if (!peer->owns_window(window, module)) return false;
+        authenticated = true;
+        PostMessageW(box_.hwnd(), kAnnounceMessage, id, reinterpret_cast<LPARAM>(window));
+        continue;
+      }
+      if (!IsClientMessage(decoded.type)) return false;
       {
         std::lock_guard<std::mutex> lock(inbox_mu_);
         inbox_.emplace_back(id, std::move(decoded));
@@ -1005,6 +1110,7 @@ void Engine::ClientLoop(ClientId id, HANDLE pipe) {
     }
   };
   while (!stop_pipe_) {
+    if (!authenticated && (!deadline.event() || GetTickCount64() >= handshake_deadline)) break;
     const std::vector<std::string> mine = take_outgoing();
     if (!mine.empty()) {
       bool failed = false;
@@ -1014,7 +1120,7 @@ void Engine::ClientLoop(ClientId id, HANDLE pipe) {
       if (failed || stop_pipe_) break;
       continue;
     }
-    const PipeReadResult received = ReadPipeChunk(pipe, write_event_, stop_event_);
+    const PipeReadResult received = ReadPipeChunk(pipe, authenticated ? write_event_ : deadline.event(), stop_event_);
     buffer += received.bytes;
     if (!deliver(buffer)) break;
     if (received.status == PipeReadStatus::Closed) break;
@@ -1042,11 +1148,16 @@ void Engine::ReapClients() {
 
 void Engine::PipeMain() {
   ClientId next_client = 0;
+  PipeSecurity security;
+  const auto name = PipeName();
+  if (!security.attributes() || name.empty()) return;
+  bool first_instance = true;
   while (!stop_pipe_) {
     ReapClients();
-    HANDLE pipe = CreateNamedPipeW(PipeName().c_str(), PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED,
+    HANDLE pipe = CreateNamedPipeW(name.c_str(), PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED |
+                                    (first_instance ? FILE_FLAG_FIRST_PIPE_INSTANCE : 0),
                                     PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
-                                    PIPE_UNLIMITED_INSTANCES, 65536, 65536, 0, nullptr);
+                                    PIPE_UNLIMITED_INSTANCES, 65536, 65536, 0, security.attributes());
     if (pipe == INVALID_HANDLE_VALUE) {
       if (stop_pipe_) return;
       Sleep(100);
@@ -1056,6 +1167,7 @@ void Engine::PipeMain() {
       std::lock_guard<std::mutex> lock(write_mu_);
       listen_pipe_ = pipe;
     }
+    first_instance = false;
     OVERLAPPED connect{};
     connect.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     BOOL connected = FALSE;
@@ -1090,17 +1202,15 @@ void Engine::PipeMain() {
       continue;
     }
     const ClientId id = ++next_client;
-    DWORD process=0;
-    using QueryClient=BOOL(WINAPI*)(HANDLE,PULONG);
-    static auto query_client=reinterpret_cast<QueryClient>(GetProcAddress(GetModuleHandleW(L"kernel32.dll"),"GetNamedPipeClientProcessId"));
-    if (query_client) query_client(pipe,&process);
+    auto peer = PipeClientPeer(pipe);
+    if (!peer) { DisconnectNamedPipe(pipe); CloseHandle(pipe); continue; }
     {
       std::lock_guard<std::mutex> lock(write_mu_);
-      clients_.push_back({id, pipe, process});
+      clients_.push_back({id, pipe, peer, nullptr});
     }
     auto finished = std::make_shared<std::atomic<bool>>(false);
-    client_threads_.push_back({std::thread([this, id, pipe, finished] {
-      ClientLoop(id, pipe); finished->store(true);
+    client_threads_.push_back({std::thread([this, id, pipe, finished, peer] {
+      ClientLoop(id, pipe, peer); finished->store(true);
     }), finished});
   }
 }

@@ -76,6 +76,13 @@ Settings LoadSettings(const std::string& path) {
   return LoadSettings(Utf8ToWide(path));
 }
 
+unsigned HotkeyChangedMessage() {
+  static const unsigned message=RegisterWindowMessageW(L"SimpleVoice.HotkeyChanged.v2");
+  return message;
+}
+void HotkeyCache::Load(std::wstring path) { path_ = std::move(path); Reload(); }
+void HotkeyCache::Reload() { hotkey_ = LoadSettings(path_).hotkey; }
+
 Settings LoadSettings(const std::wstring& path) {
   const HANDLE file = CreateFileW(path.c_str(), GENERIC_READ,
       FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, 0, nullptr);

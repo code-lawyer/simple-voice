@@ -6,6 +6,7 @@
 #include "brand_resources.h"
 #include "ipc.hpp"
 #include "pipe_io.hpp"
+#include "ipc_security.hpp"
 #include <msctf.h>
 #include <cstdio>
 #include <filesystem>
@@ -124,10 +125,12 @@ int Check(const std::filesystem::path& expected) {
   std::puts("installed_brand_resource=1\ninstalled_input_mode_indicator=1");
 
   Handle pipe;
+  const auto pipe_name=VoicePipeName();
+  if(pipe_name.empty())throw std::runtime_error("cannot resolve the desktop logon IPC endpoint");
   const auto deadline=GetTickCount64()+30000;
   do {
     Pump();
-    pipe.value=CreateFileW(L"\\\\.\\pipe\\VoiceIme",GENERIC_READ|GENERIC_WRITE,0,nullptr,
+    pipe.value=CreateFileW(pipe_name.c_str(),GENERIC_READ|GENERIC_WRITE,0,nullptr,
         OPEN_EXISTING,FILE_FLAG_OVERLAPPED,nullptr);
     if (pipe.value!=INVALID_HANDLE_VALUE) break;
     Sleep(50);
@@ -142,29 +145,27 @@ int Check(const std::filesystem::path& expected) {
   if (!engine.value || !QueryFullProcessImageNameW(engine.value,0,executable,&capacity)) throw std::runtime_error("read running engine path");
   std::printf("engine_pid=%lu\nengine_path=%s\n",pid,Utf8(executable).c_str());
   if (!std::filesystem::equivalent(executable,expected/L"voiceime_engine.exe")) throw std::runtime_error("production pipe belongs to a different engine");
+  const auto peer=PipeServerPeer(pipe.value);
+  if(!peer || !peer->is_image((expected/L"voiceime_engine.exe").wstring()))
+    throw std::runtime_error("production engine identity/logon verification failed");
+
+  HWND host_window=nullptr;
+  EnumThreadWindows(GetCurrentThreadId(),[](HWND window,LPARAM output)->BOOL {
+    wchar_t name[80]{}; GetClassNameW(window,name,80);
+    if(lstrcmpW(name,L"VoiceImeTsfHost")==0) *reinterpret_cast<HWND*>(output)=window;
+    return TRUE;
+  },reinterpret_cast<LPARAM>(&host_window));
+  if(!host_window)throw std::runtime_error("registered TSF service did not create its IPC host window");
 
   Handle timer{CreateWaitableTimerW(nullptr,TRUE,nullptr)};
   LARGE_INTEGER due{}; due.QuadPart=-100000000;
   if (!timer.value || !SetWaitableTimer(timer.value,&due,0,nullptr,nullptr,FALSE)) throw std::runtime_error("create response deadline");
   std::string buffer;
-  for (;;) {
-    Message message; std::size_t used=0;
-    const auto decoded=DecodeFrame(buffer,&message,&used);
-    if (decoded==DecodeStatus::Invalid) throw std::runtime_error("production engine returned an invalid frame");
-    if (decoded==DecodeStatus::Complete) {
-      buffer.erase(0,used);
-      if (message.type==MsgType::Phase) {
-        std::printf("production_pipe_ready=1 phase=%s\n",message.text.c_str());
-        if (message.text!="0") throw std::runtime_error("engine is not idle; check an existing voice session");
-        break;
-      }
-      continue;
-    }
-    const auto read=ReadPipeChunk(pipe.value,nullptr,timer.value,50);
-    buffer+=read.bytes;
-    if (read.status!=PipeReadStatus::Data) throw std::runtime_error("production engine phase response timed out");
-    Pump();
-  }
+  Message initial;
+  if(!ClientHandshake(pipe.value,host_window,timer.value,initial,buffer))
+    throw std::runtime_error("registered TSF window handshake failed");
+  std::printf("production_pipe_ready=1 phase=%s\n",initial.text.c_str());
+  if(initial.text!="0")throw std::runtime_error("engine is not idle; check an existing voice session");
   std::puts("PASS installed COM module and real production engine match the requested build; microphone was not started");
   return 0;
 }

@@ -21,25 +21,31 @@ endif()
 # cppjieba yanyiwu/cppjieba cbdf949eadb8887f060473b5dc6d3194655c8bef (MIT).
 # Pinyin table: mozillazg/pinyin-data fe29ad32bdf352b31a02b9936e537f575432e9a6 (MIT),
 # copied to third_party/cppjieba/dict/pinyin.txt. cppjieba has no pronunciation table.
-add_library(voiceime_core STATIC
+add_library(voiceime_protocol STATIC
   src/utf8.cpp
+  src/place.cpp
+  src/ipc.cpp
+  src/pipe_io.cpp
+  src/ipc_security.cpp
+  src/settings.cpp
+  src/key_route.cpp)
+target_include_directories(voiceime_protocol PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_compile_definitions(voiceime_protocol PRIVATE _WIN32_WINNT=0x0601)
+target_link_libraries(voiceime_protocol PUBLIC advapi32 psapi user32)
+
+add_library(voiceime_core STATIC
   src/lexicon.cpp
   src/recognition_text.cpp
   src/segmenter.cpp
   src/vad.cpp
   src/resample.cpp
   src/session.cpp
-  src/place.cpp
-  src/ipc.cpp
-  src/pipe_io.cpp
-  src/settings.cpp
-  src/key_route.cpp
   third_party/sqlite/sqlite3.c)
 target_include_directories(voiceime_core PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/src
   ${CMAKE_CURRENT_SOURCE_DIR}/third_party/sqlite
   ${CMAKE_CURRENT_SOURCE_DIR}/third_party/cppjieba/include)
-target_link_libraries(voiceime_core PUBLIC advapi32)
+target_link_libraries(voiceime_core PUBLIC voiceime_protocol)
 target_compile_definitions(voiceime_core PRIVATE SQLITE_THREADSAFE=1 SQLITE_OMIT_LOAD_EXTENSION _WIN32_WINNT=0x0601)
 if(MSVC)
   set_source_files_properties(third_party/sqlite/sqlite3.c PROPERTIES COMPILE_OPTIONS /w)
@@ -49,7 +55,7 @@ endif()
 
 add_executable(voiceime_tests tests/main.cpp tests/utf8_test.cpp tests/lexicon_test.cpp tests/segmenter_test.cpp tests/vad_test.cpp tests/session_test.cpp tests/place_test.cpp tests/ipc_test.cpp tests/tsf_load_test.cpp tests/settings_test.cpp tests/key_route_test.cpp tests/pinyin_controller_test.cpp tests/rime_session_test.cpp tests/candidate_test.cpp)
 target_link_libraries(voiceime_tests PRIVATE voiceime_core)
-target_sources(voiceime_tests PRIVATE tests/pipe_io_test.cpp tests/concurrency_test.cpp tests/hardening_test.cpp tests/text_safety_test.cpp)
+target_sources(voiceime_tests PRIVATE tests/pipe_io_test.cpp tests/ipc_security_test.cpp tests/concurrency_test.cpp tests/hardening_test.cpp tests/text_safety_test.cpp)
 enable_testing()
 add_test(NAME voiceime.unit COMMAND voiceime_tests)
 set_tests_properties(voiceime.unit PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" TIMEOUT 60)
@@ -81,7 +87,8 @@ voiceime_copy_runtime(voiceime_engine)
 
 # The text service is loaded into other processes. Those hosts do not search
 # next to this DLL for libstdc++, so the runtime is linked in.
-add_library(voiceime_tsf SHARED src/tsf_main.cpp src/tsf_service.cpp src/ipc.cpp src/pipe_io.cpp src/candidate_bar.cpp src/place.cpp src/key_route.cpp src/settings.cpp src/utf8.cpp src/version.rc)
+add_library(voiceime_tsf SHARED src/tsf_main.cpp src/tsf_service.cpp src/candidate_bar.cpp src/version.rc)
+target_link_libraries(voiceime_tsf PRIVATE voiceime_protocol)
 target_sources(voiceime_tsf PRIVATE src/input_indicator.cpp)
 target_compile_definitions(voiceime_tsf PRIVATE SIMPLE_VOICE_DLL)
 set_target_properties(voiceime_tsf PROPERTIES PREFIX "" OUTPUT_NAME "voiceime_tsf")

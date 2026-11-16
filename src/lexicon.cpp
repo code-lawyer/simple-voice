@@ -106,7 +106,7 @@ Lexicon::Lexicon(const std::string& path) : db_(std::make_unique<Db>()) {
 }
 Lexicon::~Lexicon() = default;
 
-void Lexicon::Commit(const std::string& text, const std::vector<Token>&, std::int64_t now) {
+void Lexicon::Commit(const std::string& text, std::int64_t now) {
   std::lock_guard<std::mutex> lock(db_->mutex);
   Transaction transaction(db_->raw);
   Purge(db_->raw, now);
@@ -115,12 +115,6 @@ void Lexicon::Commit(const std::string& text, const std::vector<Token>&, std::in
       "UPDATE personal_terms SET count=MIN(count+1,1000000),last_commit_unix=?2 WHERE instr(?1,text)>0");
   touch.Text(1,text); touch.Int(2,now); touch.Done();
   transaction.Commit();
-}
-std::string Lexicon::Apply(const std::string& recognized, const std::vector<Token>&, std::int64_t now) {
-  std::lock_guard<std::mutex> lock(db_->mutex);
-  Purge(db_->raw, now);
-  // Frequency and homophones are not sufficient evidence to rewrite ASR.
-  return recognized;
 }
 std::vector<Entry> Lexicon::Recent(int limit) { return Search("", limit); }
 std::vector<Entry> Lexicon::Search(const std::string& query, int limit, int offset) {

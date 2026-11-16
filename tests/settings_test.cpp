@@ -143,3 +143,22 @@ void InvalidAppearanceFallsBackAndFailedSavePreservesSkin() {
   CHECK(!std::filesystem::exists(path+L".tmp"));
   DeleteFileW(path.c_str());
 }
+
+void HotkeyCacheKeepsTypingIndependentOfFileReads() {
+  const auto path=TempPath();
+  CHECK(SaveSettings(path,Settings{Hotkey{0,VK_F8}}));
+  HotkeyCache cache; cache.Load(Utf8ToWide(path));
+  CHECK(cache.value().vk==VK_F8);
+  CHECK(SaveSettings(path,Settings{Hotkey{0,VK_F9}}));
+  CHECK(cache.value().vk==VK_F8); // Changes take effect at explicit refresh, not mid-key.
+  cache.Reload(); CHECK(cache.value().vk==VK_F9);
+  HANDLE held=CreateFileW(Utf8ToWide(path).c_str(),GENERIC_READ,0,nullptr,OPEN_EXISTING,0,nullptr);
+  CHECK(held!=INVALID_HANDLE_VALUE);
+  for(int i=0;i<1000;++i)CHECK(cache.value().vk==VK_F9);
+  CHECK(!SaveSettings(path,Settings{Hotkey{0,VK_F10}}));
+  CloseHandle(held);
+  cache.Reload(); CHECK(cache.value().vk==VK_F9);
+  std::remove(path.c_str());
+  CHECK(cache.value().vk==VK_F9);
+  cache.Reload(); CHECK(cache.value().vk==DefaultHotkey().vk);
+}

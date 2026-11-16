@@ -26,17 +26,15 @@ namespace {
 bool ValidSize(MsgType type, std::size_t body) {
   switch (type) {
     case MsgType::StartListen: case MsgType::Cancel: case MsgType::Enter:
-    case MsgType::QueryCaret: case MsgType::ShowSettings: return body == 0;
-    case MsgType::SetHotkey: return body == 8;
+    case MsgType::ClientHello: return body == 8;
+    case MsgType::QueryCaret: case MsgType::ShowSettings: case MsgType::ServerReady: return body == 0;
     case MsgType::Caret: return body == 32;
-    case MsgType::Phase: return body == 1;
+    case MsgType::Phase: return body == 9;
     case MsgType::InsertText: return body > 8;
     case MsgType::InsertResult: return body == 10 || body == 12;
     case MsgType::CancelInsert: return body == 8;
     case MsgType::PersonalTermUsed: return body>0 && body<=4096;
-    case MsgType::InsertAck: return body == 2 || body == 4;
-    case MsgType::Draft: case MsgType::Final: case MsgType::CommitDone:
-    case MsgType::ListRecent: case MsgType::DeleteEntry: return true;
+    case MsgType::Invalid: return false;
   }
   return false;
 }
@@ -45,10 +43,13 @@ bool ValidSize(MsgType type, std::size_t body) {
 std::string Encode(const Message& message) {
   if (message.text.size() > kMaxFrameLength - 9) return {};
   std::string body;
-  if (message.type == MsgType::SetHotkey) {
+  if (IsVoiceControl(message.type) || message.type == MsgType::Phase || message.type == MsgType::ClientHello) {
+    const auto value = message.type == MsgType::ClientHello ? message.client_window : message.state_id;
+    if (!value) return {};
     body.assign(8, '\0');
-    WriteLe32(body, 0, static_cast<std::uint32_t>(message.key_mod));
-    WriteLe32(body, 4, static_cast<std::uint32_t>(message.key_vk));
+    WriteLe32(body, 0, static_cast<std::uint32_t>(value));
+    WriteLe32(body, 4, static_cast<std::uint32_t>(value >> 32));
+    body += message.text;
   } else if (message.type == MsgType::Caret) {
     body.assign(32, '\0');
     const int values[] = {message.caret_x, message.caret_y, message.caret_w, message.caret_h,
@@ -64,7 +65,7 @@ std::string Encode(const Message& message) {
     body = message.text;
   }
   if (!ValidSize(message.type, body.size())) return {};
-  if ((message.type == MsgType::InsertResult || message.type == MsgType::InsertAck) &&
+  if (message.type == MsgType::InsertResult &&
       message.text != "ok" && message.text != "fail") return {};
   if (message.type == MsgType::Phase && (message.text[0] < '0' || message.text[0] > '4')) return {};
   const auto length = static_cast<std::uint32_t>(1 + body.size());
@@ -86,9 +87,12 @@ DecodeStatus DecodeFrame(std::string_view bytes, Message* out, std::size_t* cons
   if (!ValidSize(message.type, length - 1)) return DecodeStatus::Invalid;
   if (bytes.size() - 4 < length) return DecodeStatus::Incomplete;
   const std::string_view body = bytes.substr(5, length - 1);
-  if (message.type == MsgType::SetHotkey) {
-    message.key_mod = static_cast<int>(ReadLe32(body, 0));
-    message.key_vk = static_cast<int>(ReadLe32(body, 4));
+  if (IsVoiceControl(message.type) || message.type == MsgType::Phase || message.type == MsgType::ClientHello) {
+    const auto value = ReadLe32(body, 0) | (static_cast<std::uint64_t>(ReadLe32(body, 4)) << 32);
+    if (!value) return DecodeStatus::Invalid;
+    if (message.type == MsgType::ClientHello) message.client_window = value;
+    else message.state_id = value;
+    message.text.assign(body.substr(8));
   } else if (message.type == MsgType::Caret) {
     int* values[] = {&message.caret_x, &message.caret_y, &message.caret_w, &message.caret_h,
                       &message.window_x, &message.window_y, &message.window_w, &message.window_h};
@@ -100,7 +104,7 @@ DecodeStatus DecodeFrame(std::string_view bytes, Message* out, std::size_t* cons
   } else {
     message.text.assign(body.data(), body.size());
   }
-  if ((message.type == MsgType::InsertResult || message.type == MsgType::InsertAck) &&
+  if (message.type == MsgType::InsertResult &&
       message.text != "ok" && message.text != "fail") return DecodeStatus::Invalid;
   if (message.type == MsgType::Phase && (message.text[0] < '0' || message.text[0] > '4')) return DecodeStatus::Invalid;
   if (out != nullptr) *out = std::move(message);
@@ -110,4 +114,12 @@ DecodeStatus DecodeFrame(std::string_view bytes, Message* out, std::size_t* cons
 
 bool Decode(std::string_view bytes, Message* out, std::size_t* consumed) {
   return DecodeFrame(bytes, out, consumed) == DecodeStatus::Complete;
+}
+
+bool IsVoiceControl(MsgType type) {
+  return type == MsgType::StartListen || type == MsgType::Enter || type == MsgType::Cancel;
+}
+bool IsClientMessage(MsgType type) {
+  return IsVoiceControl(type) || type == MsgType::Caret || type == MsgType::ShowSettings ||
+      type == MsgType::PersonalTermUsed || type == MsgType::InsertResult;
 }

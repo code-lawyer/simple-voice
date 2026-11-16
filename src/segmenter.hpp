@@ -1,10 +1,10 @@
 #pragma once
 
-#include "lexicon.hpp"
-
 #include <memory>
 #include <string>
 #include <vector>
+
+struct Token { std::string text; std::string pinyin; };
 
 class Segmenter {
  public:
@@ -15,9 +15,6 @@ class Segmenter {
   Segmenter& operator=(const Segmenter&) = delete;
 
   std::vector<Token> Cut(const std::string& text) const;
-  // Keep a 2–8 code-point word together on the next Cut. Single characters
-  // and longer strings are ignored. Replacement still waits for a second commit.
-  void Remember(const std::string& text);
 
  private:
   struct Impl;

@@ -45,7 +45,7 @@ void PipeReadSurvivesRepeatedTimeouts() {
   CHECK(pipe.valid());
   if (!pipe.valid()) return;
   Message message;
-  message.type = MsgType::CommitDone;
+  message.type = MsgType::InsertText; message.request_id = 1;
   message.text = "超时之后仍然准确上屏";
   const auto frame = Encode(message);
   bool wrote = false;

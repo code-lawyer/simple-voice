@@ -46,14 +46,14 @@ void AudioReadinessAndChunkingProtectBoundaries() {
 }
 void PersonalTermsAreExplicitSearchableAndReversible() {
   Lexicon lex(":memory:"); const auto now=std::time(nullptr);
-  for(int i=0;i<1000;++i) lex.Commit("今天讨论项目进度",{{"项目","xiang mu"}},now);
+  for(int i=0;i<1000;++i) lex.Commit("今天讨论项目进度",now);
   CHECK(lex.Count()==0); CHECK(lex.LegacyCount()==0);
   lex.SaveTerm("Simple Voice","simplevoice",now);
   lex.SaveTerm("轻音输入法","qingyin",now);
   CHECK(lex.Search("VOICE").size()==1); CHECK(lex.Search("qingyin").size()==1);
   CHECK(lex.Search("%_").empty());
   const auto before=lex.Search("轻音").at(0);
-  CHECK(lex.Delete(before.text)); lex.Commit(before.text,{},now+1); CHECK(lex.Search("轻音").empty());
+  CHECK(lex.Delete(before.text)); lex.Commit(before.text,now+1); CHECK(lex.Search("轻音").empty());
   lex.SaveTerm(before.text,before.pinyin,before.last_commit_unix);
   CHECK(lex.Count()==2);
   lex.SaveTerm("轻音","qy",now+1,before.text); CHECK(lex.Search("qingyin").empty());

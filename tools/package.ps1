@@ -45,7 +45,7 @@ foreach ($file in @('jieba.dict.utf8','hmm_model.utf8','user.dict.utf8','idf.utf
   Copy-PackageFile (Join-Path $source "third_party/cppjieba/dict/$file") "third_party/cppjieba/dict/$file"
 }
 Copy-PackageFile (Join-Path $source 'third_party/cppjieba/LICENSE') 'third_party/cppjieba/LICENSE'
-foreach ($file in @('README.md','LICENSE','NOTICE','THIRD_PARTY_NOTICES.md','PRODUCT.md','DESIGN.md','docs/development.md','docs/releases/v0.2.0-rc.1.md','docs/releases/v0.2.0-rc.1-validation.md','docs/releases/v0.2.0-rc.2.md','docs/releases/v0.2.0-rc.2-validation.md','docs/releases/v0.2.0-rc.3.md','docs/releases/v0.2.0-rc.3-validation.md',"docs/releases/v$version.md", "docs/releases/v$version-validation.md",'docs/design/brand/README.md','docs/design/brand/sound-core-preview.png','docs/design/brand/windows-taskbar.png')) {
+foreach ($file in @('README.md','LICENSE','NOTICE','THIRD_PARTY_NOTICES.md','PRODUCT.md','DESIGN.md','docs/development.md','docs/ipc-security.md','docs/releases/v0.2.0-rc.1.md','docs/releases/v0.2.0-rc.1-validation.md','docs/releases/v0.2.0-rc.2.md','docs/releases/v0.2.0-rc.2-validation.md','docs/releases/v0.2.0-rc.3.md','docs/releases/v0.2.0-rc.3-validation.md','docs/releases/v0.2.0-rc.4.md','docs/releases/v0.2.0-rc.4-validation.md',"docs/releases/v$version.md", "docs/releases/v$version-validation.md",'docs/design/brand/README.md','docs/design/brand/sound-core-preview.png','docs/design/brand/windows-taskbar.png')) {
   Copy-PackageFile (Join-Path $source $file) $file
 }
 foreach ($file in @('docs/plans/professional-release.md','docs/research/asr-selection-2026-11-15.md','docs/research/pinyin-selection-2026-11-15.md','docs/research/code-review-2026-11-15.md','docs/research/ui-review-2026-11-15.md')) {

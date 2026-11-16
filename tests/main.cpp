@@ -1,5 +1,8 @@
 #include "harness.hpp"
 void RecognitionFormattingPreservesInformation();
+void RetiredAndUnauthenticatedFramesAreRejected();
+void PipePeersAndLogonAclAreVerified();
+void HotkeyCacheKeepsTypingIndependentOfFileReads();
 void AudioReadinessAndChunkingProtectBoundaries();
 void ModernInputAndPersonalTermsSurviveLiveSessions();
 void PersonalTermsAreExplicitSearchableAndReversible();
@@ -18,7 +21,6 @@ void FirstSentenceAndSingleCountDoNotReplace();
 void PersonalHomophonesNeverRewriteSpeech();
 void ExpiredEntriesDropOut();
 void CutsANameIntoTokensWithPinyin();
-void RememberKeepsAUserWord();
 void SilenceAfterSpeechEndpointsAt500ms();
 void SixtySecondsForcesEndpoint();
 void Resample48kTo16kKeepsDuration();
@@ -41,7 +43,7 @@ void InvalidAppearanceFallsBackAndFailedSavePreservesSkin();
 void EnterDuringListeningPreviewsBeforeSecondEnter();
 void RejectedInsertRestoresThePendingFinal();
 void RepeatedSentencesNeverOverwriteNewInformation();
-void PhaseAndInsertAckRoundTrip();
+void PhaseAndInsertResultRoundTrip();
 void ChineseLetterGoesToRime();
 void ChordPassesToTheDocument();
 void DisabledDocumentPassesEveryKey();
@@ -85,10 +87,13 @@ void PipeStopFinishesPendingRead();
 void WindowsChordsPassWithoutStartingCompositionOrVoice();
 void FailedSettingsReplacePreservesPreviousFile();
 void SettingsSaveReportsMissingDirectory();
-void ConcurrentSegmentationAndLearningKeepTheTextIntact();
+void ConcurrentSegmentationKeepsTheTextIntact();
 
 int main(int argc, char** argv) {
   const Test tests[] = {
+      {"ipc.RetiredAndUnauthenticatedFramesAreRejected", RetiredAndUnauthenticatedFramesAreRejected},
+      {"ipc.PipePeersAndLogonAclAreVerified", PipePeersAndLogonAclAreVerified},
+      {"settings.HotkeyCacheKeepsTypingIndependentOfFileReads", HotkeyCacheKeepsTypingIndependentOfFileReads},
       {"hardening.MalformedFramesAreRejectedWithoutConsumingOrLooping", MalformedFramesAreRejectedWithoutConsumingOrLooping},
       {"hardening.CorrelatedFramesSurviveFragmentationAndHaveBounds", CorrelatedFramesSurviveFragmentationAndHaveBounds},
       {"hardening.CommittingWaitsForConfirmationAndEmptyResultsNeverCommit", CommittingWaitsForConfirmationAndEmptyResultsNeverCommit},
@@ -100,7 +105,7 @@ int main(int argc, char** argv) {
       {"hardening.LegacyPhraseRetentionStartsOnceAndExpiresAfter365Days", LegacyPhraseRetentionStartsOnceAndExpiresAfter365Days},
       {"hardening.StreamingResamplingIsIndependentOfPacketBoundaries", StreamingResamplingIsIndependentOfPacketBoundaries},
       {"hardening.DownsamplingRejectsAliasedHighFrequencyAudio", DownsamplingRejectsAliasedHighFrequencyAudio},
-      {"segmenter.ConcurrentSegmentationAndLearningKeepTheTextIntact", ConcurrentSegmentationAndLearningKeepTheTextIntact},
+      {"segmenter.ConcurrentSegmentationKeepsTheTextIntact", ConcurrentSegmentationKeepsTheTextIntact},
       {"keyroute.WindowsChordsPassWithoutStartingCompositionOrVoice", WindowsChordsPassWithoutStartingCompositionOrVoice},
       {"settings.FailedReplacePreservesPreviousFile", FailedSettingsReplacePreservesPreviousFile},
       {"settings.SaveReportsMissingDirectory", SettingsSaveReportsMissingDirectory},
@@ -125,7 +130,6 @@ int main(int argc, char** argv) {
       {"lexicon.PersonalHomophonesNeverRewriteSpeech", PersonalHomophonesNeverRewriteSpeech},
       {"lexicon.ExpiredEntriesDropOut", ExpiredEntriesDropOut},
       {"segmenter.CutsANameIntoTokensWithPinyin", CutsANameIntoTokensWithPinyin},
-      {"segmenter.RememberKeepsAUserWord", RememberKeepsAUserWord},
       {"vad.SilenceAfterSpeechEndpointsAt500ms", SilenceAfterSpeechEndpointsAt500ms},
       {"vad.SixtySecondsForcesEndpoint", SixtySecondsForcesEndpoint},
       {"vad.Resample48kTo16kKeepsDuration", Resample48kTo16kKeepsDuration},
@@ -146,7 +150,7 @@ int main(int argc, char** argv) {
       {"session.EnterDuringListeningPreviewsBeforeSecondEnter", EnterDuringListeningPreviewsBeforeSecondEnter},
       {"session.RejectedInsertRestoresThePendingFinal", RejectedInsertRestoresThePendingFinal},
       {"lexicon.RepeatedSentencesNeverOverwriteNewInformation", RepeatedSentencesNeverOverwriteNewInformation},
-      {"ipc.PhaseAndInsertAckRoundTrip", PhaseAndInsertAckRoundTrip},
+      {"ipc.PhaseAndInsertResultRoundTrip", PhaseAndInsertResultRoundTrip},
       {"keyroute.ChineseLetterGoesToRime", ChineseLetterGoesToRime},
       {"keyroute.ChordPassesToTheDocument", ChordPassesToTheDocument},
       {"keyroute.DisabledDocumentPassesEveryKey", DisabledDocumentPassesEveryKey},

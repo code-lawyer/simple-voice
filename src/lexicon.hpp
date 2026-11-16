@@ -5,11 +5,6 @@
 #include <string>
 #include <vector>
 
-struct Token {
-  std::string text;
-  std::string pinyin;
-};
-
 struct Entry {
   std::string text;
   std::string pinyin;
@@ -25,8 +20,7 @@ class Lexicon {
   Lexicon(const Lexicon&) = delete;
   Lexicon& operator=(const Lexicon&) = delete;
 
-  void Commit(const std::string& full_text, const std::vector<Token>& tokens, std::int64_t now_unix);
-  std::string Apply(const std::string& recognized, const std::vector<Token>& tokens, std::int64_t now_unix);
+  void Commit(const std::string& full_text, std::int64_t now_unix);
   std::vector<Entry> Recent(int limit);
   bool Delete(const std::string& text);
   // Only an explicit user action creates a personal term. Commit only touches

@@ -249,10 +249,3 @@ std::vector<Token> Segmenter::Cut(const std::string& text) const {
   }
   return tokens;
 }
-
-void Segmenter::Remember(const std::string& text) {
-  const int count = CodePointCount(text);
-  if (count < 2 || count > 8) return;
-  std::lock_guard<std::mutex> lock(impl_->mutex);
-  impl_->jieba.InsertUserWord(text, 100000000);
-}

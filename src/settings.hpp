@@ -20,6 +20,17 @@ Settings LoadSettings(const std::wstring& path);
 Settings ParseSettings(const std::string& json);
 bool SaveSettings(const std::string& path, Settings settings);
 bool HotkeyAccepted(Hotkey hotkey);
+unsigned HotkeyChangedMessage();
+
+class HotkeyCache {
+ public:
+  void Load(std::wstring path);
+  void Reload();
+  Hotkey value() const { return hotkey_; }
+ private:
+  std::wstring path_;
+  Hotkey hotkey_ = DefaultHotkey();
+};
 
 struct InputPreferences {
   bool learning = true;

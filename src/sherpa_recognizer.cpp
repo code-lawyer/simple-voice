@@ -1,9 +1,7 @@
 #include "sherpa_recognizer.hpp"
 
-#include "lexicon.hpp"
 #include "recognition_text.hpp"
 #include "audio_segments.hpp"
-#include "segmenter.hpp"
 #include "utf8.hpp"
 
 #include <algorithm>
@@ -325,7 +323,7 @@ class SherpaRecognizer : public Recognizer {
 
 }  // namespace
 
-std::unique_ptr<Recognizer> MakeSherpaRecognizer(const std::string& model_dir, Segmenter*, Lexicon*, bool chinese_only) {
+std::unique_ptr<Recognizer> MakeSherpaRecognizer(const std::string& model_dir, bool chinese_only) {
   std::vector<std::string> required={"streaming-bilingual/encoder-epoch-99-avg-1.int8.onnx","streaming-bilingual/decoder-epoch-99-avg-1.onnx",
     "streaming-bilingual/joiner-epoch-99-avg-1.int8.onnx","streaming-bilingual/tokens.txt","punct/model.int8.onnx"};
   if(chinese_only) { required.push_back("final/model.int8.onnx"); required.push_back("final/tokens.txt"); }

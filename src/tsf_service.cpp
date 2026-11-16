@@ -9,6 +9,7 @@
 #include "settings.hpp"
 #include "ipc.hpp"
 #include "pipe_io.hpp"
+#include "ipc_security.hpp"
 #include "register_status.hpp"
 #include "rime_session.hpp"
 #include "utf8.hpp"
@@ -54,11 +55,11 @@ struct IncomingCommit {
   std::uint64_t id = 0, connection = 0;
 };
 
-Hotkey ReadConfiguredHotkey() {
+std::wstring ConfiguredHotkeyPath() {
   wchar_t local[MAX_PATH];
   const DWORD count = GetEnvironmentVariableW(L"LOCALAPPDATA", local, MAX_PATH);
-  if (count == 0 || count >= MAX_PATH) return DefaultHotkey();
-  return LoadSettings(std::wstring(local, count) + L"\\VoiceIme\\config.json").hotkey;
+  if (count == 0 || count >= MAX_PATH) return {};
+  return std::wstring(local, count) + L"\\VoiceIme\\config.json";
 }
 enum class CompositionEdit { SetPreedit, Commit, Cancel };
 
@@ -310,6 +311,7 @@ class VoiceService : public ITfTextInputProcessor {
 #ifdef VOICEIME_TESTING
   void SetVoiceActiveForTest(bool active) { active_=active; }
   HWND IndicatorMessageWindowForTest() const { return host_; }
+  Hotkey CachedHotkeyForTest() const { return hotkey_cache_.value(); }
 #endif
   HRESULT OnKeyUp(ITfContext* context, WPARAM vk, WINBOOL* eaten, bool down);
   void OnForeground(bool foreground) {
@@ -598,6 +600,8 @@ class VoiceService : public ITfTextInputProcessor {
   bool advised_keys_ = false;
   std::atomic<bool> foreground_{true};
   std::atomic<bool> active_{false};
+  std::atomic<std::uint64_t> state_id_{0};
+  HotkeyCache hotkey_cache_;
   std::atomic<std::uint64_t> connection_generation_{0}, cancelled_commit_{0};
   std::uint64_t handled_connection_ = ~std::uint64_t{0}, handled_id_ = 0;
   bool handled_success_ = false;
@@ -643,7 +647,9 @@ bool VoiceService::WriteClient(const Message& message, std::uint64_t connection)
   std::lock_guard<std::mutex> lock(write_mu_);
   if (connection != 0 && connection != connection_generation_.load()) return false;
   if (pipe_ == INVALID_HANDLE_VALUE || write_event_ == nullptr) return false;
-  auto bytes = Encode(message);
+  Message current = message;
+  if (IsVoiceControl(current.type)) current.state_id = state_id_.load();
+  auto bytes = Encode(current);
   if (bytes.empty()) return false;
   outgoing_.push_back(std::move(bytes));
   SetEvent(write_event_);
@@ -727,7 +733,9 @@ void VoiceService::LaunchEngine() {
 #ifdef VOICEIME_TESTING
   return;  // Integration executable must never start the installed engine.
 #endif
-  HANDLE mutex = OpenMutexW(SYNCHRONIZE, FALSE, L"Local\\VoiceImeEngine");
+  const auto name = VoiceMutexName();
+  if (name.empty()) return;
+  HANDLE mutex = OpenMutexW(SYNCHRONIZE, FALSE, name.c_str());
   const bool running = mutex != nullptr;
   if (mutex != nullptr) CloseHandle(mutex);
   if (!ShouldLaunchEngine(running)) return;
@@ -771,6 +779,8 @@ LRESULT CALLBACK VoiceService::WindowProc(HWND hwnd, UINT message, WPARAM wparam
   }
   auto* self = reinterpret_cast<VoiceService*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
   if (self == nullptr) return DefWindowProcW(hwnd, message, wparam, lparam);
+  const auto hotkey_changed = HotkeyChangedMessage();
+  if (hotkey_changed && message == hotkey_changed) { self->hotkey_cache_.Reload(); return 0; }
   if (message == kCommitMessage) {
     auto* text = reinterpret_cast<IncomingCommit*>(lparam);
     if (text != nullptr) {
@@ -907,6 +917,7 @@ void VoiceService::ReadLoop() {
       } else if (message.type == MsgType::CancelInsert) {
         cancelled_commit_.store(std::max(cancelled_commit_.load(), message.request_id));
       } else if (message.type == MsgType::Phase) {
+        state_id_ = message.state_id;
         active_ = !message.text.empty() && message.text != "0";
         if (host_) PostMessageW(host_, kTrackingMessage, 0, 0);
       } else if (message.type == MsgType::QueryCaret && host_ != nullptr && foreground_) {
@@ -921,7 +932,7 @@ void VoiceService::ReadLoop() {
 #ifdef VOICEIME_TESTING
     const auto pipe_name = L"\\\\.\\pipe\\VoiceImeTsfQA_" + std::to_wstring(GetCurrentProcessId());
 #else
-    const std::wstring pipe_name = L"\\\\.\\pipe\\VoiceIme";
+    const auto pipe_name = VoicePipeName();
 #endif
     HANDLE pipe = CreateFileW(pipe_name.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING,
                                FILE_FLAG_OVERLAPPED, nullptr);
@@ -929,14 +940,29 @@ void VoiceService::ReadLoop() {
       if (WaitForSingleObject(stop_event_, 100) == WAIT_OBJECT_0) return;
       continue;
     }
+    auto server = PipeServerPeer(pipe);
+#ifdef VOICEIME_TESTING
+    const auto expected_engine = ModuleDirectory() + L"\\voiceime_tsf_integration.exe";
+#else
+    const auto expected_engine = ModuleDirectory() + L"\\voiceime_engine.exe";
+#endif
+    Message initial;
+    std::string buffer;
+    if (!server || !server->is_image(expected_engine) || !ClientHandshake(pipe, host_, stop_event_, initial, buffer)) {
+      CloseHandle(pipe);
+      if (WaitForSingleObject(stop_event_, 100) == WAIT_OBJECT_0) return;
+      continue;
+    }
     {
       std::lock_guard<std::mutex> lock(write_mu_);
       ++connection_generation_;
       cancelled_commit_ = 0;
+      state_id_ = initial.state_id;
+      active_ = initial.text != "0";
       pipe_ = pipe;
     }
-    std::string buffer;
-    bool failed = false;
+    if (host_) PostMessageW(host_, kTrackingMessage, 0, 0);
+    bool failed = !deliver(buffer);
     while (!failed && WaitForSingleObject(stop_event_, 0) != WAIT_OBJECT_0) {
       std::vector<std::string> mine;
       {
@@ -965,6 +991,7 @@ void VoiceService::ReadLoop() {
       }
     }
     active_ = false;
+    state_id_ = 0;
     if (host_) PostMessageW(host_, kTrackingMessage, 0, 0);
     if (stopping) return;
   }
@@ -979,6 +1006,7 @@ HRESULT VoiceService::Activate(ITfThreadMgr* manager, TfClientId client_id) {
   if (manager == nullptr) return E_INVALIDARG;
   if (thread_mgr_ != nullptr) return E_UNEXPECTED;
   if (!CanUseDesktopRuntime()) return E_ACCESSDENIED;
+  hotkey_cache_.Load(ConfiguredHotkeyPath());
   thread_mgr_ = manager;
   thread_mgr_->AddRef();
   client_id_ = client_id;
@@ -1393,7 +1421,7 @@ HRESULT VoiceService::OnKey(ITfContext* context, WPARAM vk, LPARAM lparam, WINBO
     pending_toggle_ = false;
   }
   const KeyState state = MakeKeyState(context, vk, lparam);
-  const Hotkey hotkey = ReadConfiguredHotkey();
+  const Hotkey hotkey = hotkey_cache_.value();
   const KeyAction action = RouteKey(state, hotkey).action;
   // Bare Shift is ToggleMode. Apply waits until keyup so Shift+letter stays in this mode.
   if (action == KeyAction::ToggleMode) {
@@ -1477,7 +1505,7 @@ HRESULT VoiceService::OnKeyUp(ITfContext* context, WPARAM vk, WINBOOL* eaten, bo
   }
   if (pending_toggle_ && shift) {
     const KeyState state = MakeKeyState(context, vk, 0);
-    const KeyAction decided = pinyin_.Apply(state, ReadConfiguredHotkey()).action;
+    const KeyAction decided = pinyin_.Apply(state, hotkey_cache_.value()).action;
     pending_toggle_ = false;
     if (decided == KeyAction::ToggleMode) {
       RunComposition(context, CompositionEdit::Cancel, L"");

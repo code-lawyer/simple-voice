@@ -1,10 +1,14 @@
 #include "ipc.hpp"
 #include "pipe_io.hpp"
+#include "ipc_security.hpp"
 #include "settings.hpp"
 #include "sqlite3.h"
+#include "lexicon.hpp"
+#include "utf8.hpp"
 #include <windows.h>
 #include <algorithm>
 #include <cstdio>
+#include <ctime>
 #include <deque>
 #include <filesystem>
 #include <stdexcept>
@@ -33,7 +37,7 @@ struct Timer {
 };
 class Client {
  public:
-  explicit Client(const std::wstring& name) {
+  explicit Client(const std::wstring& name, bool authenticate = true) {
     const auto deadline = GetTickCount64() + 5000;
     do {
       pipe_ = CreateFileW(name.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr,
@@ -42,13 +46,36 @@ class Client {
       Sleep(20);
     } while (GetTickCount64() < deadline);
     Require(pipe_ != INVALID_HANDLE_VALUE, "isolated engine accepts pipe client");
+    if (authenticate) {
+      WNDCLASSW window_class{};
+      window_class.lpfnWndProc = DefWindowProcW;
+      window_class.hInstance = GetModuleHandleW(nullptr);
+      window_class.lpszClassName = L"VoiceImeTsfHost";
+      RegisterClassW(&window_class);
+      window_ = CreateWindowW(window_class.lpszClassName, L"", WS_POPUP, 0,0,0,0,
+                              nullptr,nullptr,window_class.hInstance,nullptr);
+      const auto server = PipeServerPeer(pipe_);
+      Require(server && server->is_image(ExecutableDirectory()+L"\\voiceime_engine_testhost.exe"),
+              "fixture verifies the engine process identity");
+      server_process_ = server->id();
+      Message initial;
+      Require(ClientHandshake(pipe_,window_,nullptr,initial,buffer_),"client window handshake completes");
+      state_id_ = initial.state_id;
+      messages_.push_back(initial);
+      DecodeAvailable();
+    }
   }
-  ~Client() { if (pipe_ != INVALID_HANDLE_VALUE) CloseHandle(pipe_); }
+  ~Client() { if (pipe_ != INVALID_HANDLE_VALUE) CloseHandle(pipe_); if(window_)DestroyWindow(window_); }
+  HWND Window() const { return window_; }
+  DWORD Server() const { return server_process_; }
+  std::uint64_t State() const { return state_id_; }
+  void SendAt(MsgType type, std::uint64_t state) { Message m; m.type=type; m.state_id=state; Raw(Encode(m)); }
   void Send(MsgType type, std::string text = "", bool fragment = false, std::uint64_t id = 0) {
     Message msg;
     msg.type = type;
     msg.text = std::move(text);
     msg.request_id = id ? id : (type == MsgType::InsertResult ? last_commit_ : 0);
+    if (IsVoiceControl(type)) msg.state_id = state_id_;
     const auto bytes = Encode(msg);
     Timer timeout;
     if (fragment) {
@@ -91,8 +118,8 @@ class Client {
   void Raw(const std::string& bytes) {
     Timer timeout; Require(WritePipeBytes(pipe_, bytes, timeout.value), "raw frame sent to isolated engine");
   }
-  bool Closed() {
-    Timer timeout(1500);
+  bool Closed(int milliseconds = 1500) {
+    Timer timeout(milliseconds);
     for (;;) {
       const auto result = ReadPipeChunk(pipe_, nullptr, timeout.value, 20);
       if (result.status == PipeReadStatus::Closed) return true;
@@ -107,10 +134,14 @@ class Client {
       std::size_t used = 0;
       if (!Decode(buffer_, &msg, &used)) return;
       buffer_.erase(0, used);
+      if (msg.type == MsgType::Phase) state_id_ = msg.state_id;
       messages_.push_back(std::move(msg));
     }
   }
   HANDLE pipe_ = INVALID_HANDLE_VALUE;
+  HWND window_ = nullptr;
+  DWORD server_process_ = 0;
+  std::uint64_t state_id_ = 0;
   std::string buffer_;
   std::deque<Message> messages_;
 };
@@ -126,13 +157,16 @@ BOOL CALLBACK FindEngine(HWND hwnd, LPARAM arg) {
 }
 class Host {
  public:
-  Host(const std::filesystem::path& executable, const std::filesystem::path& data, const wchar_t* fixture) {
+  Host(const std::filesystem::path& executable, const std::filesystem::path& data, const wchar_t* fixture,
+       const wchar_t* transcript=nullptr) {
     static int serial = 0;
     id_ = std::to_wstring(GetCurrentProcessId()) + L"_" + std::to_wstring(++serial);
     std::filesystem::create_directories(data);
     SetEnvironmentVariableW(L"VOICEIME_TEST_ID", id_.c_str());
     SetEnvironmentVariableW(L"VOICEIME_TEST_DATA", data.c_str());
     SetEnvironmentVariableW(L"VOICEIME_TEST_CAPTURE", fixture);
+    SetEnvironmentVariableW(L"VOICEIME_TEST_TRANSCRIPT", transcript);
+    SetEnvironmentVariableW(L"VOICEIME_TEST_FOREGROUND",std::to_wstring(GetCurrentProcessId()).c_str());
     std::wstring command = L"\"" + executable.wstring() + L"\" --fake";
     STARTUPINFOW startup{};
     startup.cb = sizeof(startup);
@@ -143,6 +177,8 @@ class Host {
     SetEnvironmentVariableW(L"VOICEIME_TEST_ID", nullptr);
     SetEnvironmentVariableW(L"VOICEIME_TEST_DATA", nullptr);
     SetEnvironmentVariableW(L"VOICEIME_TEST_CAPTURE", nullptr);
+    SetEnvironmentVariableW(L"VOICEIME_TEST_TRANSCRIPT", nullptr);
+    SetEnvironmentVariableW(L"VOICEIME_TEST_FOREGROUND", nullptr);
     Require(created != FALSE, "isolated test engine starts");
     CloseHandle(process_.hThread);
     process_.hThread = nullptr;
@@ -170,6 +206,7 @@ class Host {
     return search.window;
   }
   DWORD Handles() const { DWORD count=0; GetProcessHandleCount(process_.hProcess,&count); return count; }
+  void Foreground(DWORD process) { SendMessageW(Window(),WM_APP+100,process,0); }
   void Stop() {
     Require(PostMessageW(Window(), WM_CLOSE, 0, 0) != FALSE, "engine exit requested");
     Require(WaitForSingleObject(process_.hProcess, 5000) == WAIT_OBJECT_0, "engine joins pending IO on exit");
@@ -182,14 +219,143 @@ class Host {
   HANDLE job_ = nullptr;
   std::wstring id_;
 };
+
+void IndependentClient(const std::filesystem::path& executable, const std::wstring& pipe,
+                       const wchar_t* mode, std::uintptr_t window = 0) {
+  const auto command_line = L"\"" + executable.wstring() + L"\" --ipc-child \"" + pipe + L"\" " +
+      mode + L" " + std::to_wstring(window);
+  auto command = command_line;
+  STARTUPINFOW startup{}; startup.cb=sizeof(startup); startup.dwFlags=STARTF_USESHOWWINDOW; startup.wShowWindow=SW_HIDE;
+  PROCESS_INFORMATION child{};
+  Require(CreateProcessW(executable.c_str(),command.data(),nullptr,nullptr,FALSE,CREATE_NO_WINDOW,
+      nullptr,nullptr,&startup,&child)!=FALSE,"independent IPC regression client starts");
+  CloseHandle(child.hThread);
+  const auto wait=WaitForSingleObject(child.hProcess,7000);
+  if(wait!=WAIT_OBJECT_0)TerminateProcess(child.hProcess,99);
+  DWORD code=99; GetExitCodeProcess(child.hProcess,&code); CloseHandle(child.hProcess);
+  Require(wait==WAIT_OBJECT_0 && code==0,"independent IPC regression client meets its authorization expectation");
+}
+
+int ChildClient(const char* pipe_text, const char* mode_text, const char* window_text) {
+  const std::string name(pipe_text),mode(mode_text);
+  Require(name.rfind("\\\\.\\pipe\\VoiceImeQA_",0)==0,"child refuses production endpoints");
+  const std::wstring pipe(name.begin(),name.end());
+  if(mode=="claim" || mode=="background") {
+    Client client(pipe); client.Phase("3");
+    if(mode=="background") {
+      client.Send(MsgType::StartListen); client.Send(MsgType::Enter); client.Send(MsgType::Cancel);
+      Require(client.Quiet(200),"verified background process receives no pending text");
+    } else {
+      WindowSearch search{client.Server()}; EnumWindows(FindEngine,reinterpret_cast<LPARAM>(&search));
+      Require(search.window!=nullptr,"find isolated engine foreground fixture");
+      SendMessageW(search.window,WM_APP+100,GetCurrentProcessId(),0);
+      client.Send(MsgType::Enter);
+      Require(!client.Wait(MsgType::InsertText).text.empty(),"verified new foreground process may confirm after switching applications");
+      client.Send(MsgType::InsertResult,"ok"); client.Phase("0");
+    }
+  } else {
+    Client client(pipe,false);
+    Message attempt;
+    attempt.state_id=1;
+    if(mode=="hello") { attempt.type=MsgType::ClientHello; attempt.client_window=std::stoull(window_text); }
+    else attempt.type=mode=="enter"?MsgType::Enter:mode=="cancel"?MsgType::Cancel:MsgType::StartListen;
+    client.Raw(Encode(attempt));
+    Require(client.Closed(),"unauthenticated or borrowed-window client is disconnected");
+  }
+  return 0;
+}
 }  // namespace
 
 int main(int argc, char** argv) {
   try {
+    if(argc==5 && std::string(argv[1])=="--ipc-child") return ChildClient(argv[2],argv[3],argv[4]);
     wchar_t own[MAX_PATH]{};
     GetModuleFileNameW(nullptr, own, MAX_PATH);
     const auto host = std::filesystem::path(own).parent_path() / "voiceime_engine_testhost.exe";
     const auto output = std::filesystem::absolute(argc > 1 ? argv[1] : "build/engine-integration");
+    {
+      Host engine(host,output/"authorization",L"manual");
+      Client origin(engine.Pipe()); origin.Phase("0");
+      for(const auto* mode:{L"start",L"enter",L"cancel",L"hello"})
+        IndependentClient(own,engine.Pipe(),mode,reinterpret_cast<std::uintptr_t>(origin.Window()));
+      Require(origin.Quiet(80),"unknown clients cannot activate capture or obtain text");
+      { Client silent(engine.Pipe(),false); Require(silent.Closed(4500),"silent handshake expires without retaining a worker"); }
+      origin.Send(MsgType::StartListen); origin.Send(MsgType::Cancel); origin.Phase("0");
+      Require(origin.Quiet(50),"Esc immediately after Start works before the phase round trip");
+      origin.Send(MsgType::StartListen); origin.Send(MsgType::Enter); origin.Phase("3");
+      Require(origin.Quiet(50),"Enter immediately after Start only stops and previews");
+      origin.Send(MsgType::Cancel); origin.Phase("0");
+      origin.Send(MsgType::StartListen); origin.Send(MsgType::StartListen); origin.Phase("3");
+      Require(origin.Quiet(50),"a quick repeated hotkey stops without confirming a preview");
+      origin.Send(MsgType::Cancel); origin.Phase("0");
+      origin.Send(MsgType::StartListen); origin.Phase("1");
+      const auto before_final=origin.State();
+      origin.Send(MsgType::Enter); origin.Phase("3");
+      origin.SendAt(MsgType::Cancel,before_final); origin.Phase("0");
+      Require(origin.Quiet(50),"Esc can cancel the same utterance across a finalization race");
+      origin.Send(MsgType::StartListen); origin.Phase("1");
+      const auto listening=origin.State();
+      origin.Send(MsgType::Enter); origin.Phase("3");
+      origin.SendAt(MsgType::Enter,listening); origin.Phase("3");
+      Require(origin.Quiet(80),"an Enter from the listening state cannot confirm a later preview");
+      IndependentClient(own,engine.Pipe(),L"background");
+      wchar_t title[2048]{}; GetWindowTextW(engine.Window(),title,2048);
+      Require(std::wstring(title).find(L"假字。")!=std::wstring::npos,"background commands leave the pending preview intact");
+      IndependentClient(own,engine.Pipe(),L"claim"); origin.Phase("0");
+      Require(origin.Quiet(80),"foreground switch delivers text only to the confirming client");
+      engine.Foreground(GetCurrentProcessId());
+      origin.Send(MsgType::StartListen); origin.Phase("1");
+      origin.SendAt(MsgType::Cancel,listening); origin.Phase("1");
+      Require(origin.Quiet(50),"a stale cancel cannot erase a new utterance");
+      origin.Send(MsgType::Cancel); origin.Phase("0");
+      for (int transition=0; transition<8; ++transition) {
+        origin.Send(MsgType::StartListen);
+        { Client joining(engine.Pipe()); joining.Phase("1"); }
+        origin.Phase("1"); origin.Send(MsgType::Enter);
+        { Client joining(engine.Pipe()); joining.Phase("3"); }
+        origin.Phase("3"); origin.Send(MsgType::Cancel); origin.Phase("0");
+      }
+      engine.Stop();
+    }
+    int text_case=0;
+    for(const auto* recognized:{L"今天处理20个文件。",L"今天使用Codex处理文件。",L"把理论用于实践。",L"张山到了。"}) {
+      const auto data=output/("text-preservation-"+std::to_string(++text_case));
+      std::filesystem::create_directories(data);
+      {
+        Lexicon lex((data/"lexicon.sqlite").string());
+        for(const auto* saved:{"今天处理10个文件。","今天使用Claude处理文件。","时间","张杉"})
+          lex.SaveTerm(saved,"test",std::time(nullptr));
+      }
+      Host engine(host,data,L"manual",recognized); Client client(engine.Pipe()); client.Phase("0");
+      client.Send(MsgType::StartListen); client.Phase("1");
+      client.Send(MsgType::Enter); client.Phase("3");
+      client.Send(MsgType::Enter);
+      Require(client.Wait(MsgType::InsertText).text==WideToUtf8(recognized),
+              "saved sentences, digits, English names and homophones never rewrite the confirmed transcript");
+      client.Send(MsgType::InsertResult,"ok"); client.Phase("0"); engine.Stop();
+    }
+    {
+      Host engine(host,output/"prepare-fast-cancel",L"model-slow");
+      Client client(engine.Pipe()); client.Phase("0");
+      client.Send(MsgType::StartListen); client.Send(MsgType::Cancel); client.Phase("0");
+      Require(client.Quiet(650),"fast cancellation during model preparation never opens capture later");
+      engine.Stop();
+    }
+    for(bool disconnect:{false,true}) {
+      Host engine(host,output/(disconnect?"prepare-disconnect":"prepare-focus"),L"model-slow");
+      {
+        Client client(engine.Pipe()); client.Phase("0");
+        client.Send(MsgType::StartListen); client.Phase("3");
+        if(!disconnect) {
+          engine.Foreground(0); client.Phase("0");
+          Require(client.Quiet(100),"losing foreground while preparing never starts capture");
+        }
+      }
+      Sleep(650); engine.Foreground(GetCurrentProcessId());
+      Client observer(engine.Pipe()); observer.Phase("0");
+      Require(observer.Quiet(50),"prepared model cannot resurrect a disconnected or unfocused request");
+      engine.Stop();
+    }
     {
       const auto data=output/"lexicon-failure";
       std::filesystem::create_directories(data);
