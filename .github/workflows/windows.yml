@@ -34,7 +34,7 @@ jobs:
         run: cygpath -w /ucrt64/bin >> "$GITHUB_PATH"
       - name: Verify runtime SDK
         timeout-minutes: 5
-        run: ./tools/download_models.ps1 -RuntimeOnly
+        run: ./tools/download_models.ps1 -RuntimeOnly -Use7Zip
       - name: Configure and build
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
@@ -55,18 +55,18 @@ jobs:
       - name: Optional real model smoke
         if: github.event_name == 'workflow_dispatch' && inputs.real_models
         run: |
-          ./tools/download_models.ps1
+          ./tools/download_models.ps1 -Use7Zip
           ./build/voiceime_engine.exe --check
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           ./build/voiceime_engine.exe --check-chinese
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           ./build/voiceime_recognizer_smoke.exe --model qwen3
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          ./tools/download_models.ps1 -OnlyModel sensevoice
+          ./tools/download_models.ps1 -OnlyModel sensevoice -Use7Zip
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           ./build/voiceime_recognizer_smoke.exe --model sensevoice
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          ./tools/download_models.ps1 -OnlyModel whisper
+          ./tools/download_models.ps1 -OnlyModel whisper -Use7Zip
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           ./build/voiceime_recognizer_smoke.exe --model whisper
           if ($LASTEXITCODE) { exit $LASTEXITCODE }

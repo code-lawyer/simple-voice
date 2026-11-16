@@ -3,6 +3,7 @@
   [switch]$ForPackage,
   [switch]$Offline,
   [switch]$RuntimeOnly,
+  [switch]$Use7Zip,
   [ValidateSet('qwen3','sensevoice','whisper','chinese-legacy')][string]$OnlyModel,
   [string]$StatusFile
 )
@@ -21,6 +22,11 @@ foreach ($tool in @($nativeTar,$nativeCurl)) {
   if (-not (Test-Path -LiteralPath $tool -PathType Leaf)) { throw "Required Windows tool is missing: $tool" }
 }
 Write-Host "Windows tools: tar=$nativeTar; curl=$nativeCurl"
+$sevenZip = Join-Path ([Environment]::GetFolderPath('ProgramFiles')) '7-Zip/7z.exe'
+if ($Use7Zip) {
+  if (-not (Test-Path -LiteralPath $sevenZip -PathType Leaf)) { throw "The requested 7-Zip extractor is missing: $sevenZip" }
+  Write-Host "Explicit archive extractor: $sevenZip"
+}
 function Write-DownloadStep([string]$Text) { Write-Host ("[{0:HH:mm:ss} UTC] {1}" -f [DateTime]::UtcNow,$Text) }
 $Root = [IO.Path]::GetFullPath($Root)
 $manifest = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'dependencies.json') -Raw | ConvertFrom-Json
@@ -109,11 +115,23 @@ foreach ($pack in $manifest.artifacts) {
     $stage = Get-ChildPath ('.downloads/extract-' + [Guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $stage | Out-Null
     Set-DownloadStatus '正在解压并校验模型文件…'
-    & $nativeTar -xjf $archive -C $stage
-    if ($LASTEXITCODE -ne 0) { throw "Cannot extract $archive" }
+    $innerTar = $null
+    if ($Use7Zip) {
+      # The hosted Server 2022 tar stalls on this verified bz2 payload. CI uses
+      # its preinstalled extractor explicitly; desktop installs need no 7-Zip.
+      & $sevenZip x -y "-o$stage" $archive
+      if ($LASTEXITCODE -ne 0) { throw "Cannot decompress $archive" }
+      $innerTar = Join-Path $stage ([IO.Path]::GetFileNameWithoutExtension($archive))
+      & $sevenZip x -y "-o$stage" $innerTar
+      if ($LASTEXITCODE -ne 0) { throw "Cannot extract $innerTar" }
+    } else {
+      & $nativeTar -xjf $archive -C $stage
+      if ($LASTEXITCODE -ne 0) { throw "Cannot extract $archive" }
+    }
     Write-DownloadStep "Extraction finished; checking installed payload: $($pack.Id)"
     $extracted = Join-Path $stage $pack.Folder
     if (-not (Test-Files $extracted $pack.Files)) { throw "Extracted files failed verification: $($pack.Id)" }
+    if ($innerTar) { Remove-Item -LiteralPath $innerTar }
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $destination) | Out-Null
     # Keep an existing incomplete/older directory recoverable. Never delete user data.
     $backup = $null

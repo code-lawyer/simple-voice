@@ -32,6 +32,8 @@ foreach($module in @('Microsoft.PowerShell.Management','Microsoft.PowerShell.Uti
   Import-Module (Join-Path $PSHOME "Modules/$module/$module.psd1") -ErrorAction Stop
 }
 $artifacts=@()
+$sevenZip=Join-Path ([Environment]::GetFolderPath('ProgramFiles')) '7-Zip/7z.exe'
+$use7Zip=[IO.File]::Exists($sevenZip)
 foreach($id in @('runtime','streaming-bilingual','final-sense','final-qwen','punct')) {
   $folder='fixture-'+$id
   $source=Join-Path (Join-Path $Root 'source') $folder
@@ -41,8 +43,16 @@ foreach($id in @('runtime','streaming-bilingual','final-sense','final-qwen','pun
   $cache=Join-Path $Root '.downloads'
   [IO.Directory]::CreateDirectory($cache) | Out-Null
   $archive=Join-Path $cache ($folder+'.tar.bz2')
-  & (Join-Path ([Environment]::GetFolderPath('System')) 'tar.exe') -cjf $archive -C (Join-Path $Root 'source') $folder
-  if($LASTEXITCODE) {throw 'fixture archive creation failed'}
+  if($use7Zip) {
+    $plain=Join-Path $cache ($folder+'.tar')
+    & (Join-Path ([Environment]::GetFolderPath('System')) 'tar.exe') -cf $plain -C (Join-Path $Root 'source') $folder
+    if($LASTEXITCODE) {throw 'fixture tar creation failed'}
+    & $sevenZip a -y -tbzip2 $archive $plain
+    if($LASTEXITCODE) {throw 'fixture bzip2 creation failed'}
+  } else {
+    & (Join-Path ([Environment]::GetFolderPath('System')) 'tar.exe') -cjf $archive -C (Join-Path $Root 'source') $folder
+    if($LASTEXITCODE) {throw 'fixture archive creation failed'}
+  }
   $artifacts+=@{Id=$id;Folder=$folder;Destination=('models/'+$id);Url='https://invalid.invalid/no-network';
     Sha256=(Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash;
     Files=@{'weight.txt'=(Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash}}
@@ -58,7 +68,7 @@ $shadow=Join-Path $Root 'shadow-tools'
 $env:PATH=$shadow+';'+$env:PATH
 $env:PSModulePath=Join-Path $Root 'unavailable-modules'
 Remove-Module Microsoft.PowerShell.Management,Microsoft.PowerShell.Utility -Force
-& $actual -Root $Root -OnlyModel $OnlyModel -Offline -StatusFile $StatusFile
+& $actual -Root $Root -OnlyModel $OnlyModel -Offline -Use7Zip:$use7Zip -StatusFile $StatusFile
 )PS";}
   cancel=false;
   const auto offline=root/L"offline-catalog";
