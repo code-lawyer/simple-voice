@@ -41,7 +41,7 @@ foreach($id in @('runtime','streaming-bilingual','final-sense','final-qwen','pun
   $cache=Join-Path $Root '.downloads'
   [IO.Directory]::CreateDirectory($cache) | Out-Null
   $archive=Join-Path $cache ($folder+'.tar.bz2')
-  & tar.exe -cjf $archive -C (Join-Path $Root 'source') $folder
+  & (Join-Path ([Environment]::GetFolderPath('System')) 'tar.exe') -cjf $archive -C (Join-Path $Root 'source') $folder
   if($LASTEXITCODE) {throw 'fixture archive creation failed'}
   $artifacts+=@{Id=$id;Folder=$folder;Destination=('models/'+$id);Url='https://invalid.invalid/no-network';
     Sha256=(Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash;
@@ -52,6 +52,10 @@ $broken=Join-Path $Root 'models/streaming-bilingual'
 [IO.Directory]::CreateDirectory($broken) | Out-Null
 [IO.File]::WriteAllText((Join-Path $broken 'weight.txt'),'incomplete shared model')
 $actual=Join-Path $PSScriptRoot 'real_download_models.ps1'
+$shadow=Join-Path $Root 'shadow-tools'
+[IO.Directory]::CreateDirectory($shadow) | Out-Null
+[IO.File]::WriteAllText((Join-Path $shadow 'tar.exe'),'This PATH tool must not run')
+$env:PATH=$shadow+';'+$env:PATH
 $env:PSModulePath=Join-Path $Root 'unavailable-modules'
 Remove-Module Microsoft.PowerShell.Management,Microsoft.PowerShell.Utility -Force
 & $actual -Root $Root -OnlyModel $OnlyModel -Offline -StatusFile $StatusFile

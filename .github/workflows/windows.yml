@@ -33,6 +33,7 @@ jobs:
         shell: msys2 {0}
         run: cygpath -w /ucrt64/bin >> "$GITHUB_PATH"
       - name: Verify runtime SDK
+        timeout-minutes: 5
         run: ./tools/download_models.ps1 -RuntimeOnly
       - name: Configure and build
         run: |

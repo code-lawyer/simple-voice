@@ -13,6 +13,15 @@ Set-StrictMode -Version Latest
 foreach ($module in @('Microsoft.PowerShell.Management','Microsoft.PowerShell.Utility')) {
   Import-Module (Join-Path $PSHOME "Modules/$module/$module.psd1") -ErrorAction Stop
 }
+# This is a Windows installer. MSYS/Git tools earlier on PATH may interpret
+# Windows drive paths differently; use the tools supplied with this system.
+$nativeTar = Join-Path ([Environment]::GetFolderPath('System')) 'tar.exe'
+$nativeCurl = Join-Path ([Environment]::GetFolderPath('System')) 'curl.exe'
+foreach ($tool in @($nativeTar,$nativeCurl)) {
+  if (-not (Test-Path -LiteralPath $tool -PathType Leaf)) { throw "Required Windows tool is missing: $tool" }
+}
+Write-Host "Windows tools: tar=$nativeTar; curl=$nativeCurl"
+function Write-DownloadStep([string]$Text) { Write-Host ("[{0:HH:mm:ss} UTC] {1}" -f [DateTime]::UtcNow,$Text) }
 $Root = [IO.Path]::GetFullPath($Root)
 $manifest = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'dependencies.json') -Raw | ConvertFrom-Json
 if ($OnlyModel -and ($RuntimeOnly -or $ForPackage)) { throw 'A model-only download cannot replace runtime files.' }
@@ -46,6 +55,7 @@ function Test-Files([string]$Directory, $Files) {
   foreach ($file in $Files.PSObject.Properties) {
     $path = Join-Path $Directory $file.Name
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return $false }
+    Write-DownloadStep "Verifying file: $($file.Name)"
     if ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash -ne $file.Value) { return $false }
   }
   return $true
@@ -58,12 +68,14 @@ foreach ($pack in $manifest.artifacts) {
       -not ($OnlyModel -eq 'chinese-legacy' -and $pack.Id -eq 'punct')) { continue }
   if (-not $OnlyModel -and $pack.PSObject.Properties['Optional'] -and $pack.Optional) { continue }
   if ($RuntimeOnly -and $pack.Id -ne 'runtime') { continue }
+  Write-DownloadStep "Checking installed files: $($pack.Id)"
   Set-DownloadStatus '正在检查本地文件…'
   $destination = Get-ChildPath $pack.Destination
   if (-not (Test-Files $destination $pack.Files)) {
     $cache = Get-ChildPath '.downloads'
     New-Item -ItemType Directory -Force -Path $cache | Out-Null
     $archive = Join-Path $cache ($pack.Folder + '.tar.bz2')
+    Write-DownloadStep "Checking cached archive: $($pack.Id)"
     $validArchive = (Test-Path -LiteralPath $archive -PathType Leaf) -and
       ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -eq $pack.Sha256)
     if (-not $validArchive) {
@@ -74,15 +86,16 @@ foreach ($pack in $manifest.artifacts) {
       $completePartial = (Test-Path -LiteralPath $partial -PathType Leaf) -and
         ((Get-FileHash -LiteralPath $partial -Algorithm SHA256).Hash -eq $pack.Sha256)
       if (-not $completePartial) {
-        & curl.exe --location --fail --retry 3 --connect-timeout 30 --max-time 1800 --continue-at - --output $partial $pack.Url
+        & $nativeCurl --location --fail --retry 3 --connect-timeout 30 --max-time 1800 --continue-at - --output $partial $pack.Url
         if ($LASTEXITCODE -eq 33) {
           # Some HTTP endpoints cannot resume. Keep the old bytes recoverable.
           $previous = Get-ChildPath ('.downloads/unresumable-' + [Guid]::NewGuid().ToString('N') + '.tar.bz2')
           if (Test-Path -LiteralPath $partial) { Move-Item -LiteralPath $partial -Destination $previous }
-          & curl.exe --location --fail --retry 3 --connect-timeout 30 --max-time 1800 --output $partial $pack.Url
+          & $nativeCurl --location --fail --retry 3 --connect-timeout 30 --max-time 1800 --output $partial $pack.Url
         }
         if ($LASTEXITCODE -ne 0) { throw "Download failed: $($pack.Url). Run setup again to retry." }
       }
+      Write-DownloadStep "Download returned; verifying archive: $($pack.Id)"
       Set-DownloadStatus '下载完成，正在校验…'
       if ((Get-FileHash -LiteralPath $partial -Algorithm SHA256).Hash -ne $pack.Sha256) {
         # Preserve corrupt downloads for diagnosis; a retry starts a new file.
@@ -92,11 +105,13 @@ foreach ($pack in $manifest.artifacts) {
       }
       Move-Item -LiteralPath $partial -Destination $archive -Force
     }
+    Write-DownloadStep "Archive verified; extracting: $($pack.Id)"
     $stage = Get-ChildPath ('.downloads/extract-' + [Guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $stage | Out-Null
     Set-DownloadStatus '正在解压并校验模型文件…'
-    & tar.exe -xjf $archive -C $stage
+    & $nativeTar -xjf $archive -C $stage
     if ($LASTEXITCODE -ne 0) { throw "Cannot extract $archive" }
+    Write-DownloadStep "Extraction finished; checking installed payload: $($pack.Id)"
     $extracted = Join-Path $stage $pack.Folder
     if (-not (Test-Files $extracted $pack.Files)) { throw "Extracted files failed verification: $($pack.Id)" }
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $destination) | Out-Null
