@@ -1,0 +1,252 @@
+{
+  "created_before_benchmark": true,
+  "notes": "Diagnostic corpus only. ASR example outputs are not independent human ground truth. TTS hashes identify the recorded 2026-11-15 voice output; synthesis on another Windows installation may differ. No microphone or private recordings.",
+  "cases": [
+    {
+      "id": "legacy_zh_0",
+      "language": "zh",
+      "reference": "对我做了介绍那么我想说的是呢大家如果对我的研究感兴趣呢",
+      "reference_kind": "upstream_asr_example_not_gold",
+      "source": "https://k2-fsa.github.io/sherpa/onnx/pretrained_models/offline-ctc/icefall/zipformer.html",
+      "file": "audio/legacy_zh_0.wav",
+      "recordedSha256": "668bf8df51a10027b84d5d8816a1ce11ae93545538dc05cfe2aa6811d399c250",
+      "acquire": {
+        "kind": "archive",
+        "artifact": "ctc_offline",
+        "file": "test_wavs/0.wav"
+      }
+    },
+    {
+      "id": "legacy_zh_1",
+      "language": "zh",
+      "reference": null,
+      "reference_kind": "regression_only",
+      "file": "audio/legacy_zh_1.wav",
+      "recordedSha256": "30edbabea84ca4c076f5b43bb44495f436f6711319c32a200d3fc5c67c1fee1d",
+      "acquire": {
+        "kind": "archive",
+        "artifact": "ctc_offline",
+        "file": "test_wavs/1.wav"
+      }
+    },
+    {
+      "id": "legacy_zh_8k",
+      "language": "zh",
+      "reference": null,
+      "reference_kind": "regression_only",
+      "file": "audio/legacy_zh_8k.wav",
+      "recordedSha256": "0ed3bddacf0a23477d2b3c07ff9c24ad9c1fc3b31cdd47cb0773441e8e045cde",
+      "acquire": {
+        "kind": "archive",
+        "artifact": "ctc_offline",
+        "file": "test_wavs/8k.wav"
+      }
+    },
+    {
+      "id": "tts_english_sentence",
+      "language": "en",
+      "reference": "Please open the project and save the file.",
+      "reference_kind": "known_tts_prompt",
+      "source": "Microsoft Zira offline SAPI; tts-reference.json",
+      "file": "audio/tts_english_sentence.wav",
+      "recordedSha256": "c8ada3d267519bd3c2cd1d810e8b0c54dc49fd60c9965a9bb39f4d7dfeb21d5c",
+      "acquire": {
+        "kind": "windows_tts",
+        "voice": "Microsoft Zira Desktop",
+        "sampleRate": 16000,
+        "rate": 0,
+        "volume": 100
+      }
+    },
+    {
+      "id": "tts_english_short",
+      "language": "en",
+      "reference": "Hello world.",
+      "reference_kind": "known_tts_prompt",
+      "file": "audio/tts_english_short.wav",
+      "recordedSha256": "4e976b32fdff7b4a7098d15f7748ca30d25b69814003188b184a64f857e5bd30",
+      "acquire": {
+        "kind": "windows_tts",
+        "voice": "Microsoft Zira Desktop",
+        "sampleRate": 16000,
+        "rate": 0,
+        "volume": 100
+      }
+    },
+    {
+      "id": "tts_english_terms",
+      "language": "en",
+      "reference": "GitHub. Python. Simple Voice. Codex.",
+      "reference_kind": "known_tts_prompt",
+      "critical": [
+        "GitHub",
+        "Python",
+        "Simple Voice",
+        "Codex"
+      ],
+      "file": "audio/tts_english_terms.wav",
+      "recordedSha256": "d8c541087c3e87ea66ec515e000dc506f9f1c05efdde22f71fc24aa44b31774f",
+      "acquire": {
+        "kind": "windows_tts",
+        "voice": "Microsoft Zira Desktop",
+        "sampleRate": 16000,
+        "rate": 0,
+        "volume": 100
+      }
+    },
+    {
+      "id": "official_mixed_always",
+      "language": "mixed",
+      "reference": "这是第一种第二种叫呃与 ALWAYS ALWAYS 什么意思啊",
+      "reference_kind": "upstream_asr_example_not_gold",
+      "critical": [
+        "always",
+        "always"
+      ],
+      "source": "https://k2-fsa.github.io/sherpa/onnx/pretrained_models/online-transducer/zipformer-transducer-models.html",
+      "file": "audio/official_mixed_always.wav",
+      "recordedSha256": "8bfb42c963e623ebab31b81ff4404867d07d3102507c87ac14577c4c61663b8c",
+      "acquire": {
+        "kind": "archive",
+        "artifact": "zip_online",
+        "file": "test_wavs/1.wav"
+      }
+    },
+    {
+      "id": "sense_en_gold",
+      "language": "en",
+      "reference": "The tribal chieftain called for the boy and presented him with fifty pieces of gold.",
+      "reference_kind": "upstream_asr_example_not_gold",
+      "source": "https://k2-fsa.github.io/sherpa/onnx/sense-voice/pretrained.html",
+      "file": "audio/sense_en_gold.wav",
+      "recordedSha256": "eb1eb008904465b74c304aad8342e8c7d3c6e61ffe9f66adcaca9cf0f76a93f4",
+      "acquire": {
+        "kind": "archive",
+        "artifact": "sense",
+        "file": "test_wavs/en.wav"
+      }
+    },
+    {
+      "id": "sense_zh_hours",
+      "language": "zh",
+      "reference": "开饭时间早上九点至下午五点",
+      "reference_kind": "upstream_asr_example_not_gold",
+      "source": "https://k2-fsa.github.io/sherpa/onnx/sense-voice/pretrained.html",
+      "file": "audio/sense_zh_hours.wav",
+      "recordedSha256": "b77f1794fe374a0ba1ee1dc458bfaf9349496cbbfc32780c50ba3c5a7ad8e373",
+      "acquire": {
+        "kind": "archive",
+        "artifact": "sense",
+        "file": "test_wavs/zh.wav"
+      }
+    },
+    {
+      "id": "fsdd_zero",
+      "language": "en",
+      "reference": "zero",
+      "reference_kind": "dataset_label",
+      "label": 0,
+      "source": "https://github.com/Jakobovski/free-spoken-digit-dataset/tree/26eb9aaf76e81b692f806f9140c2d2777410d7a1",
+      "file": "audio/fsdd_zero.wav",
+      "recordedSha256": "eea86018ce1730baaf7f5dd6ec88c1f727dd90203521a9115b489310a248ea05",
+      "acquire": {
+        "kind": "download",
+        "url": "https://raw.githubusercontent.com/Jakobovski/free-spoken-digit-dataset/26eb9aaf76e81b692f806f9140c2d2777410d7a1/recordings/0_jackson_0.wav"
+      },
+      "license": "CC-BY-SA-4.0"
+    },
+    {
+      "id": "fsdd_one",
+      "language": "en",
+      "reference": "one",
+      "reference_kind": "dataset_label",
+      "label": 1,
+      "file": "audio/fsdd_one.wav",
+      "recordedSha256": "d57a29689b0abf1ab609ab401dd4053dbc18c317a4ed9ebed6a9aa034e9bab0a",
+      "acquire": {
+        "kind": "download",
+        "url": "https://raw.githubusercontent.com/Jakobovski/free-spoken-digit-dataset/26eb9aaf76e81b692f806f9140c2d2777410d7a1/recordings/1_nicolas_0.wav"
+      },
+      "license": "CC-BY-SA-4.0"
+    },
+    {
+      "id": "fsdd_seven",
+      "language": "en",
+      "reference": "seven",
+      "reference_kind": "dataset_label",
+      "label": 7,
+      "file": "audio/fsdd_seven.wav",
+      "recordedSha256": "3074f5a5db8a3588bc8616c5888fa25bbac2c71728d14a6b413baf89d779ef70",
+      "acquire": {
+        "kind": "download",
+        "url": "https://raw.githubusercontent.com/Jakobovski/free-spoken-digit-dataset/26eb9aaf76e81b692f806f9140c2d2777410d7a1/recordings/7_theo_0.wav"
+      },
+      "license": "CC-BY-SA-4.0"
+    },
+    {
+      "id": "fsdd_nine",
+      "language": "en",
+      "reference": "nine",
+      "reference_kind": "dataset_label",
+      "label": 9,
+      "file": "audio/fsdd_nine.wav",
+      "recordedSha256": "3a5c85a22f6646a4fd5f51b486bb647c86dbb17b13339fd8a22ed1b307749bca",
+      "acquire": {
+        "kind": "download",
+        "url": "https://raw.githubusercontent.com/Jakobovski/free-spoken-digit-dataset/26eb9aaf76e81b692f806f9140c2d2777410d7a1/recordings/9_yweweler_0.wav"
+      },
+      "license": "CC-BY-SA-4.0"
+    },
+    {
+      "id": "qwen_zh_numbers",
+      "language": "zh",
+      "reference": "拨号，请再说一次，请说出您要拨打的号码。幺三五八幺八八七五七。一三五八二八八八幺八八。纠正纠正。九六九。纠正纠正，不是九六。",
+      "reference_kind": "publisher_transcript",
+      "source": "https://qwen.ai/blog?id=qwen3asr",
+      "digit_sequences": [
+        "1358188757",
+        "13582888188",
+        "969",
+        "96"
+      ],
+      "file": "audio/qwen_zh_numbers.wav",
+      "recordedSha256": "33f85268f7fbad6b3152b9ab051edab1a85082fde66bccff61d7f5ef7b437e58",
+      "acquire": {
+        "kind": "archive",
+        "artifact": "qwen",
+        "file": "test_wavs/noise2.wav"
+      }
+    },
+    {
+      "id": "zip_mixed_weekdays",
+      "language": "mixed",
+      "reference": null,
+      "reference_kind": "regression_only",
+      "critical": [
+        "monday",
+        "today",
+        "tomorrow"
+      ],
+      "file": "audio/zip_mixed_weekdays.wav",
+      "recordedSha256": "7d93384ca14702cc584a7a33fe2fed92e89e708549161cb12ea38c916882103b",
+      "acquire": {
+        "kind": "archive",
+        "artifact": "zip_online",
+        "file": "test_wavs/0.wav"
+      }
+    },
+    {
+      "id": "silence_2s",
+      "language": "silence",
+      "reference": "",
+      "reference_kind": "synthetic_silence",
+      "file": "audio/silence_2s.wav",
+      "recordedSha256": "20eaebffe1816e0ffa6f7f854f5ef4ea80d5349faaf0ce1fec1b713e7fde58fa",
+      "acquire": {
+        "kind": "silence",
+        "seconds": 2,
+        "sampleRate": 16000
+      }
+    }
+  ]
+}

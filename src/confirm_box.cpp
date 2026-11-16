@@ -129,6 +129,7 @@ void ConfirmBox::SetSkin(UiSkin skin) {
 }
 
 std::wstring ConfirmBox::StatusText() const {
+  if(!activity_.empty()) return activity_;
   if (error_) return L"语音暂不可用";
   if (uncertain_) return L"写入结果待核实";
   if (phase_ == Phase::Committing) return L"正在写入正文";
@@ -137,13 +138,19 @@ std::wstring ConfirmBox::StatusText() const {
   return text_.empty() ? L"录音已结束" : L"待确认";
 }
 std::wstring ConfirmBox::HintText() const {
-  if (error_) return L"检查输入设备和访问权限后重试 · Esc 关闭";
+  if (error_) return L"右键查看设置 / 编辑预览 · Esc 关闭";
   if (uncertain_) return L"请先核对正文 · 确认未写入后 Enter 重试 · Esc 关闭";
   if (phase_ == Phase::Committing) return L"正在等待应用确认，请稍候";
   if (phase_ == Phase::Listening) return L"停顿后自动校准 · Enter 停录预览 · Esc 取消";
   if (phase_ == Phase::Finalizing) return L"校准后可预览并确认 · Esc 取消";
   if (text_.empty()) return L"按语音快捷键重新开始 · Esc 关闭";
-  return L"Enter 写入正文 · Esc 取消";
+  return L"Enter 写入 · 右键编辑 / 复制 · Esc 取消";
+}
+
+void ConfirmBox::SetActivity(std::wstring activity) {
+  if(activity_==activity) return;
+  activity_=std::move(activity);
+  if(hwnd_) { accessible_text_.clear(); InvalidateRect(hwnd_,nullptr,FALSE); }
 }
 
 void ConfirmBox::Paint() {
@@ -244,9 +251,21 @@ LRESULT CALLBACK ConfirmBox::Proc(HWND hwnd, UINT message, WPARAM wp, LPARAM lp)
     if (message==UiSkinChangedMessage()) { self->SetSkin(UiCurrentSkin()); return 0; }
     if (message == WM_PAINT) { self->Paint(); return 0; }
     if (message == WM_ERASEBKGND) return 1;
-    if (message == WM_DPICHANGED) { self->dpi_ = HIWORD(wp); self->Layout(); return 0; }
-    if (message == WM_DISPLAYCHANGE) { if(IsWindowVisible(hwnd)) self->Layout(); return 0; }
-    if (message == WM_SETTINGCHANGE || message == WM_THEMECHANGED) { InvalidateRect(hwnd,nullptr,FALSE); return 0; }
+    if (message == WM_DPICHANGED) {
+      self->dpi_ = HIWORD(wp); self->Layout();
+      if(self->hook_)self->hook_(hwnd,message,wp,lp,self->hook_self_);
+      return 0;
+    }
+    if (message == WM_DISPLAYCHANGE) {
+      if(IsWindowVisible(hwnd)) self->Layout();
+      if(self->hook_)self->hook_(hwnd,message,wp,lp,self->hook_self_);
+      return 0;
+    }
+    if (message == WM_SETTINGCHANGE || message == WM_THEMECHANGED) {
+      InvalidateRect(hwnd,nullptr,FALSE);
+      if(self->hook_)self->hook_(hwnd,message,wp,lp,self->hook_self_);
+      return 0;
+    }
     if (message == WM_MOUSEWHEEL) {
       self->Scroll(self->scroll_ - GET_WHEEL_DELTA_WPARAM(wp) / WHEEL_DELTA * self->line_height_ * 3);
       return 0;

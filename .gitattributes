@@ -6,3 +6,11 @@
 *.cmd text eol=crlf
 *.png binary
 *.jpg binary
+# Frozen data hashes include original line endings; preserve exact asset bytes.
+rime-data/** -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+# Legacy v0.1.0 source files are outside the rc.3 checksum manifest.
+rime-data/SOURCE.txt text=auto
+rime-data/pinyin_simp.dict.yaml text=auto
+# The upstream notices also retain their original whitespace for reproducibility.
+rime-data/esdb.Copyright whitespace=-blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+rime-data/wanxiang.NOTICE.md whitespace=blank-at-eol,-blank-at-eof,space-before-tab,cr-at-eol

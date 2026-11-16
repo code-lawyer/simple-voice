@@ -1,0 +1,3958 @@
+{
+  "date": "2026-11-15",
+  "machine": {
+    "cpu": "Intel Core Ultra 7 255H",
+    "logicalProcessors": 16,
+    "ramGiB": 31.59
+  },
+  "method": {
+    "provider": "cpu",
+    "threads": 2,
+    "decoding": "greedy_search",
+    "online_chunk_ms": 20,
+    "online_tail_ms": 300,
+    "model_runs": 3,
+    "quiet_recheck_run": 4,
+    "metric_normalization": "NFKC, lowercase, punctuation/whitespace removed for CER; punctuation separates WER. Primary WER uses known TTS prompts. Publisher transcript and model-example references reported separately.",
+    "lexicon": false,
+    "punctuation": false,
+    "microphone": false
+  },
+  "models": {
+    "ctc_offline": {
+      "load_ms": [
+        3434.991,
+        3109.004,
+        3270.928
+      ],
+      "load_ms_median": 3270.928,
+      "loaded_working_mib_median": 475.86328125,
+      "peak_working_mib": 692.0546875,
+      "peak_private_mib": 728.80078125,
+      "tts_wer": {
+        "errors": 15,
+        "reference_words": 15,
+        "rate": 1
+      },
+      "fsdd_digits_correct": 0,
+      "fsdd_english_or_arabic_preserved": 0,
+      "fsdd_semantic_correct": 0,
+      "fsdd_count": 4,
+      "all_16_latency_ms_median": 142.0075,
+      "cases": [
+        {
+          "id": "legacy_zh_0",
+          "reference_kind": "upstream_asr_example_not_gold",
+          "language": "zh",
+          "run_count": 3,
+          "text": "对我做了介绍那么我想说的是呢大家如果对我的研究感兴趣呢",
+          "stable": true,
+          "elapsed_ms_median": 181.224,
+          "elapsed_ms_min": 169.27,
+          "elapsed_ms_max": 200.685,
+          "duration_s": 5.612,
+          "rtf_median": 0.032,
+          "cer": {
+            "errors": 0,
+            "reference_units": 27,
+            "rate": 0
+          }
+        },
+        {
+          "id": "legacy_zh_1",
+          "reference_kind": "regression_only",
+          "language": "zh",
+          "run_count": 3,
+          "text": "重点呢想谈三个问题首先呢就是这一轮全球金融动荡的表现",
+          "stable": true,
+          "elapsed_ms_median": 157.989,
+          "elapsed_ms_min": 149.647,
+          "elapsed_ms_max": 164.08,
+          "duration_s": 5.153,
+          "rtf_median": 0.031
+        },
+        {
+          "id": "legacy_zh_8k",
+          "reference_kind": "regression_only",
+          "language": "zh",
+          "run_count": 3,
+          "text": "深入的分析这一次全球金融动荡背后的根源",
+          "stable": true,
+          "elapsed_ms_median": 137.486,
+          "elapsed_ms_min": 132.83,
+          "elapsed_ms_max": 148.797,
+          "duration_s": 4.524,
+          "rtf_median": 0.03
+        },
+        {
+          "id": "tts_english_sentence",
+          "reference_kind": "known_tts_prompt",
+          "language": "en",
+          "run_count": 3,
+          "text": "<unk><unk> <unk> <unk> <unk> <unk>",
+          "stable": true,
+          "elapsed_ms_median": 103.319,
+          "elapsed_ms_min": 102.911,
+          "elapsed_ms_max": 110.109,
+          "duration_s": 3.01,
+          "rtf_median": 0.034,
+          "cer": {
+            "errors": 32,
+            "reference_units": 34,
+            "rate": 0.9411764705882353
+          },
+          "wer": {
+            "errors": 8,
+            "reference_units": 8,
+            "rate": 1
+          }
+        },
+        {
+          "id": "tts_english_short",
+          "reference_kind": "known_tts_prompt",
+          "language": "en",
+          "run_count": 3,
+          "text": "",
+          "stable": true,
+          "elapsed_ms_median": 69.796,
+          "elapsed_ms_min": 68.494,
+          "elapsed_ms_max": 76.727,
+          "duration_s": 1.65,
+          "rtf_median": 0.042,
+          "cer": {
+            "errors": 10,
+            "reference_units": 10,
+            "rate": 1
+          },
+          "wer": {
+            "errors": 2,
+            "reference_units": 2,
+            "rate": 1
+          }
+        },
+        {
+          "id": "tts_english_terms",
+          "reference_kind": "known_tts_prompt",
+          "language": "en",
+          "run_count": 3,
+          "text": "<unk> <unk> <unk> <unk> <unk>",
+          "stable": true,
+          "elapsed_ms_median": 177.795,
+          "elapsed_ms_min": 174.768,
+          "elapsed_ms_max": 187.626,
+          "duration_s": 6.235,
+          "rtf_median": 0.029,
+          "cer": {
+            "errors": 26,
+            "reference_units": 28,
+            "rate": 0.9285714285714286
+          },
+          "wer": {
+            "errors": 5,
+            "reference_units": 5,
+            "rate": 1
+          },
+          "critical_hits": [
+            false,
+            false,
+            false,
+            false
+          ]
+        },
+        {
+          "id": "official_mixed_always",
+          "reference_kind": "upstream_asr_example_not_gold",
+          "language": "mixed",
+          "run_count": 3,
+          "text": "这是第一种第二种叫与<unk> 什么意思",
+          "stable": true,
+          "elapsed_ms_median": 146.529,
+          "elapsed_ms_min": 146.405,
+          "elapsed_ms_max": 158.161,
+          "duration_s": 5.1,
+          "rtf_median": 0.029,
+          "cer": {
+            "errors": 14,
+            "reference_units": 28,
+            "rate": 0.5
+          },
+          "critical_hits": [
+            false,
+            false
+          ]
+        },
+        {
+          "id": "sense_en_gold",
+          "reference_kind": "upstream_asr_example_not_gold",
+          "language": "en",
+          "run_count": 3,
+          "text": "<unk> <unk> <unk> <unk> <unk> <unk> <unk> <unk> <unk> <unk> <unk> <unk> <unk> <unk>",
+          "stable": true,
+          "elapsed_ms_median": 201.033,
+          "elapsed_ms_min": 199.05,
+          "elapsed_ms_max": 216.867,
+          "duration_s": 7.152,
+          "rtf_median": 0.028,
+          "cer": {
+            "errors": 66,
+            "reference_units": 69,
+            "rate": 0.9565217391304348
+          },
+          "wer": {
+            "errors": 15,
+            "reference_units": 15,
+            "rate": 1
+          }
+        },
+        {
+          "id": "sense_zh_hours",
+          "reference_kind": "upstream_asr_example_not_gold",
+          "language": "zh",
+          "run_count": 3,
+          "text": "开放时间早上九点至下午五点",
+          "stable": true,
+          "elapsed_ms_median": 158.15,
+          "elapsed_ms_min": 154.918,
+          "elapsed_ms_max": 167.002,
+          "duration_s": 5.592,
+          "rtf_median": 0.028,
+          "cer": {
+            "errors": 1,
+            "reference_units": 13,
+            "rate": 0.07692307692307693
+          }
+        },
+        {
+          "id": "fsdd_zero",
+          "reference_kind": "dataset_label",
+          "language": "en",
+          "run_count": 3,
+          "text": "",
+          "stable": true,
+          "elapsed_ms_median": 44.387,
+          "elapsed_ms_min": 44.266,
+          "elapsed_ms_max": 52.041,
+          "duration_s": 0.643,
+          "rtf_median": 0.069,
+          "cer": {
+            "errors": 4,
+            "reference_units": 4,
+            "rate": 1
+          },
+          "wer": {
+            "errors": 1,
+            "reference_units": 1,
+            "rate": 1
+          },
+          "digit_correct": false,
+          "digit_english_or_arabic_preserved": false,
+          "digit_semantic_correct": false
+        },
+        {
+          "id": "fsdd_one",
+          "reference_kind": "dataset_label",
+          "language": "en",
+          "run_count": 3,
+          "text": "",
+          "stable": true,
+          "elapsed_ms_median": 35.669,
+          "elapsed_ms_min": 33.922,
+          "elapsed_ms_max": 41.248,
+          "duration_s": 0.366,
+          "rtf_median": 0.097,
+          "cer": {
+            "errors": 3,
+            "reference_units": 3,
+            "rate": 1
+          },
+          "wer": {
+            "errors": 1,
+            "reference_units": 1,
+            "rate": 1
+          },
+          "digit_correct": false,
+          "digit_english_or_arabic_preserved": false,
+          "digit_semantic_correct": false
+        },
+        {
+          "id": "fsdd_seven",
+          "reference_kind": "dataset_label",
+          "language": "en",
+          "run_count": 3,
+          "text": "",
+          "stable": true,
+          "elapsed_ms_median": 41.693,
+          "elapsed_ms_min": 38.403,
+          "elapsed_ms_max": 43.453,
+          "duration_s": 0.428,
+          "rtf_median": 0.097,
+          "cer": {
+            "errors": 5,
+            "reference_units": 5,
+            "rate": 1
+          },
+          "wer": {
+            "errors": 1,
+            "reference_units": 1,
+            "rate": 1
+          },
+          "digit_correct": false,
+          "digit_english_or_arabic_preserved": false,
+          "digit_semantic_correct": false
+        },
+        {
+          "id": "fsdd_nine",
+          "reference_kind": "dataset_label",
+          "language": "en",
+          "run_count": 3,
+          "text": "",
+          "stable": true,
+          "elapsed_ms_median": 37.945,
+          "elapsed_ms_min": 36.481,
+          "elapsed_ms_max": 43.652,
+          "duration_s": 0.36,
+          "rtf_median": 0.106,
+          "cer": {
+            "errors": 4,
+            "reference_units": 4,
+            "rate": 1
+          },
+          "wer": {
+            "errors": 1,
+            "reference_units": 1,
+            "rate": 1
+          },
+          "digit_correct": false,
+          "digit_english_or_arabic_preserved": false,
+          "digit_semantic_correct": false
+        },
+        {
+          "id": "qwen_zh_numbers",
+          "reference_kind": "publisher_transcript",
+          "language": "zh",
+          "run_count": 3,
+          "text": "多号请再说一次请说出您要拨打的号码幺三五八幺八八七五五七三五八二八八八幺八八九正九正九六九九正九正不是九六",
+          "stable": true,
+          "elapsed_ms_median": 676.674,
+          "elapsed_ms_min": 670.613,
+          "elapsed_ms_max": 706.49,
+          "duration_s": 22.833,
+          "rtf_median": 0.03,
+          "cer": {
+            "errors": 7,
+            "reference_units": 53,
+            "rate": 0.1320754716981132
+          },
+          "digit_normalized_cer": {
+            "errors": 7,
+            "reference_units": 53,
+            "rate": 0.1320754716981132
+          }
+        },
+        {
+          "id": "zip_mixed_weekdays",
+          "reference_kind": "regression_only",
+          "language": "mixed",
+          "run_count": 3,
+          "text": "昨天是礼拜二是星期三",
+          "stable": true,
+          "elapsed_ms_median": 268.765,
+          "elapsed_ms_min": 261.768,
+          "elapsed_ms_max": 295.799,
+          "duration_s": 10.053,
+          "rtf_median": 0.027,
+          "critical_hits": [
+            false,
+            false,
+            false
+          ]
+        },
+        {
+          "id": "silence_2s",
+          "reference_kind": "synthetic_silence",
+          "language": "silence",
+          "run_count": 3,
+          "text": "",
+          "stable": true,
+          "elapsed_ms_median": 78.874,
+          "elapsed_ms_min": 78.541,
+          "elapsed_ms_max": 88.026,
+          "duration_s": 2,
+          "rtf_median": 0.039
+        }
+      ]
+    },
+    "ctc_online": {
+      "load_ms": [
+        1502.498,
+        1549.784,
+        1728.635
+      ],
+      "load_ms_median": 1549.784,
+      "loaded_working_mib_median": 240.94140625,
+      "peak_working_mib": 255.83203125,
+      "peak_private_mib": 243.0859375,
+      "tts_wer": {
+        "errors": 15,
+        "reference_words": 15,
+        "rate": 1
+      },
+      "fsdd_digits_correct": 0,
+      "fsdd_english_or_arabic_preserved": 0,
+      "fsdd_semantic_correct": 0,
+      "fsdd_count": 4,
+      "all_16_latency_ms_median": 349.24649999999997,
+      "cases": [
+        {
+          "id": "legacy_zh_0",
+          "reference_kind": "upstream_asr_example_not_gold",
+          "language": "zh",
+          "run_count": 3,
+          "text": "对我做了介绍啊那么我想说的是呢大家如果对我的研究感兴趣呢",
+          "stable": true,
+          "elapsed_ms_median": 422.48,
+          "elapsed_ms_min": 415.479,
+          "elapsed_ms_max": 489.169,
+          "duration_s": 5.612,
+          "rtf_median": 0.075,
+          "cer": {
+            "errors": 1,
+            "reference_units": 27,
+            "rate": 0.037037037037037035
+          },
+          "first_partial_audio_ms": 800,
+          "first_partial_compute_ms": 55.798,
+          "unflushed": "对我做了介绍啊那么我想说的是呢大家如果对我的研究感兴趣呢",
+          "flush_ms_median": 22.03
+        },
+        {
+          "id": "legacy_zh_1",
+          "reference_kind": "regression_only",
+          "language": "zh",
+          "run_count": 3,
+          "text": "重点呢想谈三个问题首先呢就是这一轮全球金融动荡的表现",
+          "stable": true,
+          "elapsed_ms_median": 372.984,
+          "elapsed_ms_min": 368.268,
+          "elapsed_ms_max": 398.073,
+          "duration_s": 5.153,
+          "rtf_median": 0.072,
+          "first_partial_audio_ms": 480,
+          "first_partial_compute_ms": 24.697,
+          "unflushed": "重点呢想谈三个问题首先呢就是这一轮全球金融动荡的表",
+          "flush_ms_median": 23.276
+        },
+        {
+          "id": "legacy_zh_8k",
+          "reference_kind": "regression_only",
+          "language": "zh",
+          "run_count": 3,
+          "text": "深入的分析这一次全球金融动荡背后的根源",
+          "stable": true,
+          "elapsed_ms_median": 337.519,
+          "elapsed_ms_min": 330.622,
+          "elapsed_ms_max": 358.21,
+          "duration_s": 4.524,
+          "rtf_median": 0.075,
+          "first_partial_audio_ms": 800,
+          "first_partial_compute_ms": 48.078,
+          "unflushed": "深入的分析这一次全球金融动荡背后的根",
+          "flush_ms_median": 26.036
+        },
+        {
+          "id": "tts_english_sentence",
+          "reference_kind": "known_tts_prompt",
+          "language": "en",
+          "run_count": 3,
+          "text": "所以分的葡正赛一发哦",
+          "stable": true,
+          "elapsed_ms_median": 218.414,
+          "elapsed_ms_min": 209.678,
+          "elapsed_ms_max": 235.586,
+          "duration_s": 3.01,
+          "rtf_median": 0.073,
+          "cer": {
+            "errors": 34,
+            "reference_units": 34,
+            "rate": 1
+          },
+          "wer": {
+            "errors": 8,
+            "reference_units": 8,
+            "rate": 1
+          },
+          "first_partial_audio_ms": 800,
+          "first_partial_compute_ms": 52.163,
+          "unflushed": "所以分的葡正赛一发哦",
+          "flush_ms_median": 22.852
+        },
+        {
+          "id": "tts_english_short",
+          "reference_kind": "known_tts_prompt",
+          "language": "en",
+          "run_count": 3,
+          "text": "五扰",
+          "stable": true,
+          "elapsed_ms_median": 127.935,
+          "elapsed_ms_min": 116.727,
+          "elapsed_ms_max": 136.977,
+          "duration_s": 1.65,
+          "rtf_median": 0.078,
+          "cer": {
+            "errors": 10,
+            "reference_units": 10,
+            "rate": 1
+          },
+          "wer": {
+            "errors": 2,
+            "reference_units": 2,
+            "rate": 1
+          },
+          "first_partial_audio_ms": 1120,
+          "first_partial_compute_ms": 75.194,
+          "unflushed": "五扰",
+          "flush_ms_median": 25.307
+        },
+        {
+          "id": "tts_english_terms",
+          "reference_kind": "known_tts_prompt",
+          "language": "en",
+          "run_count": 3,
+          "text": "给他派上新部伯士口的",
+          "stable": true,
+          "elapsed_ms_median": 492.606,
+          "elapsed_ms_min": 447.28,
+          "elapsed_ms_max": 504.305,
+          "duration_s": 6.235,
+          "rtf_median": 0.079,
+          "cer": {
+            "errors": 28,
+            "reference_units": 28,
+            "rate": 1
+          },
+          "wer": {
+            "errors": 5,
+            "reference_units": 5,
+            "rate": 1
+          },
+          "critical_hits": [
+            false,
+            false,
+            false,
+            false
+          ],
+          "first_partial_audio_ms": 800,
+          "first_partial_compute_ms": 49.14,
+          "unflushed": "给他派上新部伯士口的",
+          "flush_ms_median": 23.552
+        },
+        {
+          "id": "official_mixed_always",
+          "reference_kind": "upstream_asr_example_not_gold",
+          "language": "mixed",
+          "run_count": 3,
+          "text": "这第种第二种叫嗯与哦S哦Y斯什么意",
+          "stable": true,
+          "elapsed_ms_median": 360.974,
+          "elapsed_ms_min": 358.348,
+          "elapsed_ms_max": 388.524,
+          "duration_s": 5.1,
+          "rtf_median": 0.071,
+          "cer": {
+            "errors": 15,
+            "reference_units": 28,
+            "rate": 0.5357142857142857
+          },
+          "critical_hits": [
+            false,
+            false
+          ],
+          "first_partial_audio_ms": 1440,
+          "first_partial_compute_ms": 92.621,
+          "unflushed": "这第种第二种叫嗯与哦S哦Y斯",
+          "flush_ms_median": 22.463
+        },
+        {
+          "id": "sense_en_gold",
+          "reference_kind": "upstream_asr_example_not_gold",
+          "language": "en",
+          "run_count": 3,
+          "text": "这本在他安他们必须做",
+          "stable": true,
+          "elapsed_ms_median": 507.68,
+          "elapsed_ms_min": 497.994,
+          "elapsed_ms_max": 529.6,
+          "duration_s": 7.152,
+          "rtf_median": 0.071,
+          "cer": {
+            "errors": 69,
+            "reference_units": 69,
+            "rate": 1
+          },
+          "wer": {
+            "errors": 15,
+            "reference_units": 15,
+            "rate": 1
+          },
+          "first_partial_audio_ms": 2080,
+          "first_partial_compute_ms": 142.881,
+          "unflushed": "这本在他安他们必须做",
+          "flush_ms_median": 21.727
+        },
+        {
+          "id": "sense_zh_hours",
+          "reference_kind": "upstream_asr_example_not_gold",
+          "language": "zh",
+          "run_count": 3,
+          "text": "开放时间早上九点至下午五点",
+          "stable": true,
+          "elapsed_ms_median": 385.592,
+          "elapsed_ms_min": 381.58,
+          "elapsed_ms_max": 474.512,
+          "duration_s": 5.592,
+          "rtf_median": 0.069,
+          "cer": {
+            "errors": 1,
+            "reference_units": 13,
+            "rate": 0.07692307692307693
+          },
+          "first_partial_audio_ms": 1440,
+          "first_partial_compute_ms": 91.458,
+          "unflushed": "开放时间早上九点至下午五点",
+          "flush_ms_median": 2.61
+        },
+        {
+          "id": "fsdd_zero",
+          "reference_kind": "dataset_label",
+          "language": "en",
+          "run_count": 3,
+          "text": "就",
+          "stable": true,
+          "elapsed_ms_median": 48.792,
+          "elapsed_ms_min": 46.874,
+          "elapsed_ms_max": 49.764,
+          "duration_s": 0.643,
+          "rtf_median": 0.076,
+          "cer": {
+            "errors": 4,
+            "reference_units": 4,
+            "rate": 1
+          },
+          "wer": {
+            "errors": 1,
+            "reference_units": 1,
+            "rate": 1
+          },
+          "digit_correct": false,
+          "digit_english_or_arabic_preserved": false,
+          "digit_semantic_correct": false,
+          "first_partial_audio_ms": 480,
+          "first_partial_compute_ms": 24.245,
+          "unflushed": "就",
+          "flush_ms_median": 22.888
+        },
+        {
+          "id": "fsdd_one",
+          "reference_kind": "dataset_label",
+          "language": "en",
+          "run_count": 3,
+          "text": "",
+          "stable": true,
+          "elapsed_ms_median": 25.395,
+          "elapsed_ms_min": 24.682,
+          "elapsed_ms_max": 27.408,
+          "duration_s": 0.366,
+          "rtf_median": 0.069,
+          "cer": {
+            "errors": 3,
+            "reference_units": 3,
+            "rate": 1
+          },
+          "wer": {
+            "errors": 1,
+            "reference_units": 1,
+            "rate": 1
+          },
+          "digit_correct": false,
+          "digit_english_or_arabic_preserved": false,
+          "digit_semantic_correct": false,
+          "first_partial_audio_ms": -1,
+          "first_partial_compute_ms": -1,
+          "unflushed": "",
+          "flush_ms_median": 22.235
+        },
+        {
+          "id": "fsdd_seven",
+          "reference_kind": "dataset_label",
+          "language": "en",
+          "run_count": 3,
+          "text": "",
+          "stable": true,
+          "elapsed_ms_median": 27.687,
+          "elapsed_ms_min": 24.786,
+          "elapsed_ms_max": 28.263,
+          "duration_s": 0.428,
+          "rtf_median": 0.065,
+          "cer": {
+            "errors": 5,
+            "reference_units": 5,
+            "rate": 1
+          },
+          "wer": {
+            "errors": 1,
+            "reference_units": 1,
+            "rate": 1
+          },
+          "digit_correct": false,
+          "digit_english_or_arabic_preserved": false,
+          "digit_semantic_correct": false,
+          "first_partial_audio_ms": -1,
+          "first_partial_compute_ms": -1,
+          "unflushed": "",
+          "flush_ms_median": 23.961
+        },
+        {
+          "id": "fsdd_nine",
+          "reference_kind": "dataset_label",
+          "language": "en",
+          "run_count": 3,
+          "text": "",
+          "stable": true,
+          "elapsed_ms_median": 24.769,
+          "elapsed_ms_min": 24.129,
+          "elapsed_ms_max": 28.923,
+          "duration_s": 0.36,
+          "rtf_median": 0.069,
+          "cer": {
+            "errors": 4,
+            "reference_units": 4,
+            "rate": 1
+          },
+          "wer": {
+            "errors": 1,
+            "reference_units": 1,
+            "rate": 1
+          },
+          "digit_correct": false,
+          "digit_english_or_arabic_preserved": false,
+          "digit_semantic_correct": false,
+          "first_partial_audio_ms": -1,
+          "first_partial_compute_ms": -1,
+          "unflushed": "",
+          "flush_ms_median": 21.518
+        },
+        {
+          "id": "qwen_zh_numbers",
+          "reference_kind": "publisher_transcript",
+          "language": "zh",
+          "run_count": 3,
+          "text": "再说一次请说出你要拨打的号码一三五八一八八七五五七一三三二八八加一八八七三七速摄像路线一百公里九整九等九六九九九九九不是九六",
+          "stable": true,
+          "elapsed_ms_median": 1616.988,
+          "elapsed_ms_min": 1601.162,
+          "elapsed_ms_max": 1795.642,
+          "duration_s": 22.833,
+          "rtf_median": 0.071,
+          "cer": {
+            "errors": 31,
+            "reference_units": 53,
+            "rate": 0.5849056603773585
+          },
+          "digit_normalized_cer": {
+            "errors": 28,
+            "reference_units": 53,
+            "rate": 0.5283018867924528
+          },
+          "first_partial_audio_ms": 3680,
+          "first_partial_compute_ms": 251.503,
+          "unflushed": "再说一次请说出你要拨打的号码一三五八一八八七五五七一三三二八八加一八八七三七速摄像路线一百公里九整九等九六九九九九九不是九",
+          "flush_ms_median": 22.633
+        },
+        {
+          "id": "zip_mixed_weekdays",
+          "reference_kind": "regression_only",
+          "language": "mixed",
+          "run_count": 3,
+          "text": "昨天是MADYTDI里巴二这对阿福特吃毛肉是星期",
+          "stable": true,
+          "elapsed_ms_median": 764.323,
+          "elapsed_ms_min": 691.135,
+          "elapsed_ms_max": 766.025,
+          "duration_s": 10.053,
+          "rtf_median": 0.076,
+          "critical_hits": [
+            false,
+            false,
+            false
+          ],
+          "first_partial_audio_ms": 1120,
+          "first_partial_compute_ms": 73.111,
+          "unflushed": "昨天是MADYTDI里巴二这对阿福特吃毛肉是星",
+          "flush_ms_median": 23.766
+        },
+        {
+          "id": "silence_2s",
+          "reference_kind": "synthetic_silence",
+          "language": "silence",
+          "run_count": 3,
+          "text": "",
+          "stable": true,
+          "elapsed_ms_median": 139.836,
+          "elapsed_ms_min": 133.665,
+          "elapsed_ms_max": 151.392,
+          "duration_s": 2,
+          "rtf_median": 0.07,
+          "first_partial_audio_ms": -1,
+          "first_partial_compute_ms": -1,
+          "unflushed": "",
+          "flush_ms_median": 22.135
+        }
+      ]
+    },
+    "para_online": {
+      "load_ms": [
+        990.37,
+        935.485,
+        1017.314
+      ],
+      "load_ms_median": 990.37,
+      "loaded_working_mib_median": 292.58984375,
+      "peak_working_mib": 305.14453125,
+      "peak_private_mib": 284.0703125,
+      "tts_wer": {
+        "errors": 3,
+        "reference_words": 15,
+        "rate": 0.2
+      },
+      "fsdd_digits_correct": 2,
+      "fsdd_english_or_arabic_preserved": 2,
+      "fsdd_semantic_correct": 2,
+      "fsdd_count": 4,
+      "all_16_latency_ms_median": 212.825,
+      "cases": [
+        {
+          "id": "legacy_zh_0",
+          "reference_kind": "upstream_asr_example_not_gold",
+          "language": "zh",
+          "run_count": 3,
+          "text": "对我做了介绍啊那么我想说的是呢大家如果对我的研究感兴趣呢",
+          "stable": true,
+          "elapsed_ms_median": 278.236,
+          "elapsed_ms_min": 267.865,
+          "elapsed_ms_max": 283.178,
+          "duration_s": 5.612,
+          "rtf_median": 0.05,
+          "cer": {
+            "errors": 1,
+            "reference_units": 27,
+            "rate": 0.037037037037037035
+          },
+          "first_partial_audio_ms": 640,
+          "first_partial_compute_ms": 35.117,
+          "unflushed": "对我做了介绍啊那么我想说的是呢大家如果对我的研究感兴趣呢",
+          "flush_ms_median": 0.171
+        },
+        {
+          "id": "legacy_zh_1",
+          "reference_kind": "regression_only",
+          "language": "zh",
+          "run_count": 3,
+          "text": "重点呢想谈三个问题首先呢就是这一轮全球金融动荡的表现",
+          "stable": true,
+          "elapsed_ms_median": 258.105,
+          "elapsed_ms_min": 256.546,
+          "elapsed_ms_max": 265.744,
+          "duration_s": 5.153,
+          "rtf_median": 0.05,
+          "first_partial_audio_ms": 640,
+          "first_partial_compute_ms": 28.941,
+          "unflushed": "重点呢想谈三个问题首先呢就是这一轮全球金融动荡的表",
+          "flush_ms_median": 27.078
+        },
+        {
+          "id": "legacy_zh_8k",
+          "reference_kind": "regression_only",
+          "language": "zh",
+          "run_count": 3,
+          "text": "深入的分析这一次全球金融动荡背后的根",
+          "stable": true,
+          "elapsed_ms_median": 198.998,
+          "elapsed_ms_min": 192.604,
+          "elapsed_ms_max": 211.471,
+          "duration_s": 4.524,
+          "rtf_median": 0.044,
+          "first_partial_audio_ms": 1240,
+          "first_partial_compute_ms": 55.24,
+          "unflushed": "深入的分析这一次全球金融动荡背后的根",
+          "flush_ms_median": 0.189
+        },
+        {
+          "id": "tts_english_sentence",
+          "reference_kind": "known_tts_prompt",
+          "language": "en",
+          "run_count": 3,
+          "text": "please open the project and save the file",
+          "stable": true,
+          "elapsed_ms_median": 138.23,
+          "elapsed_ms_min": 135.156,
+          "elapsed_ms_max": 147.838,
+          "duration_s": 3.01,
+          "rtf_median": 0.046,
+          "cer": {
+            "errors": 0,
+            "reference_units": 34,
+            "rate": 0
+          },
+          "wer": {
+            "errors": 0,
+            "reference_units": 8,
+            "rate": 0
+          },
+          "first_partial_audio_ms": 640,
+          "first_partial_compute_ms": 27.738,
+          "unflushed": "please open the project and save the file",
+          "flush_ms_median": 23.208
+        },
+        {
+          "id": "tts_english_short",
+          "reference_kind": "known_tts_prompt",
+          "language": "en",
+          "run_count": 3,
+          "text": "hello world",
+          "stable": true,
+          "elapsed_ms_median": 78.827,
+          "elapsed_ms_min": 77.593,
+          "elapsed_ms_max": 84.391,
+          "duration_s": 1.65,
+          "rtf_median": 0.048,
+          "cer": {
+            "errors": 0,
+            "reference_units": 10,
+            "rate": 0
+          },
+          "wer": {
+            "errors": 0,
+            "reference_units": 2,
+            "rate": 0
+          },
+          "first_partial_audio_ms": 640,
+          "first_partial_compute_ms": 28.063,
+          "unflushed": "hello world",
+          "flush_ms_median": 23.094
+        },
+        {
+          "id": "tts_english_terms",
+          "reference_kind": "known_tts_prompt",
+          "language": "en",
+          "run_count": 3,
+          "text": "get up python simple voice code",
+          "stable": true,
+          "elapsed_ms_median": 268.787,
+          "elapsed_ms_min": 259.322,
+          "elapsed_ms_max": 285.327,
+          "duration_s": 6.235,
+          "rtf_median": 0.043,
+          "cer": {
+            "errors": 4,
+            "reference_units": 28,
+            "rate": 0.14285714285714285
+          },
+          "wer": {
+            "errors": 3,
+            "reference_units": 5,
+            "rate": 0.6
+          },
+          "critical_hits": [
+            false,
+            true,
+            true,
+            false
+          ],
+          "first_partial_audio_ms": 640,
+          "first_partial_compute_ms": 29.131,
+          "unflushed": "get up python simple voice code",
+          "flush_ms_median": 0.167
+        },
+        {
+          "id": "official_mixed_always",
+          "reference_kind": "upstream_asr_example_not_gold",
+          "language": "mixed",
+          "run_count": 3,
+          "text": "嗯这是第一种第二种叫呃与 always o s 什",
+          "stable": true,
+          "elapsed_ms_median": 226.652,
+          "elapsed_ms_min": 220.822,
+          "elapsed_ms_max": 237.025,
+          "duration_s": 5.1,
+          "rtf_median": 0.044,
+          "cer": {
+            "errors": 10,
+            "reference_units": 28,
+            "rate": 0.35714285714285715
+          },
+          "critical_hits": [
+            true,
+            false
+          ],
+          "first_partial_audio_ms": 640,
+          "first_partial_compute_ms": 27.887,
+          "unflushed": "嗯这是第一种第二种叫呃与 always o s 什",
+          "flush_ms_median": 0.164
+        },
+        {
+          "id": "sense_en_gold",
+          "reference_kind": "upstream_asr_example_not_gold",
+          "language": "en",
+          "run_count": 3,
+          "text": "the driable chieten ten called for the boy and presented him that fifty pieces of",
+          "stable": true,
+          "elapsed_ms_median": 333.365,
+          "elapsed_ms_min": 318.701,
+          "elapsed_ms_max": 369.034,
+          "duration_s": 7.152,
+          "rtf_median": 0.047,
+          "cer": {
+            "errors": 17,
+            "reference_units": 69,
+            "rate": 0.2463768115942029
+          },
+          "wer": {
+            "errors": 5,
+            "reference_units": 15,
+            "rate": 0.3333333333333333
+          },
+          "first_partial_audio_ms": 1840,
+          "first_partial_compute_ms": 75.384,
+          "unflushed": "the driable chieten ten called for the boy and presented him that fifty pieces of",
+          "flush_ms_median": 23.41
+        },
+        {
+          "id": "sense_zh_hours",
+          "reference_kind": "upstream_asr_example_not_gold",
+          "language": "zh",
+          "run_count": 3,
+          "text": "菜放时间早上九点至下午五",
+          "stable": true,
+          "elapsed_ms_median": 254.826,
+          "elapsed_ms_min": 242.123,
+          "elapsed_ms_max": 262.573,
+          "duration_s": 5.592,
+          "rtf_median": 0.046,
+          "cer": {
+            "errors": 3,
+            "reference_units": 13,
+            "rate": 0.23076923076923078
+          },
+          "first_partial_audio_ms": 1240,
+          "first_partial_compute_ms": 50.381,
+          "unflushed": "菜放时间早上九点至下午五",
+          "flush_ms_median": 0.167
+        },
+        {
+          "id": "fsdd_zero",
+          "reference_kind": "dataset_label",
+          "language": "en",
+          "run_count": 3,
+          "text": "",
+          "stable": true,
+          "elapsed_ms_median": 25.556,
+          "elapsed_ms_min": 22.926,
+          "elapsed_ms_max": 28.413,
+          "duration_s": 0.643,
+          "rtf_median": 0.04,
+          "cer": {
+            "errors": 4,
+            "reference_units": 4,
+            "rate": 1
+          },
+          "wer": {
+            "errors": 1,
+            "reference_units": 1,
+            "rate": 1
+          },
+          "digit_correct": false,
+          "digit_english_or_arabic_preserved": false,
+          "digit_semantic_correct": false,
+          "first_partial_audio_ms": -1,
+          "first_partial_compute_ms": -1,
+          "unflushed": "",
+          "flush_ms_median": 0.209
+        },
+        {
+          "id": "fsdd_one",
+          "reference_kind": "dataset_label",
+          "language": "en",
+          "run_count": 3,
+          "text": "one",
+          "stable": true,
+          "elapsed_ms_median": 30.832,
+          "elapsed_ms_min": 28.925,
+          "elapsed_ms_max": 34.552,
+          "duration_s": 0.366,
+          "rtf_median": 0.084,
+          "cer": {
+            "errors": 0,
+            "reference_units": 3,
+            "rate": 0
+          },
+          "wer": {
+            "errors": 0,
+            "reference_units": 1,
+            "rate": 0
+          },
+          "digit_correct": true,
+          "digit_english_or_arabic_preserved": true,
+          "digit_semantic_correct": true,
+          "first_partial_audio_ms": -1,
+          "first_partial_compute_ms": -1,
+          "unflushed": "",
+          "flush_ms_median": 30.278
+        },
+        {
+          "id": "fsdd_seven",
+          "reference_kind": "dataset_label",
+          "language": "en",
+          "run_count": 3,
+          "text": "是点",
+          "stable": true,
+          "elapsed_ms_median": 29.541,
+          "elapsed_ms_min": 27.761,
+          "elapsed_ms_max": 31.411,
+          "duration_s": 0.428,
+          "rtf_median": 0.069,
+          "cer": {
+            "errors": 5,
+            "reference_units": 5,
+            "rate": 1
+          },
+          "wer": {
+            "errors": 1,
+            "reference_units": 1,
+            "rate": 1
+          },
+          "digit_correct": false,
+          "digit_english_or_arabic_preserved": false,
+          "digit_semantic_correct": false,
+          "first_partial_audio_ms": -1,
+          "first_partial_compute_ms": -1,
+          "unflushed": "",
+          "flush_ms_median": 28.888
+        },
+        {
+          "id": "fsdd_nine",
+          "reference_kind": "dataset_label",
+          "language": "en",
+          "run_count": 3,
+          "text": "nine",
+          "stable": true,
+          "elapsed_ms_median": 29.978,
+          "elapsed_ms_min": 26.983,
+          "elapsed_ms_max": 30.567,
+          "duration_s": 0.36,
+          "rtf_median": 0.083,
+          "cer": {
+            "errors": 0,
+            "reference_units": 4,
+            "rate": 0
+          },
+          "wer": {
+            "errors": 0,
+            "reference_units": 1,
+            "rate": 0
+          },
+          "digit_correct": true,
+          "digit_english_or_arabic_preserved": true,
+          "digit_semantic_correct": true,
+          "first_partial_audio_ms": -1,
+          "first_partial_compute_ms": -1,
+          "unflushed": "",
+          "flush_ms_median": 29.406
+        },
+        {
+          "id": "qwen_zh_numbers",
+          "reference_kind": "publisher_transcript",
+          "language": "zh",
+          "run_count": 3,
+          "text": "拨号请再说一说出你要拨打的号码吗幺三五八幺八八铁五五七三五八二八八八八八九整纠正九九正纠正不是九",
+          "stable": true,
+          "elapsed_ms_median": 1071.343,
+          "elapsed_ms_min": 985.709,
+          "elapsed_ms_max": 1103.197,
+          "duration_s": 22.833,
+          "rtf_median": 0.047,
+          "cer": {
+            "errors": 13,
+            "reference_units": 53,
+            "rate": 0.24528301886792453
+          },
+          "digit_normalized_cer": {
+            "errors": 13,
+            "reference_units": 53,
+            "rate": 0.24528301886792453
+          },
+          "first_partial_audio_ms": 1840,
+          "first_partial_compute_ms": 73.668,
+          "unflushed": "拨号请再说一说出你要拨打的号码吗幺三五八幺八八铁五五七三五八二八八八八八九整纠正九九正纠正不是",
+          "flush_ms_median": 28.833
+        },
+        {
+          "id": "zip_mixed_weekdays",
+          "reference_kind": "regression_only",
+          "language": "mixed",
+          "run_count": 3,
+          "text": "昨天是 monday today is li 班二 the day after tomorrow 是星期期",
+          "stable": true,
+          "elapsed_ms_median": 460.47,
+          "elapsed_ms_min": 455.038,
+          "elapsed_ms_max": 488.611,
+          "duration_s": 10.053,
+          "rtf_median": 0.046,
+          "critical_hits": [
+            true,
+            true,
+            true
+          ],
+          "first_partial_audio_ms": 1240,
+          "first_partial_compute_ms": 53.826,
+          "unflushed": "昨天是 monday today is li 班二 the day after tomorrow 是星期",
+          "flush_ms_median": 26.885
+        },
+        {
+          "id": "silence_2s",
+          "reference_kind": "synthetic_silence",
+          "language": "silence",
+          "run_count": 3,
+          "text": "",
+          "stable": true,
+          "elapsed_ms_median": 69.423,
+          "elapsed_ms_min": 68.129,
+          "elapsed_ms_max": 71.029,
+          "duration_s": 2,
+          "rtf_median": 0.035,
+          "first_partial_audio_ms": -1,
+          "first_partial_compute_ms": -1,
+          "unflushed": "",
+          "flush_ms_median": 0.158
+        }
+      ]
+    },
+    "para_online_final": {
+      "load_ms": [
+        959.355,
+        897.736,
+        860.988
+      ],
+      "load_ms_median": 897.736,
+      "loaded_working_mib_median": 293.01171875,
+      "peak_working_mib": 305.06640625,
+      "peak_private_mib": 284.08984375,
+      "tts_wer": {
+        "errors": 3,
+        "reference_words": 15,
+        "rate": 0.2
+      },
+      "fsdd_digits_correct": 3,
+      "fsdd_english_or_arabic_preserved": 3,
+      "fsdd_semantic_correct": 3,
+      "fsdd_count": 4,
+      "all_16_latency_ms_median": 234.531,
+      "cases": [
+        {
+          "id": "legacy_zh_0",
+          "reference_kind": "upstream_asr_example_not_gold",
+          "language": "zh",
+          "run_count": 3,
+          "text": "对我做了介绍啊那么我想说的是呢大家如果对我的研究感兴趣呢",
+          "stable": true,
+          "elapsed_ms_median": 288.606,
+          "elapsed_ms_min": 285.375,
+          "elapsed_ms_max": 300.089,
+          "duration_s": 5.612,
+          "rtf_median": 0.051,
+          "cer": {
+            "errors": 1,
+            "reference_units": 27,
+            "rate": 0.037037037037037035
+          },
+          "first_partial_audio_ms": 640,
+          "first_partial_compute_ms": 31.194,
+          "unflushed": "对我做了介绍啊那么我想说的是呢大家如果对我的研究感兴趣呢",
+          "flush_ms_median": 23.173
+        },
+        {
+          "id": "legacy_zh_1",
+          "reference_kind": "regression_only",
+          "language": "zh",
+          "run_count": 3,
+          "text": "重点呢想谈三个问题首先呢就是这一轮全球金融动荡的表现",
+          "stable": true,
+          "elapsed_ms_median": 277.712,
+          "elapsed_ms_min": 275.782,
+          "elapsed_ms_max": 281.953,
+          "duration_s": 5.153,
+          "rtf_median": 0.054,
+          "first_partial_audio_ms": 640,
+          "first_partial_compute_ms": 27.942,
+          "unflushed": "重点呢想谈三个问题首先呢就是这一轮全球金融动荡的表",
+          "flush_ms_median": 48.716
+        },
+        {
+          "id": "legacy_zh_8k",
+          "reference_kind": "regression_only",
+          "language": "zh",
+          "run_count": 3,
+          "text": "深入的分析这一次全球金融动荡背后的根",
+          "stable": true,
+          "elapsed_ms_median": 215.702,
+          "elapsed_ms_min": 215.288,
+          "elapsed_ms_max": 216.65,
+          "duration_s": 4.524,
+          "rtf_median": 0.048,
+          "first_partial_audio_ms": 1240,
+          "first_partial_compute_ms": 51.672,
+          "unflushed": "深入的分析这一次全球金融动荡背后的根",
+          "flush_ms_median": 22.832
+        },
+        {
+          "id": "tts_english_sentence",
+          "reference_kind": "known_tts_prompt",
+          "language": "en",
+          "run_count": 3,
+          "text": "please open the project and save the file",
+          "stable": true,
+          "elapsed_ms_median": 160.557,
+          "elapsed_ms_min": 159.348,
+          "elapsed_ms_max": 161.429,
+          "duration_s": 3.01,
+          "rtf_median": 0.053,
+          "cer": {
+            "errors": 0,
+            "reference_units": 34,
+            "rate": 0
+          },
+          "wer": {
+            "errors": 0,
+            "reference_units": 8,
+            "rate": 0
+          },
+          "first_partial_audio_ms": 640,
+          "first_partial_compute_ms": 27.693,
+          "unflushed": "please open the project and save the file",
+          "flush_ms_median": 45.894
+        },
+        {
+          "id": "tts_english_short",
+          "reference_kind": "known_tts_prompt",
+          "language": "en",
+          "run_count": 3,
+          "text": "hello world",
+          "stable": true,
+          "elapsed_ms_median": 100.526,
+          "elapsed_ms_min": 100.123,
+          "elapsed_ms_max": 101.244,
+          "duration_s": 1.65,
+          "rtf_median": 0.061,
+          "cer": {
+            "errors": 0,
+            "reference_units": 10,
+            "rate": 0
+          },
+          "wer": {
+            "errors": 0,
+            "reference_units": 2,
+            "rate": 0
+          },
+          "first_partial_audio_ms": 640,
+          "first_partial_compute_ms": 28.115,
+          "unflushed": "hello world",
+          "flush_ms_median": 45.483
+        },
+        {
+          "id": "tts_english_terms",
+          "reference_kind": "known_tts_prompt",
+          "language": "en",
+          "run_count": 3,
+          "text": "get up python simple voice code",
+          "stable": true,
+          "elapsed_ms_median": 285.436,
+          "elapsed_ms_min": 284.296,
+          "elapsed_ms_max": 288.117,
+          "duration_s": 6.235,
+          "rtf_median": 0.046,
+          "cer": {
+            "errors": 4,
+            "reference_units": 28,
+            "rate": 0.14285714285714285
+          },
+          "wer": {
+            "errors": 3,
+            "reference_units": 5,
+            "rate": 0.6
+          },
+          "critical_hits": [
+            false,
+            true,
+            true,
+            false
+          ],
+          "first_partial_audio_ms": 640,
+          "first_partial_compute_ms": 27.238,
+          "unflushed": "get up python simple voice code",
+          "flush_ms_median": 23.194
+        },
+        {
+          "id": "official_mixed_always",
+          "reference_kind": "upstream_asr_example_not_gold",
+          "language": "mixed",
+          "run_count": 3,
+          "text": "嗯这是第一种第二种叫呃与 always o s 什么意思啊",
+          "stable": true,
+          "elapsed_ms_median": 253.36,
+          "elapsed_ms_min": 251.875,
+          "elapsed_ms_max": 257.773,
+          "duration_s": 5.1,
+          "rtf_median": 0.05,
+          "cer": {
+            "errors": 6,
+            "reference_units": 28,
+            "rate": 0.21428571428571427
+          },
+          "critical_hits": [
+            true,
+            false
+          ],
+          "first_partial_audio_ms": 640,
+          "first_partial_compute_ms": 27.525,
+          "unflushed": "嗯这是第一种第二种叫呃与 always o s 什",
+          "flush_ms_median": 28.669
+        },
+        {
+          "id": "sense_en_gold",
+          "reference_kind": "upstream_asr_example_not_gold",
+          "language": "en",
+          "run_count": 3,
+          "text": "the driable chieten ten called for the boy and presented him that fifty pieces of",
+          "stable": true,
+          "elapsed_ms_median": 347.375,
+          "elapsed_ms_min": 347.212,
+          "elapsed_ms_max": 347.451,
+          "duration_s": 7.152,
+          "rtf_median": 0.049,
+          "cer": {
+            "errors": 17,
+            "reference_units": 69,
+            "rate": 0.2463768115942029
+          },
+          "wer": {
+            "errors": 5,
+            "reference_units": 15,
+            "rate": 0.3333333333333333
+          },
+          "first_partial_audio_ms": 1840,
+          "first_partial_compute_ms": 73.76,
+          "unflushed": "the driable chieten ten called for the boy and presented him that fifty pieces of",
+          "flush_ms_median": 45.111
+        },
+        {
+          "id": "sense_zh_hours",
+          "reference_kind": "upstream_asr_example_not_gold",
+          "language": "zh",
+          "run_count": 3,
+          "text": "菜放时间早上九点至下午五",
+          "stable": true,
+          "elapsed_ms_median": 268.382,
+          "elapsed_ms_min": 268.004,
+          "elapsed_ms_max": 269.516,
+          "duration_s": 5.592,
+          "rtf_median": 0.048,
+          "cer": {
+            "errors": 3,
+            "reference_units": 13,
+            "rate": 0.23076923076923078
+          },
+          "first_partial_audio_ms": 1240,
+          "first_partial_compute_ms": 50.215,
+          "unflushed": "菜放时间早上九点至下午五",
+          "flush_ms_median": 22.381
+        },
+        {
+          "id": "fsdd_zero",
+          "reference_kind": "dataset_label",
+          "language": "en",
+          "run_count": 3,
+          "text": "zero",
+          "stable": true,
+          "elapsed_ms_median": 51.927,
+          "elapsed_ms_min": 50.813,
+          "elapsed_ms_max": 53.459,
+          "duration_s": 0.643,
+          "rtf_median": 0.081,
+          "cer": {
+            "errors": 0,
+            "reference_units": 4,
+            "rate": 0
+          },
+          "wer": {
+            "errors": 0,
+            "reference_units": 1,
+            "rate": 0
+          },
+          "digit_correct": true,
+          "digit_english_or_arabic_preserved": true,
+          "digit_semantic_correct": true,
+          "first_partial_audio_ms": -1,
+          "first_partial_compute_ms": -1,
+          "unflushed": "",
+          "flush_ms_median": 27.507
+        },
+        {
+          "id": "fsdd_one",
+          "reference_kind": "dataset_label",
+          "language": "en",
+          "run_count": 3,
+          "text": "one",
+          "stable": true,
+          "elapsed_ms_median": 50.407,
+          "elapsed_ms_min": 49.127,
+          "elapsed_ms_max": 50.671,
+          "duration_s": 0.366,
+          "rtf_median": 0.138,
+          "cer": {
+            "errors": 0,
+            "reference_units": 3,
+            "rate": 0
+          },
+          "wer": {
+            "errors": 0,
+            "reference_units": 1,
+            "rate": 0
+          },
+          "digit_correct": true,
+          "digit_english_or_arabic_preserved": true,
+          "digit_semantic_correct": true,
+          "first_partial_audio_ms": -1,
+          "first_partial_compute_ms": -1,
+          "unflushed": "",
+          "flush_ms_median": 49.626
+        },
+        {
+          "id": "fsdd_seven",
+          "reference_kind": "dataset_label",
+          "language": "en",
+          "run_count": 3,
+          "text": "是点",
+          "stable": true,
+          "elapsed_ms_median": 50.859,
+          "elapsed_ms_min": 50.056,
+          "elapsed_ms_max": 56.226,
+          "duration_s": 0.428,
+          "rtf_median": 0.119,
+          "cer": {
+            "errors": 5,
+            "reference_units": 5,
+            "rate": 1
+          },
+          "wer": {
+            "errors": 1,
+            "reference_units": 1,
+            "rate": 1
+          },
+          "digit_correct": false,
+          "digit_english_or_arabic_preserved": false,
+          "digit_semantic_correct": false,
+          "first_partial_audio_ms": -1,
+          "first_partial_compute_ms": -1,
+          "unflushed": "",
+          "flush_ms_median": 50.267
+        },
+        {
+          "id": "fsdd_nine",
+          "reference_kind": "dataset_label",
+          "language": "en",
+          "run_count": 3,
+          "text": "nine",
+          "stable": true,
+          "elapsed_ms_median": 49.829,
+          "elapsed_ms_min": 49.733,
+          "elapsed_ms_max": 55.669,
+          "duration_s": 0.36,
+          "rtf_median": 0.139,
+          "cer": {
+            "errors": 0,
+            "reference_units": 4,
+            "rate": 0
+          },
+          "wer": {
+            "errors": 0,
+            "reference_units": 1,
+            "rate": 0
+          },
+          "digit_correct": true,
+          "digit_english_or_arabic_preserved": true,
+          "digit_semantic_correct": true,
+          "first_partial_audio_ms": -1,
+          "first_partial_compute_ms": -1,
+          "unflushed": "",
+          "flush_ms_median": 49.267
+        },
+        {
+          "id": "qwen_zh_numbers",
+          "reference_kind": "publisher_transcript",
+          "language": "zh",
+          "run_count": 3,
+          "text": "拨号请再说一说出你要拨打的号码吗幺三五八幺八八铁五五七三五八二八八八八八九整纠正九九正纠正不是九",
+          "stable": true,
+          "elapsed_ms_median": 1021.28,
+          "elapsed_ms_min": 1007.039,
+          "elapsed_ms_max": 1039.599,
+          "duration_s": 22.833,
+          "rtf_median": 0.045,
+          "cer": {
+            "errors": 13,
+            "reference_units": 53,
+            "rate": 0.24528301886792453
+          },
+          "digit_normalized_cer": {
+            "errors": 13,
+            "reference_units": 53,
+            "rate": 0.24528301886792453
+          },
+          "first_partial_audio_ms": 1840,
+          "first_partial_compute_ms": 73.688,
+          "unflushed": "拨号请再说一说出你要拨打的号码吗幺三五八幺八八铁五五七三五八二八八八八八九整纠正九九正纠正不是",
+          "flush_ms_median": 49.727
+        },
+        {
+          "id": "zip_mixed_weekdays",
+          "reference_kind": "regression_only",
+          "language": "mixed",
+          "run_count": 3,
+          "text": "昨天是 monday today is li 班二 the day after tomorrow 是星期期",
+          "stable": true,
+          "elapsed_ms_median": 478.062,
+          "elapsed_ms_min": 476.364,
+          "elapsed_ms_max": 479.417,
+          "duration_s": 10.053,
+          "rtf_median": 0.048,
+          "critical_hits": [
+            true,
+            true,
+            true
+          ],
+          "first_partial_audio_ms": 1240,
+          "first_partial_compute_ms": 50.108,
+          "unflushed": "昨天是 monday today is li 班二 the day after tomorrow 是星期",
+          "flush_ms_median": 50.201
+        },
+        {
+          "id": "silence_2s",
+          "reference_kind": "synthetic_silence",
+          "language": "silence",
+          "run_count": 3,
+          "text": "",
+          "stable": true,
+          "elapsed_ms_median": 90.143,
+          "elapsed_ms_min": 88.422,
+          "elapsed_ms_max": 90.161,
+          "duration_s": 2,
+          "rtf_median": 0.045,
+          "first_partial_audio_ms": -1,
+          "first_partial_compute_ms": -1,
+          "unflushed": "",
+          "flush_ms_median": 21.78
+        }
+      ]
+    },
+    "qwen": {
+      "load_ms": [
+        3450.768,
+        3167.03,
+        3276.393
+      ],
+      "load_ms_median": 3276.393,
+      "loaded_working_mib_median": 1044.546875,
+      "peak_working_mib": 2318.59765625,
+      "peak_private_mib": 2829.66015625,
+      "tts_wer": {
+        "errors": 0,
+        "reference_words": 15,
+        "rate": 0
+      },
+      "fsdd_digits_correct": 2,
+      "fsdd_english_or_arabic_preserved": 2,
+      "fsdd_semantic_correct": 2,
+      "fsdd_count": 4,
+      "all_16_latency_ms_median": 815.4680000000001,
+      "cases": [
+        {
+          "id": "legacy_zh_0",
+          "reference_kind": "upstream_asr_example_not_gold",
+          "language": "zh",
+          "run_count": 3,
+          "text": "对我做了介绍啊。那么我想说的是呢，大家如果对我的研究感兴趣呢。",
+          "stable": true,
+          "elapsed_ms_median": 1189.881,
+          "elapsed_ms_min": 1116.867,
+          "elapsed_ms_max": 1219.968,
+          "duration_s": 5.612,
+          "rtf_median": 0.212,
+          "cer": {
+            "errors": 1,
+            "reference_units": 27,
+            "rate": 0.037037037037037035
+          }
+        },
+        {
+          "id": "legacy_zh_1",
+          "reference_kind": "regression_only",
+          "language": "zh",
+          "run_count": 3,
+          "text": "重点呢，想谈三个问题。首先呢，就是这一轮全球金融动荡的表现。",
+          "stable": true,
+          "elapsed_ms_median": 1083.481,
+          "elapsed_ms_min": 1061.112,
+          "elapsed_ms_max": 1147.341,
+          "duration_s": 5.153,
+          "rtf_median": 0.21
+        },
+        {
+          "id": "legacy_zh_8k",
+          "reference_kind": "regression_only",
+          "language": "zh",
+          "run_count": 3,
+          "text": "深入的分析这一次全球金融动荡背后的根源。",
+          "stable": true,
+          "elapsed_ms_median": 795.808,
+          "elapsed_ms_min": 767.663,
+          "elapsed_ms_max": 828.697,
+          "duration_s": 4.524,
+          "rtf_median": 0.176
+        },
+        {
+          "id": "tts_english_sentence",
+          "reference_kind": "known_tts_prompt",
+          "language": "en",
+          "run_count": 3,
+          "text": "Please open the project and save the file.",
+          "stable": true,
+          "elapsed_ms_median": 677.317,
+          "elapsed_ms_min": 649.394,
+          "elapsed_ms_max": 684.32,
+          "duration_s": 3.01,
+          "rtf_median": 0.225,
+          "cer": {
+            "errors": 0,
+            "reference_units": 34,
+            "rate": 0
+          },
+          "wer": {
+            "errors": 0,
+            "reference_units": 8,
+            "rate": 0
+          }
+        },
+        {
+          "id": "tts_english_short",
+          "reference_kind": "known_tts_prompt",
+          "language": "en",
+          "run_count": 3,
+          "text": "Hello, world.",
+          "stable": true,
+          "elapsed_ms_median": 469.612,
+          "elapsed_ms_min": 451.36,
+          "elapsed_ms_max": 469.821,
+          "duration_s": 1.65,
+          "rtf_median": 0.285,
+          "cer": {
+            "errors": 0,
+            "reference_units": 10,
+            "rate": 0
+          },
+          "wer": {
+            "errors": 0,
+            "reference_units": 2,
+            "rate": 0
+          }
+        },
+        {
+          "id": "tts_english_terms",
+          "reference_kind": "known_tts_prompt",
+          "language": "en",
+          "run_count": 3,
+          "text": "GitHub, Python, Simple Voice, Codex.",
+          "stable": true,
+          "elapsed_ms_median": 854.236,
+          "elapsed_ms_min": 829.596,
+          "elapsed_ms_max": 869.427,
+          "duration_s": 6.235,
+          "rtf_median": 0.137,
+          "cer": {
+            "errors": 0,
+            "reference_units": 28,
+            "rate": 0
+          },
+          "wer": {
+            "errors": 0,
+            "reference_units": 5,
+            "rate": 0
+          },
+          "critical_hits": [
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        {
+          "id": "official_mixed_always",
+          "reference_kind": "upstream_asr_example_not_gold",
+          "language": "mixed",
+          "run_count": 3,
+          "text": "这是第一种，第二种叫“呃与always”，always什么意思啊？",
+          "stable": true,
+          "elapsed_ms_median": 926.748,
+          "elapsed_ms_min": 894.383,
+          "elapsed_ms_max": 943.173,
+          "duration_s": 5.1,
+          "rtf_median": 0.182,
+          "cer": {
+            "errors": 0,
+            "reference_units": 28,
+            "rate": 0
+          },
+          "critical_hits": [
+            true,
+            true
+          ]
+        },
+        {
+          "id": "sense_en_gold",
+          "reference_kind": "upstream_asr_example_not_gold",
+          "language": "en",
+          "run_count": 3,
+          "text": "The tribal chief then called for the boy and presented him with fifty pieces of gold.",
+          "stable": true,
+          "elapsed_ms_median": 1123.551,
+          "elapsed_ms_min": 1059.454,
+          "elapsed_ms_max": 1198.116,
+          "duration_s": 7.152,
+          "rtf_median": 0.157,
+          "cer": {
+            "errors": 2,
+            "reference_units": 69,
+            "rate": 0.028985507246376812
+          },
+          "wer": {
+            "errors": 2,
+            "reference_units": 15,
+            "rate": 0.13333333333333333
+          }
+        },
+        {
+          "id": "sense_zh_hours",
+          "reference_kind": "upstream_asr_example_not_gold",
+          "language": "zh",
+          "run_count": 3,
+          "text": "開放時間：早上9點至下午5點。",
+          "stable": true,
+          "elapsed_ms_median": 835.128,
+          "elapsed_ms_min": 812.614,
+          "elapsed_ms_max": 991.916,
+          "duration_s": 5.592,
+          "rtf_median": 0.149,
+          "cer": {
+            "errors": 8,
+            "reference_units": 13,
+            "rate": 0.6153846153846154
+          }
+        },
+        {
+          "id": "fsdd_zero",
+          "reference_kind": "dataset_label",
+          "language": "en",
+          "run_count": 3,
+          "text": "Zero.",
+          "stable": true,
+          "elapsed_ms_median": 327.16,
+          "elapsed_ms_min": 325.381,
+          "elapsed_ms_max": 347.09,
+          "duration_s": 0.643,
+          "rtf_median": 0.508,
+          "cer": {
+            "errors": 0,
+            "reference_units": 4,
+            "rate": 0
+          },
+          "wer": {
+            "errors": 0,
+            "reference_units": 1,
+            "rate": 0
+          },
+          "digit_correct": true,
+          "digit_english_or_arabic_preserved": true,
+          "digit_semantic_correct": true
+        },
+        {
+          "id": "fsdd_one",
+          "reference_kind": "dataset_label",
+          "language": "en",
+          "run_count": 3,
+          "text": "",
+          "stable": true,
+          "elapsed_ms_median": 277.586,
+          "elapsed_ms_min": 270.208,
+          "elapsed_ms_max": 306.097,
+          "duration_s": 0.366,
+          "rtf_median": 0.758,
+          "cer": {
+            "errors": 3,
+            "reference_units": 3,
+            "rate": 1
+          },
+          "wer": {
+            "errors": 1,
+            "reference_units": 1,
+            "rate": 1
+          },
+          "digit_correct": false,
+          "digit_english_or_arabic_preserved": false,
+          "digit_semantic_correct": false
+        },
+        {
+          "id": "fsdd_seven",
+          "reference_kind": "dataset_label",
+          "language": "en",
+          "run_count": 3,
+          "text": "Seven.",
+          "stable": true,
+          "elapsed_ms_median": 323.002,
+          "elapsed_ms_min": 322.494,
+          "elapsed_ms_max": 359.738,
+          "duration_s": 0.428,
+          "rtf_median": 0.754,
+          "cer": {
+            "errors": 0,
+            "reference_units": 5,
+            "rate": 0
+          },
+          "wer": {
+            "errors": 0,
+            "reference_units": 1,
+            "rate": 0
+          },
+          "digit_correct": true,
+          "digit_english_or_arabic_preserved": true,
+          "digit_semantic_correct": true
+        },
+        {
+          "id": "fsdd_nine",
+          "reference_kind": "dataset_label",
+          "language": "en",
+          "run_count": 3,
+          "text": "",
+          "stable": true,
+          "elapsed_ms_median": 276.873,
+          "elapsed_ms_min": 272.776,
+          "elapsed_ms_max": 296.606,
+          "duration_s": 0.36,
+          "rtf_median": 0.77,
+          "cer": {
+            "errors": 4,
+            "reference_units": 4,
+            "rate": 1
+          },
+          "wer": {
+            "errors": 1,
+            "reference_units": 1,
+            "rate": 1
+          },
+          "digit_correct": false,
+          "digit_english_or_arabic_preserved": false,
+          "digit_semantic_correct": false
+        },
+        {
+          "id": "qwen_zh_numbers",
+          "reference_kind": "publisher_transcript",
+          "language": "zh",
+          "run_count": 3,
+          "text": "拨号，请再说一次，请说出你要拨打的号码：幺三五八幺八八七五五七。一三五八二八八八幺八八。八七五五。有建筑摄像，有建筑一百公里。纠正，纠正，九六九。纠正，纠正，不是九六。",
+          "stable": true,
+          "elapsed_ms_median": 4475.074,
+          "elapsed_ms_min": 4321.657,
+          "elapsed_ms_max": 4671.934,
+          "duration_s": 22.833,
+          "rtf_median": 0.196,
+          "cer": {
+            "errors": 18,
+            "reference_units": 53,
+            "rate": 0.33962264150943394
+          },
+          "digit_normalized_cer": {
+            "errors": 18,
+            "reference_units": 53,
+            "rate": 0.33962264150943394
+          }
+        },
+        {
+          "id": "zip_mixed_weekdays",
+          "reference_kind": "regression_only",
+          "language": "mixed",
+          "run_count": 3,
+          "text": "昨天是 Monday。Today is 礼拜二。The day after tomorrow is 星期三。",
+          "stable": true,
+          "elapsed_ms_median": 1515.974,
+          "elapsed_ms_min": 1450.615,
+          "elapsed_ms_max": 1566.099,
+          "duration_s": 10.053,
+          "rtf_median": 0.151,
+          "critical_hits": [
+            true,
+            true,
+            true
+          ]
+        },
+        {
+          "id": "silence_2s",
+          "reference_kind": "synthetic_silence",
+          "language": "silence",
+          "run_count": 3,
+          "text": "",
+          "stable": true,
+          "elapsed_ms_median": 377.936,
+          "elapsed_ms_min": 365.548,
+          "elapsed_ms_max": 385.83,
+          "duration_s": 2,
+          "rtf_median": 0.189
+        }
+      ]
+    },
+    "qwen_chinese": {
+      "load_ms": [
+        3050.909,
+        3037.695,
+        2949.214
+      ],
+      "load_ms_median": 3037.695,
+      "loaded_working_mib_median": 1044.609375,
+      "peak_working_mib": 2319.640625,
+      "peak_private_mib": 2829.6015625,
+      "tts_wer": {
+        "errors": 0,
+        "reference_words": 15,
+        "rate": 0
+      },
+      "fsdd_digits_correct": 0,
+      "fsdd_english_or_arabic_preserved": 0,
+      "fsdd_semantic_correct": 4,
+      "fsdd_count": 4,
+      "all_16_latency_ms_median": 706.7345,
+      "cases": [
+        {
+          "id": "legacy_zh_0",
+          "reference_kind": "upstream_asr_example_not_gold",
+          "language": "zh",
+          "run_count": 3,
+          "text": "对我做了介绍啊。那么我想说的是呢，大家如果对我的研究感兴趣呢。",
+          "stable": true,
+          "elapsed_ms_median": 1006.847,
+          "elapsed_ms_min": 987.832,
+          "elapsed_ms_max": 1011.062,
+          "duration_s": 5.612,
+          "rtf_median": 0.179,
+          "cer": {
+            "errors": 1,
+            "reference_units": 27,
+            "rate": 0.037037037037037035
+          }
+        },
+        {
+          "id": "legacy_zh_1",
+          "reference_kind": "regression_only",
+          "language": "zh",
+          "run_count": 3,
+          "text": "重点呢，想谈三个问题。首先呢，就是这一轮全球金融动荡的表现。",
+          "stable": true,
+          "elapsed_ms_median": 964.354,
+          "elapsed_ms_min": 957.801,
+          "elapsed_ms_max": 968.276,
+          "duration_s": 5.153,
+          "rtf_median": 0.187
+        },
+        {
+          "id": "legacy_zh_8k",
+          "reference_kind": "regression_only",
+          "language": "zh",
+          "run_count": 3,
+          "text": "深入地分析这一次全球金融动荡背后的根源。",
+          "stable": true,
+          "elapsed_ms_median": 670.076,
+          "elapsed_ms_min": 657.164,
+          "elapsed_ms_max": 680.525,
+          "duration_s": 4.524,
+          "rtf_median": 0.148
+        },
+        {
+          "id": "tts_english_sentence",
+          "reference_kind": "known_tts_prompt",
+          "language": "en",
+          "run_count": 3,
+          "text": "Please open the project and save the file.",
+          "stable": true,
+          "elapsed_ms_median": 562.987,
+          "elapsed_ms_min": 560.387,
+          "elapsed_ms_max": 564.457,
+          "duration_s": 3.01,
+          "rtf_median": 0.187,
+          "cer": {
+            "errors": 0,
+            "reference_units": 34,
+            "rate": 0
+          },
+          "wer": {
+            "errors": 0,
+            "reference_units": 8,
+            "rate": 0
+          }
+        },
+        {
+          "id": "tts_english_short",
+          "reference_kind": "known_tts_prompt",
+          "language": "en",
+          "run_count": 3,
+          "text": "Hello, world.",
+          "stable": true,
+          "elapsed_ms_median": 364.23,
+          "elapsed_ms_min": 356.279,
+          "elapsed_ms_max": 369.538,
+          "duration_s": 1.65,
+          "rtf_median": 0.221,
+          "cer": {
+            "errors": 0,
+            "reference_units": 10,
+            "rate": 0
+          },
+          "wer": {
+            "errors": 0,
+            "reference_units": 2,
+            "rate": 0
+          }
+        },
+        {
+          "id": "tts_english_terms",
+          "reference_kind": "known_tts_prompt",
+          "language": "en",
+          "run_count": 3,
+          "text": "GitHub, Python, Simple Voice, Codex.",
+          "stable": true,
+          "elapsed_ms_median": 785.786,
+          "elapsed_ms_min": 746.412,
+          "elapsed_ms_max": 793.426,
+          "duration_s": 6.235,
+          "rtf_median": 0.126,
+          "cer": {
+            "errors": 0,
+            "reference_units": 28,
+            "rate": 0
+          },
+          "wer": {
+            "errors": 0,
+            "reference_units": 5,
+            "rate": 0
+          },
+          "critical_hits": [
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        {
+          "id": "official_mixed_always",
+          "reference_kind": "upstream_asr_example_not_gold",
+          "language": "mixed",
+          "run_count": 3,
+          "text": "这是第一种，第二种叫“呃”，与“always”，“always”什么意思啊？",
+          "stable": true,
+          "elapsed_ms_median": 960.475,
+          "elapsed_ms_min": 928.641,
+          "elapsed_ms_max": 967.993,
+          "duration_s": 5.1,
+          "rtf_median": 0.188,
+          "cer": {
+            "errors": 0,
+            "reference_units": 28,
+            "rate": 0
+          },
+          "critical_hits": [
+            true,
+            true
+          ]
+        },
+        {
+          "id": "sense_en_gold",
+          "reference_kind": "upstream_asr_example_not_gold",
+          "language": "en",
+          "run_count": 3,
+          "text": "The tribal chief then called for the boy and presented him with fifty pieces of gold.",
+          "stable": true,
+          "elapsed_ms_median": 1047.953,
+          "elapsed_ms_min": 1015.558,
+          "elapsed_ms_max": 1055.907,
+          "duration_s": 7.152,
+          "rtf_median": 0.147,
+          "cer": {
+            "errors": 2,
+            "reference_units": 69,
+            "rate": 0.028985507246376812
+          },
+          "wer": {
+            "errors": 2,
+            "reference_units": 15,
+            "rate": 0.13333333333333333
+          }
+        },
+        {
+          "id": "sense_zh_hours",
+          "reference_kind": "upstream_asr_example_not_gold",
+          "language": "zh",
+          "run_count": 3,
+          "text": "开放时间：早上9点至下午5点。",
+          "stable": true,
+          "elapsed_ms_median": 743.393,
+          "elapsed_ms_min": 725.317,
+          "elapsed_ms_max": 747.654,
+          "duration_s": 5.592,
+          "rtf_median": 0.133,
+          "cer": {
+            "errors": 3,
+            "reference_units": 13,
+            "rate": 0.23076923076923078
+          }
+        },
+        {
+          "id": "fsdd_zero",
+          "reference_kind": "dataset_label",
+          "language": "en",
+          "run_count": 3,
+          "text": "零。",
+          "stable": true,
+          "elapsed_ms_median": 261.07,
+          "elapsed_ms_min": 256.382,
+          "elapsed_ms_max": 264.277,
+          "duration_s": 0.643,
+          "rtf_median": 0.406,
+          "cer": {
+            "errors": 4,
+            "reference_units": 4,
+            "rate": 1
+          },
+          "wer": {
+            "errors": 1,
+            "reference_units": 1,
+            "rate": 1
+          },
+          "digit_correct": false,
+          "digit_english_or_arabic_preserved": false,
+          "digit_semantic_correct": true
+        },
+        {
+          "id": "fsdd_one",
+          "reference_kind": "dataset_label",
+          "language": "en",
+          "run_count": 3,
+          "text": "一。",
+          "stable": true,
+          "elapsed_ms_median": 252.678,
+          "elapsed_ms_min": 251.228,
+          "elapsed_ms_max": 257.303,
+          "duration_s": 0.366,
+          "rtf_median": 0.69,
+          "cer": {
+            "errors": 3,
+            "reference_units": 3,
+            "rate": 1
+          },
+          "wer": {
+            "errors": 1,
+            "reference_units": 1,
+            "rate": 1
+          },
+          "digit_correct": false,
+          "digit_english_or_arabic_preserved": false,
+          "digit_semantic_correct": true
+        },
+        {
+          "id": "fsdd_seven",
+          "reference_kind": "dataset_label",
+          "language": "en",
+          "run_count": 3,
+          "text": "七。",
+          "stable": true,
+          "elapsed_ms_median": 255.589,
+          "elapsed_ms_min": 253.369,
+          "elapsed_ms_max": 256.674,
+          "duration_s": 0.428,
+          "rtf_median": 0.596,
+          "cer": {
+            "errors": 5,
+            "reference_units": 5,
+            "rate": 1
+          },
+          "wer": {
+            "errors": 1,
+            "reference_units": 1,
+            "rate": 1
+          },
+          "digit_correct": false,
+          "digit_english_or_arabic_preserved": false,
+          "digit_semantic_correct": true
+        },
+        {
+          "id": "fsdd_nine",
+          "reference_kind": "dataset_label",
+          "language": "en",
+          "run_count": 3,
+          "text": "九。",
+          "stable": true,
+          "elapsed_ms_median": 249.25,
+          "elapsed_ms_min": 248.321,
+          "elapsed_ms_max": 268.204,
+          "duration_s": 0.36,
+          "rtf_median": 0.693,
+          "cer": {
+            "errors": 4,
+            "reference_units": 4,
+            "rate": 1
+          },
+          "wer": {
+            "errors": 1,
+            "reference_units": 1,
+            "rate": 1
+          },
+          "digit_correct": false,
+          "digit_english_or_arabic_preserved": false,
+          "digit_semantic_correct": true
+        },
+        {
+          "id": "qwen_zh_numbers",
+          "reference_kind": "publisher_transcript",
+          "language": "zh",
+          "run_count": 3,
+          "text": "拨号，请再说一次，请说出你要拨打的号码：幺三五八幺八八七五五七。一三五八二八八八幺八八。八幺八八。七百有减速摄像头，限速一百公里。纠正，纠正，九六九。纠正，纠正，不是九六。",
+          "stable": true,
+          "elapsed_ms_median": 4600.788,
+          "elapsed_ms_min": 4243.51,
+          "elapsed_ms_max": 4651.491,
+          "duration_s": 22.833,
+          "rtf_median": 0.201,
+          "cer": {
+            "errors": 20,
+            "reference_units": 53,
+            "rate": 0.37735849056603776
+          },
+          "digit_normalized_cer": {
+            "errors": 20,
+            "reference_units": 53,
+            "rate": 0.37735849056603776
+          }
+        },
+        {
+          "id": "zip_mixed_weekdays",
+          "reference_kind": "regression_only",
+          "language": "mixed",
+          "run_count": 3,
+          "text": "昨天是 Monday。Today is 礼拜二。The day after tomorrow is 星期三。",
+          "stable": true,
+          "elapsed_ms_median": 1395.965,
+          "elapsed_ms_min": 1360.367,
+          "elapsed_ms_max": 1427.69,
+          "duration_s": 10.053,
+          "rtf_median": 0.139,
+          "critical_hits": [
+            true,
+            true,
+            true
+          ]
+        },
+        {
+          "id": "silence_2s",
+          "reference_kind": "synthetic_silence",
+          "language": "silence",
+          "run_count": 3,
+          "text": "嗯。",
+          "stable": true,
+          "elapsed_ms_median": 358.07,
+          "elapsed_ms_min": 353.81,
+          "elapsed_ms_max": 362.923,
+          "duration_s": 2,
+          "rtf_median": 0.179
+        }
+      ]
+    },
+    "sense": {
+      "load_ms": [
+        1081.581,
+        1147.484,
+        1240.216
+      ],
+      "load_ms_median": 1147.484,
+      "loaded_working_mib_median": 310.5390625,
+      "peak_working_mib": 367.92578125,
+      "peak_private_mib": 385.06640625,
+      "tts_wer": {
+        "errors": 2,
+        "reference_words": 15,
+        "rate": 0.13333333333333333
+      },
+      "fsdd_digits_correct": 2,
+      "fsdd_english_or_arabic_preserved": 2,
+      "fsdd_semantic_correct": 2,
+      "fsdd_count": 4,
+      "all_16_latency_ms_median": 98.1015,
+      "cases": [
+        {
+          "id": "legacy_zh_0",
+          "reference_kind": "upstream_asr_example_not_gold",
+          "language": "zh",
+          "run_count": 3,
+          "text": "对我做了介绍啊，那么我想说的是呢，大家如果对我的研究感兴趣呢嗯。",
+          "stable": true,
+          "elapsed_ms_median": 118.305,
+          "elapsed_ms_min": 116.788,
+          "elapsed_ms_max": 135.651,
+          "duration_s": 5.612,
+          "rtf_median": 0.021,
+          "cer": {
+            "errors": 2,
+            "reference_units": 27,
+            "rate": 0.07407407407407407
+          }
+        },
+        {
+          "id": "legacy_zh_1",
+          "reference_kind": "regression_only",
+          "language": "zh",
+          "run_count": 3,
+          "text": "重点呢想谈三个问题。首先呢就是这一轮全球金融动荡的表现。",
+          "stable": true,
+          "elapsed_ms_median": 103.464,
+          "elapsed_ms_min": 102.634,
+          "elapsed_ms_max": 107.97,
+          "duration_s": 5.153,
+          "rtf_median": 0.02
+        },
+        {
+          "id": "legacy_zh_8k",
+          "reference_kind": "regression_only",
+          "language": "zh",
+          "run_count": 3,
+          "text": "深入的分析这一次全球金融动荡背后的根源。",
+          "stable": true,
+          "elapsed_ms_median": 92.739,
+          "elapsed_ms_min": 91.915,
+          "elapsed_ms_max": 95.179,
+          "duration_s": 4.524,
+          "rtf_median": 0.02
+        },
+        {
+          "id": "tts_english_sentence",
+          "reference_kind": "known_tts_prompt",
+          "language": "en",
+          "run_count": 3,
+          "text": "Please open the project and save the file.",
+          "stable": true,
+          "elapsed_ms_median": 69.714,
+          "elapsed_ms_min": 67.601,
+          "elapsed_ms_max": 71.059,
+          "duration_s": 3.01,
+          "rtf_median": 0.023,
+          "cer": {
+            "errors": 0,
+            "reference_units": 34,
+            "rate": 0
+          },
+          "wer": {
+            "errors": 0,
+            "reference_units": 8,
+            "rate": 0
+          }
+        },
+        {
+          "id": "tts_english_short",
+          "reference_kind": "known_tts_prompt",
+          "language": "en",
+          "run_count": 3,
+          "text": "Hello world.",
+          "stable": true,
+          "elapsed_ms_median": 48.677,
+          "elapsed_ms_min": 46.623,
+          "elapsed_ms_max": 50.876,
+          "duration_s": 1.65,
+          "rtf_median": 0.03,
+          "cer": {
+            "errors": 0,
+            "reference_units": 10,
+            "rate": 0
+          },
+          "wer": {
+            "errors": 0,
+            "reference_units": 2,
+            "rate": 0
+          }
+        },
+        {
+          "id": "tts_english_terms",
+          "reference_kind": "known_tts_prompt",
+          "language": "en",
+          "run_count": 3,
+          "text": "GHub Python Sple voice Codex.",
+          "stable": true,
+          "elapsed_ms_median": 124.662,
+          "elapsed_ms_min": 123.366,
+          "elapsed_ms_max": 125.322,
+          "duration_s": 6.235,
+          "rtf_median": 0.02,
+          "cer": {
+            "errors": 4,
+            "reference_units": 28,
+            "rate": 0.14285714285714285
+          },
+          "wer": {
+            "errors": 2,
+            "reference_units": 5,
+            "rate": 0.4
+          },
+          "critical_hits": [
+            false,
+            true,
+            false,
+            true
+          ]
+        },
+        {
+          "id": "official_mixed_always",
+          "reference_kind": "upstream_asr_example_not_gold",
+          "language": "mixed",
+          "run_count": 3,
+          "text": "这是第一种。第二种叫呃与OSOS什么意思啊？",
+          "stable": true,
+          "elapsed_ms_median": 105.349,
+          "elapsed_ms_min": 103.237,
+          "elapsed_ms_max": 115.738,
+          "duration_s": 5.1,
+          "rtf_median": 0.021,
+          "cer": {
+            "errors": 10,
+            "reference_units": 28,
+            "rate": 0.35714285714285715
+          },
+          "critical_hits": [
+            false,
+            false
+          ]
+        },
+        {
+          "id": "sense_en_gold",
+          "reference_kind": "upstream_asr_example_not_gold",
+          "language": "en",
+          "run_count": 3,
+          "text": "The tribal chieftain called for the boy and presented him with 50 pieces of code.",
+          "stable": true,
+          "elapsed_ms_median": 143.652,
+          "elapsed_ms_min": 139.916,
+          "elapsed_ms_max": 145.081,
+          "duration_s": 7.152,
+          "rtf_median": 0.02,
+          "cer": {
+            "errors": 8,
+            "reference_units": 69,
+            "rate": 0.11594202898550725
+          },
+          "wer": {
+            "errors": 2,
+            "reference_units": 15,
+            "rate": 0.13333333333333333
+          }
+        },
+        {
+          "id": "sense_zh_hours",
+          "reference_kind": "upstream_asr_example_not_gold",
+          "language": "zh",
+          "run_count": 3,
+          "text": "开饭时间早上9点至下午5点。",
+          "stable": true,
+          "elapsed_ms_median": 109.862,
+          "elapsed_ms_min": 109.182,
+          "elapsed_ms_max": 113.069,
+          "duration_s": 5.592,
+          "rtf_median": 0.02,
+          "cer": {
+            "errors": 2,
+            "reference_units": 13,
+            "rate": 0.15384615384615385
+          }
+        },
+        {
+          "id": "fsdd_zero",
+          "reference_kind": "dataset_label",
+          "language": "en",
+          "run_count": 3,
+          "text": "0ro.",
+          "stable": true,
+          "elapsed_ms_median": 33.139,
+          "elapsed_ms_min": 31.664,
+          "elapsed_ms_max": 33.165,
+          "duration_s": 0.643,
+          "rtf_median": 0.051,
+          "cer": {
+            "errors": 2,
+            "reference_units": 4,
+            "rate": 0.5
+          },
+          "wer": {
+            "errors": 1,
+            "reference_units": 1,
+            "rate": 1
+          },
+          "digit_correct": false,
+          "digit_english_or_arabic_preserved": false,
+          "digit_semantic_correct": false
+        },
+        {
+          "id": "fsdd_one",
+          "reference_kind": "dataset_label",
+          "language": "en",
+          "run_count": 3,
+          "text": "1。",
+          "stable": true,
+          "elapsed_ms_median": 26.47,
+          "elapsed_ms_min": 26.18,
+          "elapsed_ms_max": 26.585,
+          "duration_s": 0.366,
+          "rtf_median": 0.072,
+          "cer": {
+            "errors": 3,
+            "reference_units": 3,
+            "rate": 1
+          },
+          "wer": {
+            "errors": 1,
+            "reference_units": 1,
+            "rate": 1
+          },
+          "digit_correct": true,
+          "digit_english_or_arabic_preserved": true,
+          "digit_semantic_correct": true
+        },
+        {
+          "id": "fsdd_seven",
+          "reference_kind": "dataset_label",
+          "language": "en",
+          "run_count": 3,
+          "text": "是。",
+          "stable": true,
+          "elapsed_ms_median": 28.479,
+          "elapsed_ms_min": 28.271,
+          "elapsed_ms_max": 29.515,
+          "duration_s": 0.428,
+          "rtf_median": 0.066,
+          "cer": {
+            "errors": 5,
+            "reference_units": 5,
+            "rate": 1
+          },
+          "wer": {
+            "errors": 1,
+            "reference_units": 1,
+            "rate": 1
+          },
+          "digit_correct": false,
+          "digit_english_or_arabic_preserved": false,
+          "digit_semantic_correct": false
+        },
+        {
+          "id": "fsdd_nine",
+          "reference_kind": "dataset_label",
+          "language": "en",
+          "run_count": 3,
+          "text": "9.",
+          "stable": true,
+          "elapsed_ms_median": 26.164,
+          "elapsed_ms_min": 25.831,
+          "elapsed_ms_max": 26.951,
+          "duration_s": 0.36,
+          "rtf_median": 0.073,
+          "cer": {
+            "errors": 4,
+            "reference_units": 4,
+            "rate": 1
+          },
+          "wer": {
+            "errors": 1,
+            "reference_units": 1,
+            "rate": 1
+          },
+          "digit_correct": true,
+          "digit_english_or_arabic_preserved": true,
+          "digit_semantic_correct": true
+        },
+        {
+          "id": "qwen_zh_numbers",
+          "reference_kind": "publisher_transcript",
+          "language": "zh",
+          "run_count": 3,
+          "text": "拨号135818875578188纠正纠正纠正纠正不是96。",
+          "stable": true,
+          "elapsed_ms_median": 469.143,
+          "elapsed_ms_min": 466.928,
+          "elapsed_ms_max": 478.013,
+          "duration_s": 22.833,
+          "rtf_median": 0.021,
+          "cer": {
+            "errors": 41,
+            "reference_units": 53,
+            "rate": 0.7735849056603774
+          },
+          "digit_normalized_cer": {
+            "errors": 25,
+            "reference_units": 53,
+            "rate": 0.4716981132075472
+          }
+        },
+        {
+          "id": "zip_mixed_weekdays",
+          "reference_kind": "regression_only",
+          "language": "mixed",
+          "run_count": 3,
+          "text": "昨天是monday，today is礼拜2the day after tomorrow是星期三。",
+          "stable": true,
+          "elapsed_ms_median": 190.076,
+          "elapsed_ms_min": 188.784,
+          "elapsed_ms_max": 194.501,
+          "duration_s": 10.053,
+          "rtf_median": 0.019,
+          "critical_hits": [
+            true,
+            true,
+            true
+          ]
+        },
+        {
+          "id": "silence_2s",
+          "reference_kind": "synthetic_silence",
+          "language": "silence",
+          "run_count": 3,
+          "text": "그.",
+          "stable": true,
+          "elapsed_ms_median": 56.319,
+          "elapsed_ms_min": 50.509,
+          "elapsed_ms_max": 58.8,
+          "duration_s": 2,
+          "rtf_median": 0.028
+        }
+      ]
+    },
+    "sense_zh": {
+      "load_ms": [
+        1141.308,
+        1102.364,
+        1187.084
+      ],
+      "load_ms_median": 1141.308,
+      "loaded_working_mib_median": 311.21484375,
+      "peak_working_mib": 369.015625,
+      "peak_private_mib": 385.44921875,
+      "tts_wer": {
+        "errors": 1,
+        "reference_words": 15,
+        "rate": 0.06666666666666667
+      },
+      "fsdd_digits_correct": 1,
+      "fsdd_english_or_arabic_preserved": 1,
+      "fsdd_semantic_correct": 1,
+      "fsdd_count": 4,
+      "all_16_latency_ms_median": 100.955,
+      "cases": [
+        {
+          "id": "legacy_zh_0",
+          "reference_kind": "upstream_asr_example_not_gold",
+          "language": "zh",
+          "run_count": 3,
+          "text": "对我做了介绍啊，那么我想说的是呢，大家如果对我的研究感兴趣呢嗯。",
+          "stable": true,
+          "elapsed_ms_median": 126.654,
+          "elapsed_ms_min": 124.52,
+          "elapsed_ms_max": 130.474,
+          "duration_s": 5.612,
+          "rtf_median": 0.023,
+          "cer": {
+            "errors": 2,
+            "reference_units": 27,
+            "rate": 0.07407407407407407
+          }
+        },
+        {
+          "id": "legacy_zh_1",
+          "reference_kind": "regression_only",
+          "language": "zh",
+          "run_count": 3,
+          "text": "重点呢想谈三个问题。首先呢就是这一轮全球金融动荡的表现。",
+          "stable": true,
+          "elapsed_ms_median": 106.133,
+          "elapsed_ms_min": 105.133,
+          "elapsed_ms_max": 109.714,
+          "duration_s": 5.153,
+          "rtf_median": 0.021
+        },
+        {
+          "id": "legacy_zh_8k",
+          "reference_kind": "regression_only",
+          "language": "zh",
+          "run_count": 3,
+          "text": "深入的分析这一次全球金融动荡背后的根源。",
+          "stable": true,
+          "elapsed_ms_median": 98.096,
+          "elapsed_ms_min": 92.285,
+          "elapsed_ms_max": 99.714,
+          "duration_s": 4.524,
+          "rtf_median": 0.022
+        },
+        {
+          "id": "tts_english_sentence",
+          "reference_kind": "known_tts_prompt",
+          "language": "en",
+          "run_count": 3,
+          "text": "Please open the project and save the file.",
+          "stable": true,
+          "elapsed_ms_median": 72.637,
+          "elapsed_ms_min": 72.032,
+          "elapsed_ms_max": 74.848,
+          "duration_s": 3.01,
+          "rtf_median": 0.024,
+          "cer": {
+            "errors": 0,
+            "reference_units": 34,
+            "rate": 0
+          },
+          "wer": {
+            "errors": 0,
+            "reference_units": 8,
+            "rate": 0
+          }
+        },
+        {
+          "id": "tts_english_short",
+          "reference_kind": "known_tts_prompt",
+          "language": "en",
+          "run_count": 3,
+          "text": "Hello world.",
+          "stable": true,
+          "elapsed_ms_median": 51.082,
+          "elapsed_ms_min": 48.459,
+          "elapsed_ms_max": 55.402,
+          "duration_s": 1.65,
+          "rtf_median": 0.031,
+          "cer": {
+            "errors": 0,
+            "reference_units": 10,
+            "rate": 0
+          },
+          "wer": {
+            "errors": 0,
+            "reference_units": 2,
+            "rate": 0
+          }
+        },
+        {
+          "id": "tts_english_terms",
+          "reference_kind": "known_tts_prompt",
+          "language": "en",
+          "run_count": 3,
+          "text": "GitHub Python, simpleim voice, codex.",
+          "stable": true,
+          "elapsed_ms_median": 125.138,
+          "elapsed_ms_min": 124.139,
+          "elapsed_ms_max": 130.13,
+          "duration_s": 6.235,
+          "rtf_median": 0.02,
+          "cer": {
+            "errors": 2,
+            "reference_units": 28,
+            "rate": 0.07142857142857142
+          },
+          "wer": {
+            "errors": 1,
+            "reference_units": 5,
+            "rate": 0.2
+          },
+          "critical_hits": [
+            true,
+            true,
+            false,
+            true
+          ]
+        },
+        {
+          "id": "official_mixed_always",
+          "reference_kind": "upstream_asr_example_not_gold",
+          "language": "mixed",
+          "run_count": 3,
+          "text": "这是第一种。第二种叫呃与OSOS什么意思啊？",
+          "stable": true,
+          "elapsed_ms_median": 103.814,
+          "elapsed_ms_min": 103.286,
+          "elapsed_ms_max": 116.883,
+          "duration_s": 5.1,
+          "rtf_median": 0.02,
+          "cer": {
+            "errors": 10,
+            "reference_units": 28,
+            "rate": 0.35714285714285715
+          },
+          "critical_hits": [
+            false,
+            false
+          ]
+        },
+        {
+          "id": "sense_en_gold",
+          "reference_kind": "upstream_asr_example_not_gold",
+          "language": "en",
+          "run_count": 3,
+          "text": "The tribal chieftain called for the boy and presented him with 50 pieces of code.",
+          "stable": true,
+          "elapsed_ms_median": 143.189,
+          "elapsed_ms_min": 139.698,
+          "elapsed_ms_max": 153.31,
+          "duration_s": 7.152,
+          "rtf_median": 0.02,
+          "cer": {
+            "errors": 8,
+            "reference_units": 69,
+            "rate": 0.11594202898550725
+          },
+          "wer": {
+            "errors": 2,
+            "reference_units": 15,
+            "rate": 0.13333333333333333
+          }
+        },
+        {
+          "id": "sense_zh_hours",
+          "reference_kind": "upstream_asr_example_not_gold",
+          "language": "zh",
+          "run_count": 3,
+          "text": "开饭时间早上9点至下午5点。",
+          "stable": true,
+          "elapsed_ms_median": 111.562,
+          "elapsed_ms_min": 107.837,
+          "elapsed_ms_max": 112.737,
+          "duration_s": 5.592,
+          "rtf_median": 0.02,
+          "cer": {
+            "errors": 2,
+            "reference_units": 13,
+            "rate": 0.15384615384615385
+          }
+        },
+        {
+          "id": "fsdd_zero",
+          "reference_kind": "dataset_label",
+          "language": "en",
+          "run_count": 3,
+          "text": "0。",
+          "stable": true,
+          "elapsed_ms_median": 32.942,
+          "elapsed_ms_min": 31.118,
+          "elapsed_ms_max": 34.085,
+          "duration_s": 0.643,
+          "rtf_median": 0.051,
+          "cer": {
+            "errors": 4,
+            "reference_units": 4,
+            "rate": 1
+          },
+          "wer": {
+            "errors": 1,
+            "reference_units": 1,
+            "rate": 1
+          },
+          "digit_correct": true,
+          "digit_english_or_arabic_preserved": true,
+          "digit_semantic_correct": true
+        },
+        {
+          "id": "fsdd_one",
+          "reference_kind": "dataset_label",
+          "language": "en",
+          "run_count": 3,
+          "text": "晚。",
+          "stable": true,
+          "elapsed_ms_median": 27.237,
+          "elapsed_ms_min": 26.898,
+          "elapsed_ms_max": 27.749,
+          "duration_s": 0.366,
+          "rtf_median": 0.074,
+          "cer": {
+            "errors": 3,
+            "reference_units": 3,
+            "rate": 1
+          },
+          "wer": {
+            "errors": 1,
+            "reference_units": 1,
+            "rate": 1
+          },
+          "digit_correct": false,
+          "digit_english_or_arabic_preserved": false,
+          "digit_semantic_correct": false
+        },
+        {
+          "id": "fsdd_seven",
+          "reference_kind": "dataset_label",
+          "language": "en",
+          "run_count": 3,
+          "text": "是的。",
+          "stable": true,
+          "elapsed_ms_median": 27.165,
+          "elapsed_ms_min": 26.604,
+          "elapsed_ms_max": 29.5,
+          "duration_s": 0.428,
+          "rtf_median": 0.063,
+          "cer": {
+            "errors": 5,
+            "reference_units": 5,
+            "rate": 1
+          },
+          "wer": {
+            "errors": 1,
+            "reference_units": 1,
+            "rate": 1
+          },
+          "digit_correct": false,
+          "digit_english_or_arabic_preserved": false,
+          "digit_semantic_correct": false
+        },
+        {
+          "id": "fsdd_nine",
+          "reference_kind": "dataset_label",
+          "language": "en",
+          "run_count": 3,
+          "text": "那。",
+          "stable": true,
+          "elapsed_ms_median": 26.13,
+          "elapsed_ms_min": 25.858,
+          "elapsed_ms_max": 27.378,
+          "duration_s": 0.36,
+          "rtf_median": 0.073,
+          "cer": {
+            "errors": 4,
+            "reference_units": 4,
+            "rate": 1
+          },
+          "wer": {
+            "errors": 1,
+            "reference_units": 1,
+            "rate": 1
+          },
+          "digit_correct": false,
+          "digit_english_or_arabic_preserved": false,
+          "digit_semantic_correct": false
+        },
+        {
+          "id": "qwen_zh_numbers",
+          "reference_kind": "publisher_transcript",
+          "language": "zh",
+          "run_count": 3,
+          "text": "拨号135818875578188纠正纠正纠正纠正不是96。",
+          "stable": true,
+          "elapsed_ms_median": 469.625,
+          "elapsed_ms_min": 469.329,
+          "elapsed_ms_max": 480.271,
+          "duration_s": 22.833,
+          "rtf_median": 0.021,
+          "cer": {
+            "errors": 41,
+            "reference_units": 53,
+            "rate": 0.7735849056603774
+          },
+          "digit_normalized_cer": {
+            "errors": 25,
+            "reference_units": 53,
+            "rate": 0.4716981132075472
+          }
+        },
+        {
+          "id": "zip_mixed_weekdays",
+          "reference_kind": "regression_only",
+          "language": "mixed",
+          "run_count": 3,
+          "text": "昨天是monday，today is礼拜2，the day after tomorrow是星期三。",
+          "stable": true,
+          "elapsed_ms_median": 192.174,
+          "elapsed_ms_min": 189.08,
+          "elapsed_ms_max": 193.702,
+          "duration_s": 10.053,
+          "rtf_median": 0.019,
+          "critical_hits": [
+            true,
+            true,
+            true
+          ]
+        },
+        {
+          "id": "silence_2s",
+          "reference_kind": "synthetic_silence",
+          "language": "silence",
+          "run_count": 3,
+          "text": "我。",
+          "stable": true,
+          "elapsed_ms_median": 52.282,
+          "elapsed_ms_min": 51.55,
+          "elapsed_ms_max": 54.492,
+          "duration_s": 2,
+          "rtf_median": 0.026
+        }
+      ]
+    },
+    "zip_online": {
+      "load_ms": [
+        1305.402,
+        1119.444,
+        1139.65
+      ],
+      "load_ms_median": 1139.65,
+      "loaded_working_mib_median": 249.5546875,
+      "peak_working_mib": 272.4375,
+      "peak_private_mib": 246.52734375,
+      "tts_wer": {
+        "errors": 2,
+        "reference_words": 15,
+        "rate": 0.13333333333333333
+      },
+      "fsdd_digits_correct": 0,
+      "fsdd_english_or_arabic_preserved": 0,
+      "fsdd_semantic_correct": 0,
+      "fsdd_count": 4,
+      "all_16_latency_ms_median": 202.5805,
+      "cases": [
+        {
+          "id": "legacy_zh_0",
+          "reference_kind": "upstream_asr_example_not_gold",
+          "language": "zh",
+          "run_count": 3,
+          "text": "对我做了介绍那么我想说的是呢大家如果对我的研究感兴趣呢",
+          "stable": true,
+          "elapsed_ms_median": 242.719,
+          "elapsed_ms_min": 242.099,
+          "elapsed_ms_max": 249.228,
+          "duration_s": 5.612,
+          "rtf_median": 0.043,
+          "cer": {
+            "errors": 0,
+            "reference_units": 27,
+            "rate": 0
+          },
+          "first_partial_audio_ms": 740,
+          "first_partial_compute_ms": 30.824,
+          "unflushed": "对我做了介绍那么我想说的是呢大家如果对我的研究感兴趣呢",
+          "flush_ms_median": 12.612
+        },
+        {
+          "id": "legacy_zh_1",
+          "reference_kind": "regression_only",
+          "language": "zh",
+          "run_count": 3,
+          "text": "重点呢想谈三个问题首先就是这一轮全球金融动荡的表现",
+          "stable": true,
+          "elapsed_ms_median": 212.536,
+          "elapsed_ms_min": 211.268,
+          "elapsed_ms_max": 229.302,
+          "duration_s": 5.153,
+          "rtf_median": 0.041,
+          "first_partial_audio_ms": 420,
+          "first_partial_compute_ms": 13.792,
+          "unflushed": "重点呢想谈三个问题首先就是这一轮全球金融动荡的表现",
+          "flush_ms_median": 13.769
+        },
+        {
+          "id": "legacy_zh_8k",
+          "reference_kind": "regression_only",
+          "language": "zh",
+          "run_count": 3,
+          "text": "深入的分析这一次全球金融动荡背后的根源",
+          "stable": true,
+          "elapsed_ms_median": 196.159,
+          "elapsed_ms_min": 183.133,
+          "elapsed_ms_max": 206.707,
+          "duration_s": 4.524,
+          "rtf_median": 0.043,
+          "first_partial_audio_ms": 740,
+          "first_partial_compute_ms": 28.319,
+          "unflushed": "深入的分析这一次全球金融动荡背后的根源",
+          "flush_ms_median": 12.987
+        },
+        {
+          "id": "tts_english_sentence",
+          "reference_kind": "known_tts_prompt",
+          "language": "en",
+          "run_count": 3,
+          "text": "PLEASE OPEN THE PROJECT AND SAVE THE FILE",
+          "stable": true,
+          "elapsed_ms_median": 139.38,
+          "elapsed_ms_min": 130.377,
+          "elapsed_ms_max": 146.977,
+          "duration_s": 3.01,
+          "rtf_median": 0.046,
+          "cer": {
+            "errors": 0,
+            "reference_units": 34,
+            "rate": 0
+          },
+          "wer": {
+            "errors": 0,
+            "reference_units": 8,
+            "rate": 0
+          },
+          "first_partial_audio_ms": 420,
+          "first_partial_compute_ms": 14.198,
+          "unflushed": "PLEASE OPEN THE PROJECT AND SAVE THE FILE",
+          "flush_ms_median": 12.519
+        },
+        {
+          "id": "tts_english_short",
+          "reference_kind": "known_tts_prompt",
+          "language": "en",
+          "run_count": 3,
+          "text": "HELLO WORLD",
+          "stable": true,
+          "elapsed_ms_median": 67.355,
+          "elapsed_ms_min": 65.612,
+          "elapsed_ms_max": 68.824,
+          "duration_s": 1.65,
+          "rtf_median": 0.041,
+          "cer": {
+            "errors": 0,
+            "reference_units": 10,
+            "rate": 0
+          },
+          "wer": {
+            "errors": 0,
+            "reference_units": 2,
+            "rate": 0
+          },
+          "first_partial_audio_ms": 420,
+          "first_partial_compute_ms": 14.053,
+          "unflushed": "HELLO WORLD",
+          "flush_ms_median": 12.607
+        },
+        {
+          "id": "tts_english_terms",
+          "reference_kind": "known_tts_prompt",
+          "language": "en",
+          "run_count": 3,
+          "text": "PYTHON SIMPLE VOICE CODAX",
+          "stable": true,
+          "elapsed_ms_median": 263.96,
+          "elapsed_ms_min": 257.631,
+          "elapsed_ms_max": 278.845,
+          "duration_s": 6.235,
+          "rtf_median": 0.042,
+          "cer": {
+            "errors": 7,
+            "reference_units": 28,
+            "rate": 0.25
+          },
+          "wer": {
+            "errors": 2,
+            "reference_units": 5,
+            "rate": 0.4
+          },
+          "critical_hits": [
+            false,
+            true,
+            true,
+            false
+          ],
+          "first_partial_audio_ms": 2340,
+          "first_partial_compute_ms": 92.622,
+          "unflushed": "PYTHON SIMPLE VOICE CODAX",
+          "flush_ms_median": 12.457
+        },
+        {
+          "id": "official_mixed_always",
+          "reference_kind": "upstream_asr_example_not_gold",
+          "language": "mixed",
+          "run_count": 3,
+          "text": "这是第一种第二种叫呃与 ALWAYS ALWAYS什么意思啊",
+          "stable": true,
+          "elapsed_ms_median": 209.002,
+          "elapsed_ms_min": 206.211,
+          "elapsed_ms_max": 216.578,
+          "duration_s": 5.1,
+          "rtf_median": 0.041,
+          "cer": {
+            "errors": 0,
+            "reference_units": 28,
+            "rate": 0
+          },
+          "critical_hits": [
+            true,
+            true
+          ],
+          "first_partial_audio_ms": 1380,
+          "first_partial_compute_ms": 51.784,
+          "unflushed": "这是第一种第二种叫呃与 ALWAYS ALWAYS什么",
+          "flush_ms_median": 13.385
+        },
+        {
+          "id": "sense_en_gold",
+          "reference_kind": "upstream_asr_example_not_gold",
+          "language": "en",
+          "run_count": 3,
+          "text": "THE TRIBAL CHIEFTEN CALLED FOR THE BOY AND PRESENTED HIM THAT FIFTY PIECES OF GOOG",
+          "stable": true,
+          "elapsed_ms_median": 311.2,
+          "elapsed_ms_min": 303.596,
+          "elapsed_ms_max": 312.308,
+          "duration_s": 7.152,
+          "rtf_median": 0.044,
+          "cer": {
+            "errors": 8,
+            "reference_units": 69,
+            "rate": 0.11594202898550725
+          },
+          "wer": {
+            "errors": 3,
+            "reference_units": 15,
+            "rate": 0.2
+          },
+          "first_partial_audio_ms": 1700,
+          "first_partial_compute_ms": 65.97,
+          "unflushed": "THE TRIBAL CHIEFTEN CALLED FOR THE BOY AND PRESENTED HIM THAT FIFTY PIECES OF GOOG",
+          "flush_ms_median": 12.655
+        },
+        {
+          "id": "sense_zh_hours",
+          "reference_kind": "upstream_asr_example_not_gold",
+          "language": "zh",
+          "run_count": 3,
+          "text": "开放时间早上九点至下午五点",
+          "stable": true,
+          "elapsed_ms_median": 235.558,
+          "elapsed_ms_min": 235.514,
+          "elapsed_ms_max": 241.678,
+          "duration_s": 5.592,
+          "rtf_median": 0.042,
+          "cer": {
+            "errors": 1,
+            "reference_units": 13,
+            "rate": 0.07692307692307693
+          },
+          "first_partial_audio_ms": 1700,
+          "first_partial_compute_ms": 67.426,
+          "unflushed": "开放时间早上九点至下午五点",
+          "flush_ms_median": 12.927
+        },
+        {
+          "id": "fsdd_zero",
+          "reference_kind": "dataset_label",
+          "language": "en",
+          "run_count": 3,
+          "text": "",
+          "stable": true,
+          "elapsed_ms_median": 28.375,
+          "elapsed_ms_min": 27.011,
+          "elapsed_ms_max": 28.386,
+          "duration_s": 0.643,
+          "rtf_median": 0.044,
+          "cer": {
+            "errors": 4,
+            "reference_units": 4,
+            "rate": 1
+          },
+          "wer": {
+            "errors": 1,
+            "reference_units": 1,
+            "rate": 1
+          },
+          "digit_correct": false,
+          "digit_english_or_arabic_preserved": false,
+          "digit_semantic_correct": false,
+          "first_partial_audio_ms": -1,
+          "first_partial_compute_ms": -1,
+          "unflushed": "",
+          "flush_ms_median": 13.966
+        },
+        {
+          "id": "fsdd_one",
+          "reference_kind": "dataset_label",
+          "language": "en",
+          "run_count": 3,
+          "text": "",
+          "stable": true,
+          "elapsed_ms_median": 13.905,
+          "elapsed_ms_min": 13.485,
+          "elapsed_ms_max": 13.928,
+          "duration_s": 0.366,
+          "rtf_median": 0.038,
+          "cer": {
+            "errors": 3,
+            "reference_units": 3,
+            "rate": 1
+          },
+          "wer": {
+            "errors": 1,
+            "reference_units": 1,
+            "rate": 1
+          },
+          "digit_correct": false,
+          "digit_english_or_arabic_preserved": false,
+          "digit_semantic_correct": false,
+          "first_partial_audio_ms": -1,
+          "first_partial_compute_ms": -1,
+          "unflushed": "",
+          "flush_ms_median": 13.18
+        },
+        {
+          "id": "fsdd_seven",
+          "reference_kind": "dataset_label",
+          "language": "en",
+          "run_count": 3,
+          "text": "",
+          "stable": true,
+          "elapsed_ms_median": 26.319,
+          "elapsed_ms_min": 25.625,
+          "elapsed_ms_max": 26.363,
+          "duration_s": 0.428,
+          "rtf_median": 0.061,
+          "cer": {
+            "errors": 5,
+            "reference_units": 5,
+            "rate": 1
+          },
+          "wer": {
+            "errors": 1,
+            "reference_units": 1,
+            "rate": 1
+          },
+          "digit_correct": false,
+          "digit_english_or_arabic_preserved": false,
+          "digit_semantic_correct": false,
+          "first_partial_audio_ms": -1,
+          "first_partial_compute_ms": -1,
+          "unflushed": "",
+          "flush_ms_median": 12.857
+        },
+        {
+          "id": "fsdd_nine",
+          "reference_kind": "dataset_label",
+          "language": "en",
+          "run_count": 3,
+          "text": "",
+          "stable": true,
+          "elapsed_ms_median": 13.374,
+          "elapsed_ms_min": 12.993,
+          "elapsed_ms_max": 13.61,
+          "duration_s": 0.36,
+          "rtf_median": 0.037,
+          "cer": {
+            "errors": 4,
+            "reference_units": 4,
+            "rate": 1
+          },
+          "wer": {
+            "errors": 1,
+            "reference_units": 1,
+            "rate": 1
+          },
+          "digit_correct": false,
+          "digit_english_or_arabic_preserved": false,
+          "digit_semantic_correct": false,
+          "first_partial_audio_ms": -1,
+          "first_partial_compute_ms": -1,
+          "unflushed": "",
+          "flush_ms_median": 12.787
+        },
+        {
+          "id": "qwen_zh_numbers",
+          "reference_kind": "publisher_transcript",
+          "language": "zh",
+          "run_count": 3,
+          "text": "王浩请再说一次请说出你要拨打的号码幺三五八幺八八七五五七一三四五八二八八幺八八九整九整九九不是求六",
+          "stable": true,
+          "elapsed_ms_median": 955.18,
+          "elapsed_ms_min": 942.758,
+          "elapsed_ms_max": 1030.545,
+          "duration_s": 22.833,
+          "rtf_median": 0.042,
+          "cer": {
+            "errors": 16,
+            "reference_units": 53,
+            "rate": 0.3018867924528302
+          },
+          "digit_normalized_cer": {
+            "errors": 16,
+            "reference_units": 53,
+            "rate": 0.3018867924528302
+          },
+          "first_partial_audio_ms": 2340,
+          "first_partial_compute_ms": 90.841,
+          "unflushed": "王浩请再说一次请说出你要拨打的号码幺三五八幺八八七五五七一三四五八二八八幺八八九整九整九九不是求六",
+          "flush_ms_median": 12.875
+        },
+        {
+          "id": "zip_mixed_weekdays",
+          "reference_kind": "regression_only",
+          "language": "mixed",
+          "run_count": 3,
+          "text": "昨天是 MONDAY TODAY IS LIBR THE DAY AFTER TOMORROW是星期三",
+          "stable": true,
+          "elapsed_ms_median": 422.25,
+          "elapsed_ms_min": 415.051,
+          "elapsed_ms_max": 426.545,
+          "duration_s": 10.053,
+          "rtf_median": 0.042,
+          "critical_hits": [
+            true,
+            true,
+            true
+          ],
+          "first_partial_audio_ms": 1060,
+          "first_partial_compute_ms": 39.587,
+          "unflushed": "昨天是 MONDAY TODAY IS LIBR THE DAY AFTER TOMORROW是星期三",
+          "flush_ms_median": 12.804
+        },
+        {
+          "id": "silence_2s",
+          "reference_kind": "synthetic_silence",
+          "language": "silence",
+          "run_count": 3,
+          "text": "",
+          "stable": true,
+          "elapsed_ms_median": 78.137,
+          "elapsed_ms_min": 77.404,
+          "elapsed_ms_max": 79.636,
+          "duration_s": 2,
+          "rtf_median": 0.039,
+          "first_partial_audio_ms": -1,
+          "first_partial_compute_ms": -1,
+          "unflushed": "",
+          "flush_ms_median": 12.922
+        }
+      ]
+    }
+  },
+  "stress": {
+    "reference": {
+      "purpose": "Resource and generation length stress, not new independent accuracy corpus",
+      "duration_seconds": 60,
+      "repeats": 18,
+      "reference": "Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file.",
+      "construction": "Repeat existing known offline TTS prompt with 250 ms silence, pad remainder with zero; no microphone or new speaker"
+    },
+    "audio_sha256": "c3a138e122c6096cffb36aed340cd8e65fb9af85ac51375d9fee1b7fa17e3f3c",
+    "normalization": "NFKC lower case word sequence, punctuation ignored; never deduplicate text",
+    "configurations": {
+      "whole_1024": {
+        "runs": [
+          {
+            "file": "qwen-stress60-1.jsonl",
+            "parts": [
+              {
+                "id": "stress_60s",
+                "duration_s": 60,
+                "elapsed_ms": 15675.834,
+                "complete_sentence_count": 15,
+                "text": "Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file."
+              }
+            ],
+            "complete_sentence_count": 15,
+            "elapsed_ms": 15675.834,
+            "load_ms": 3320.45,
+            "peak_working_mib": 3460.6328125,
+            "peak_private_mib": 4297.0546875,
+            "wer": {
+              "errors": 24,
+              "reference_words": 144,
+              "rate": 0.16666666666666666
+            },
+            "text": "Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file."
+          },
+          {
+            "file": "qwen-stress60-2.jsonl",
+            "parts": [
+              {
+                "id": "stress_60s",
+                "duration_s": 60,
+                "elapsed_ms": 14641.478,
+                "complete_sentence_count": 15,
+                "text": "Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file."
+              }
+            ],
+            "complete_sentence_count": 15,
+            "elapsed_ms": 14641.478,
+            "load_ms": 3181.946,
+            "peak_working_mib": 3460.16796875,
+            "peak_private_mib": 4296.50390625,
+            "wer": {
+              "errors": 24,
+              "reference_words": 144,
+              "rate": 0.16666666666666666
+            },
+            "text": "Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file."
+          },
+          {
+            "file": "qwen-stress60-3.jsonl",
+            "parts": [
+              {
+                "id": "stress_60s",
+                "duration_s": 60,
+                "elapsed_ms": 15136.961,
+                "complete_sentence_count": 15,
+                "text": "Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file."
+              }
+            ],
+            "complete_sentence_count": 15,
+            "elapsed_ms": 15136.961,
+            "load_ms": 3158.472,
+            "peak_working_mib": 3460.28515625,
+            "peak_private_mib": 4296.58984375,
+            "wer": {
+              "errors": 24,
+              "reference_words": 144,
+              "rate": 0.16666666666666666
+            },
+            "text": "Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file."
+          }
+        ]
+      },
+      "whole_2048_debug": {
+        "runs": [
+          {
+            "file": "qwen_debug_2048-stress60.jsonl",
+            "parts": [
+              {
+                "id": "stress_60s",
+                "duration_s": 60,
+                "elapsed_ms": 15129.434,
+                "complete_sentence_count": 15,
+                "text": "Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file."
+              }
+            ],
+            "complete_sentence_count": 15,
+            "elapsed_ms": 15129.434,
+            "load_ms": 3371.979,
+            "peak_working_mib": 3684.19921875,
+            "peak_private_mib": 4296.5390625,
+            "wer": {
+              "errors": 24,
+              "reference_words": 144,
+              "rate": 0.16666666666666666
+            },
+            "text": "Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file."
+          }
+        ]
+      },
+      "split_15_20": {
+        "runs": [
+          {
+            "file": "qwen-stress-split-1.jsonl",
+            "parts": [
+              {
+                "id": "stress_part_1",
+                "duration_s": 19.62,
+                "elapsed_ms": 3364.221,
+                "complete_sentence_count": 5,
+                "text": "Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file."
+              },
+              {
+                "id": "stress_part_2",
+                "duration_s": 19.56,
+                "elapsed_ms": 3566.753,
+                "complete_sentence_count": 6,
+                "text": "Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file."
+              },
+              {
+                "id": "stress_part_3",
+                "duration_s": 20,
+                "elapsed_ms": 4318.298,
+                "complete_sentence_count": 6,
+                "text": "Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file."
+              },
+              {
+                "id": "stress_part_4",
+                "duration_s": 0.82,
+                "elapsed_ms": 296.976,
+                "complete_sentence_count": 0,
+                "text": ""
+              }
+            ],
+            "complete_sentence_count": 17,
+            "elapsed_ms": 11546.248000000001,
+            "load_ms": 3095.12,
+            "peak_working_mib": 1969.12890625,
+            "peak_private_mib": 2004.7734375,
+            "wer": {
+              "errors": 8,
+              "reference_words": 144,
+              "rate": 0.05555555555555555
+            },
+            "text": "Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. "
+          },
+          {
+            "file": "qwen-stress-split-2.jsonl",
+            "parts": [
+              {
+                "id": "stress_part_1",
+                "duration_s": 19.62,
+                "elapsed_ms": 3365.373,
+                "complete_sentence_count": 5,
+                "text": "Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file."
+              },
+              {
+                "id": "stress_part_2",
+                "duration_s": 19.56,
+                "elapsed_ms": 3510.608,
+                "complete_sentence_count": 6,
+                "text": "Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file."
+              },
+              {
+                "id": "stress_part_3",
+                "duration_s": 20,
+                "elapsed_ms": 3575.571,
+                "complete_sentence_count": 6,
+                "text": "Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file."
+              },
+              {
+                "id": "stress_part_4",
+                "duration_s": 0.82,
+                "elapsed_ms": 297.923,
+                "complete_sentence_count": 0,
+                "text": ""
+              }
+            ],
+            "complete_sentence_count": 17,
+            "elapsed_ms": 10749.475,
+            "load_ms": 3154.4,
+            "peak_working_mib": 1968.9765625,
+            "peak_private_mib": 2004.09375,
+            "wer": {
+              "errors": 8,
+              "reference_words": 144,
+              "rate": 0.05555555555555555
+            },
+            "text": "Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. "
+          },
+          {
+            "file": "qwen-stress-split-3.jsonl",
+            "parts": [
+              {
+                "id": "stress_part_1",
+                "duration_s": 19.62,
+                "elapsed_ms": 3286.569,
+                "complete_sentence_count": 5,
+                "text": "Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file."
+              },
+              {
+                "id": "stress_part_2",
+                "duration_s": 19.56,
+                "elapsed_ms": 3497.008,
+                "complete_sentence_count": 6,
+                "text": "Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file."
+              },
+              {
+                "id": "stress_part_3",
+                "duration_s": 20,
+                "elapsed_ms": 3560.61,
+                "complete_sentence_count": 6,
+                "text": "Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file."
+              },
+              {
+                "id": "stress_part_4",
+                "duration_s": 0.82,
+                "elapsed_ms": 315.763,
+                "complete_sentence_count": 0,
+                "text": ""
+              }
+            ],
+            "complete_sentence_count": 17,
+            "elapsed_ms": 10659.95,
+            "load_ms": 3180.064,
+            "peak_working_mib": 1969.58984375,
+            "peak_private_mib": 2004.48828125,
+            "wer": {
+              "errors": 8,
+              "reference_words": 144,
+              "rate": 0.05555555555555555
+            },
+            "text": "Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. "
+          }
+        ],
+        "sample_coverage_verified": true,
+        "concatenated_pcm_sha256": "b2240c4aa482a8e2d5a5e895eb135df704f7a492d4853cef187d6c12b74aa7a3",
+        "cut_manifest": "stress-split-manifest.json"
+      },
+      "split_10_15": {
+        "runs": [
+          {
+            "file": "qwen-stress15-split-1.jsonl",
+            "parts": [
+              {
+                "id": "stress15_part_1",
+                "duration_s": 13.1,
+                "elapsed_ms": 2261.685,
+                "complete_sentence_count": 4,
+                "text": "Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file."
+              },
+              {
+                "id": "stress15_part_2",
+                "duration_s": 13.04,
+                "elapsed_ms": 2192.551,
+                "complete_sentence_count": 4,
+                "text": "Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file."
+              },
+              {
+                "id": "stress15_part_3",
+                "duration_s": 13.04,
+                "elapsed_ms": 2251.9,
+                "complete_sentence_count": 4,
+                "text": "Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file."
+              },
+              {
+                "id": "stress15_part_4",
+                "duration_s": 13.04,
+                "elapsed_ms": 2255.847,
+                "complete_sentence_count": 4,
+                "text": "Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file."
+              },
+              {
+                "id": "stress15_part_5",
+                "duration_s": 7.78,
+                "elapsed_ms": 1168.402,
+                "complete_sentence_count": 2,
+                "text": "Please open the project and save the file. Please open the project and save the file."
+              }
+            ],
+            "complete_sentence_count": 18,
+            "elapsed_ms": 10130.385,
+            "load_ms": 3125.452,
+            "peak_working_mib": 2093.328125,
+            "peak_private_mib": 2202.90625,
+            "wer": {
+              "errors": 0,
+              "reference_words": 144,
+              "rate": 0
+            },
+            "text": "Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file."
+          },
+          {
+            "file": "qwen-stress15-split-2.jsonl",
+            "parts": [
+              {
+                "id": "stress15_part_1",
+                "duration_s": 13.1,
+                "elapsed_ms": 2314.018,
+                "complete_sentence_count": 4,
+                "text": "Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file."
+              },
+              {
+                "id": "stress15_part_2",
+                "duration_s": 13.04,
+                "elapsed_ms": 2201.674,
+                "complete_sentence_count": 4,
+                "text": "Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file."
+              },
+              {
+                "id": "stress15_part_3",
+                "duration_s": 13.04,
+                "elapsed_ms": 2238.802,
+                "complete_sentence_count": 4,
+                "text": "Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file."
+              },
+              {
+                "id": "stress15_part_4",
+                "duration_s": 13.04,
+                "elapsed_ms": 2232.752,
+                "complete_sentence_count": 4,
+                "text": "Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file."
+              },
+              {
+                "id": "stress15_part_5",
+                "duration_s": 7.78,
+                "elapsed_ms": 1249.765,
+                "complete_sentence_count": 2,
+                "text": "Please open the project and save the file. Please open the project and save the file."
+              }
+            ],
+            "complete_sentence_count": 18,
+            "elapsed_ms": 10237.011,
+            "load_ms": 2952.626,
+            "peak_working_mib": 2092.26953125,
+            "peak_private_mib": 2201.84765625,
+            "wer": {
+              "errors": 0,
+              "reference_words": 144,
+              "rate": 0
+            },
+            "text": "Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file."
+          },
+          {
+            "file": "qwen-stress15-split-3.jsonl",
+            "parts": [
+              {
+                "id": "stress15_part_1",
+                "duration_s": 13.1,
+                "elapsed_ms": 2298.806,
+                "complete_sentence_count": 4,
+                "text": "Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file."
+              },
+              {
+                "id": "stress15_part_2",
+                "duration_s": 13.04,
+                "elapsed_ms": 2184.945,
+                "complete_sentence_count": 4,
+                "text": "Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file."
+              },
+              {
+                "id": "stress15_part_3",
+                "duration_s": 13.04,
+                "elapsed_ms": 2244.981,
+                "complete_sentence_count": 4,
+                "text": "Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file."
+              },
+              {
+                "id": "stress15_part_4",
+                "duration_s": 13.04,
+                "elapsed_ms": 2151.297,
+                "complete_sentence_count": 4,
+                "text": "Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file."
+              },
+              {
+                "id": "stress15_part_5",
+                "duration_s": 7.78,
+                "elapsed_ms": 1163.295,
+                "complete_sentence_count": 2,
+                "text": "Please open the project and save the file. Please open the project and save the file."
+              }
+            ],
+            "complete_sentence_count": 18,
+            "elapsed_ms": 10043.324,
+            "load_ms": 3305.441,
+            "peak_working_mib": 2091.70703125,
+            "peak_private_mib": 2201.5234375,
+            "wer": {
+              "errors": 0,
+              "reference_words": 144,
+              "rate": 0
+            },
+            "text": "Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file. Please open the project and save the file."
+          }
+        ],
+        "sample_coverage_verified": true,
+        "concatenated_pcm_sha256": "b2240c4aa482a8e2d5a5e895eb135df704f7a492d4853cef187d6c12b74aa7a3",
+        "cut_manifest": "stress15-split-manifest.json"
+      }
+    }
+  }
+}

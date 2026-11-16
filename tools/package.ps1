@@ -7,7 +7,9 @@ Set-StrictMode -Version Latest
 $source = [IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
 $build = [IO.Path]::GetFullPath((Join-Path $source $BuildDir))
 $output = [IO.Path]::GetFullPath((Join-Path $source $OutputDir))
-$version = '0.1.0'
+$productHeader = Get-Content -LiteralPath (Join-Path $source 'src/product.hpp') -Raw
+if ($productHeader -notmatch '#define SIMPLE_VOICE_VERSION "([0-9]+\.[0-9]+\.[0-9]+(?:-rc\.[0-9]+)?)"') { throw 'Missing package version.' }
+$version = $Matches[1]
 $name = "SimpleVoice-v$version-windows-x64"
 New-Item -ItemType Directory -Force -Path $output | Out-Null
 $stage = Join-Path $output ('.stage-' + [Guid]::NewGuid().ToString('N'))
@@ -31,14 +33,22 @@ foreach ($file in @('voiceime_engine.exe','voiceime_register.exe','voiceime_tsf.
 foreach ($file in @('libstdc++-6.dll','libgcc_s_seh-1.dll','libwinpthread-1.dll')) {
   Copy-PackageFile (Join-Path $build $file) $file
 }
-foreach ($file in @('default.yaml','voiceime.schema.yaml','voiceime.dict.yaml','pinyin_simp.dict.yaml','pinyin_simp.AUTHORS','pinyin_simp.LICENSE','SOURCE.txt')) {
-  Copy-PackageFile (Join-Path $source "rime-data/$file") "rime-data/$file"
+foreach ($line in Get-Content -LiteralPath (Join-Path $source 'rime-data/SHA256SUMS')) {
+  if ($line -notmatch '^([0-9a-f]{64})  ([A-Za-z0-9_.-]+)$') { throw 'Invalid Rime data manifest entry.' }
+  $expected = $Matches[1]; $file = $Matches[2]
+  $path = Join-Path $source "rime-data/$file"
+  if ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash -ne $expected) { throw "Rime data checksum mismatch: $file" }
+  Copy-PackageFile $path "rime-data/$file"
 }
+Copy-PackageFile (Join-Path $source 'rime-data/SHA256SUMS') 'rime-data/SHA256SUMS'
 foreach ($file in @('jieba.dict.utf8','hmm_model.utf8','user.dict.utf8','idf.utf8','stop_words.utf8','pinyin.txt','PINYIN-LICENSE.txt','README.md')) {
   Copy-PackageFile (Join-Path $source "third_party/cppjieba/dict/$file") "third_party/cppjieba/dict/$file"
 }
 Copy-PackageFile (Join-Path $source 'third_party/cppjieba/LICENSE') 'third_party/cppjieba/LICENSE'
-foreach ($file in @('README.md','LICENSE','NOTICE','THIRD_PARTY_NOTICES.md','PRODUCT.md','DESIGN.md','docs/development.md','docs/releases/v0.1.0.md','docs/releases/v0.1.0-validation.md')) {
+foreach ($file in @('README.md','LICENSE','NOTICE','THIRD_PARTY_NOTICES.md','PRODUCT.md','DESIGN.md','docs/development.md','docs/releases/v0.2.0-rc.1.md','docs/releases/v0.2.0-rc.1-validation.md','docs/releases/v0.2.0-rc.2.md','docs/releases/v0.2.0-rc.2-validation.md',"docs/releases/v$version.md", "docs/releases/v$version-validation.md",'docs/design/brand/README.md','docs/design/brand/sound-core-preview.png','docs/design/brand/windows-taskbar.png')) {
+  Copy-PackageFile (Join-Path $source $file) $file
+}
+foreach ($file in @('docs/plans/professional-release.md','docs/research/asr-selection-2026-11-15.md','docs/research/pinyin-selection-2026-11-15.md','docs/research/code-review-2026-11-15.md','docs/research/ui-review-2026-11-15.md')) {
   Copy-PackageFile (Join-Path $source $file) $file
 }
 foreach ($file in @('install.cmd','uninstall.cmd','check.cmd','START-HERE.txt')) {
@@ -60,7 +70,7 @@ foreach ($skin in @('titanium','daylight','deep-space')) {
 $files = @(Get-ChildItem -LiteralPath $package -Recurse -File | Sort-Object FullName | ForEach-Object {
   [ordered]@{path=$_.FullName.Substring($package.Length + 1).Replace('\','/');size=$_.Length;sha256=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()}
 })
-$manifest = [ordered]@{product='Simple Voice';version=$version;platform='windows-x64';channel='preview';modelsBundled=$false;files=$files}
+$manifest = [ordered]@{product='Simple Voice';version=$version;platform='windows-x64';channel='release-candidate';modelsBundled=$false;files=$files}
 $manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $package 'package-manifest.json') -Encoding UTF8
 $zip = Join-Path $output ($name + '.zip')
 Compress-Archive -LiteralPath $package -DestinationPath $zip -CompressionLevel Optimal -Force

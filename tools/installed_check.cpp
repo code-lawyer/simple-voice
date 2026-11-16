@@ -1,6 +1,9 @@
 // Explicit deployment check, never part of CTest: activates the registered
 // production DLL and leaves its real engine running, without starting capture.
+#include <initguid.h>
 #include "tsf_service.hpp"
+#include "tsf_indicator_compat.hpp"
+#include "brand_resources.h"
 #include "ipc.hpp"
 #include "pipe_io.hpp"
 #include <msctf.h>
@@ -43,6 +46,26 @@ struct ActiveService {
   ~ActiveService() { service->Deactivate(); }
 };
 int Check(const std::filesystem::path& expected) {
+  const wchar_t* profile=L"Software\\Microsoft\\CTF\\TIP\\{A4C1E2B0-7D34-4F91-9A62-5E18C3704B21}\\LanguageProfile\\0x00000804\\{6E2D9A14-51C8-4B0E-B733-8F901D6A2C55}";
+  wchar_t icon_file[32768]{};DWORD bytes=sizeof(icon_file),icon_index=0;
+  if(RegGetValueW(HKEY_LOCAL_MACHINE,profile,L"IconFile",RRF_RT_REG_SZ,nullptr,icon_file,&bytes)!=ERROR_SUCCESS ||
+      !std::filesystem::equivalent(icon_file,expected/L"voiceime_tsf.dll"))
+    throw std::runtime_error("system brand icon does not point at the installed DLL");
+  bytes=sizeof(icon_index);
+  if(RegGetValueW(HKEY_LOCAL_MACHINE,profile,L"IconIndex",RRF_RT_REG_DWORD,nullptr,&icon_index,&bytes)!=ERROR_SUCCESS ||
+      icon_index!=static_cast<DWORD>(-IDI_SIMPLE_VOICE))
+    throw std::runtime_error("system brand icon resource ID is incorrect");
+  bytes=sizeof(icon_file);
+  const auto legacy_icon=RegGetValueW(HKEY_CURRENT_USER,profile,L"IconFile",RRF_RT_ANY,nullptr,icon_file,&bytes);
+  if(legacy_icon!=ERROR_FILE_NOT_FOUND && legacy_icon!=ERROR_PATH_NOT_FOUND)
+    throw std::runtime_error("legacy current-user brand metadata still overrides the system profile");
+  HKEY legacy_category=nullptr;
+  const auto legacy_status=RegOpenKeyExW(HKEY_CURRENT_USER,
+      L"Software\\Microsoft\\CTF\\TIP\\{A4C1E2B0-7D34-4F91-9A62-5E18C3704B21}\\Category",0,KEY_READ,&legacy_category);
+  if(legacy_category)RegCloseKey(legacy_category);
+  if(legacy_status!=ERROR_FILE_NOT_FOUND && legacy_status!=ERROR_PATH_NOT_FOUND)
+    throw std::runtime_error("legacy current-user TIP categories were not migrated");
+  std::puts("system_brand_resource=100; legacy_user_metadata=absent");
   ComPtr<ITfInputProcessorProfiles> profiles;
   Hr(CoCreateInstance(CLSID_TF_InputProcessorProfiles,nullptr,CLSCTX_INPROC_SERVER,
       IID_ITfInputProcessorProfiles,reinterpret_cast<void**>(&profiles.value)),"create profile manager");
@@ -69,6 +92,25 @@ int Check(const std::filesystem::path& expected) {
   ActiveThread active_thread{manager.value};
   Hr(service.value->Activate(manager.value,client),"activate registered service");
   ActiveService active_service{service.value};
+
+  ComPtr<ITfLangBarItemMgr> language_bar;
+  Hr(manager.value->QueryInterface(IID_ITfLangBarItemMgr,reinterpret_cast<void**>(&language_bar.value)),"get installed language bar");
+  ComPtr<ITfLangBarItem> item;
+  Hr(language_bar.value->GetItem(kSystemInputModeItem,&item.value),"find installed input mode indicator");
+  TF_LANGBARITEMINFO info{};Hr(item.value->GetInfo(&info),"read installed indicator identity");
+  if(info.clsidService!=CLSID_VoiceIme)throw std::runtime_error("input indicator belongs to another service");
+  ComPtr<ITfLangBarItemButton> button;
+  Hr(item.value->QueryInterface(kLangBarButtonIid,reinterpret_cast<void**>(&button.value)),"get installed input mode button");
+  HICON mode_icon=nullptr;Hr(button.value->GetIcon(&mode_icon),"load installed input mode icon");
+  if(!mode_icon)throw std::runtime_error("input mode icon is empty");
+  DestroyIcon(mode_icon);
+  BSTR tooltip=nullptr;Hr(item.value->GetTooltipString(&tooltip),"read installed indicator tooltip");
+  const std::wstring label(tooltip,SysStringLen(tooltip));SysFreeString(tooltip);
+  if(label.find(L"轻音输入法 · Simple Voice")==std::wstring::npos)throw std::runtime_error("missing product identity in indicator");
+  const auto brand=static_cast<HICON>(LoadImageW(module,MAKEINTRESOURCEW(IDI_SIMPLE_VOICE),IMAGE_ICON,24,24,LR_DEFAULTCOLOR));
+  if(!brand)throw std::runtime_error("installed brand resource is missing");
+  DestroyIcon(brand);
+  std::puts("installed_brand_resource=1\ninstalled_input_mode_indicator=1");
 
   Handle pipe;
   const auto deadline=GetTickCount64()+30000;

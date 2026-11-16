@@ -1,7 +1,8 @@
 param(
   [string]$Root = (Split-Path -Parent $PSScriptRoot),
   [switch]$ForPackage,
-  [switch]$Offline
+  [switch]$Offline,
+  [switch]$RuntimeOnly
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -26,6 +27,7 @@ function Test-Files([string]$Directory, $Files) {
 }
 
 foreach ($pack in $manifest.artifacts) {
+  if ($RuntimeOnly -and $pack.Id -ne 'runtime') { continue }
   $destination = Get-ChildPath $pack.Destination
   if (-not (Test-Files $destination $pack.Files)) {
     $cache = Get-ChildPath '.downloads'
@@ -79,4 +81,5 @@ if ($ForPackage) {
     }
   }
 }
-Write-Host 'Local models are ready. Normal input does not require a network connection.'
+if ($RuntimeOnly) { Write-Host 'Verified runtime SDK is ready for building.' }
+else { Write-Host 'Local models are ready. Normal input does not require a network connection.' }

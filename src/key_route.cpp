@@ -37,16 +37,16 @@ KeyDecision RouteKey(const KeyState& state, Hotkey hotkey) {
   }
 
   const bool letter = state.vk >= 0x41 && state.vk <= 0x5A;
-  if (state.mode == InputMode::Chinese && letter && plain && (state.shift || state.caps)) {
-    return KeyDecision{KeyAction::PassAfterClear};
-  }
-
   if (state.mode == InputMode::English) return KeyDecision{KeyAction::Pass};
+
+  if (state.composing && state.ctrl && !state.alt && !state.shift && state.vk == 0x2E)
+    return KeyDecision{KeyAction::ToRime};
 
   if (state.mode == InputMode::Chinese && plain) {
     if (letter) return KeyDecision{KeyAction::ToRime};
     if (state.composing) {
-      if (state.vk == 0x08 || state.vk == 0x20 || state.vk == 0x0D || state.vk == 0x1B) {
+      if (state.vk == 0x08 || state.vk == 0x20 || state.vk == 0x0D || state.vk == 0x1B ||
+          state.vk == 0x2E || (state.vk >= 0x23 && state.vk <= 0x28)) {
         return KeyDecision{KeyAction::ToRime};
       }
       if (state.vk == 0x21 || state.vk == 0x22 || state.vk == 0xBD || state.vk == 0xBB) {

@@ -1,0 +1,10 @@
+repository: rime/rime-pinyin-simp
+commit: 0c6861ef7420ee780270ca6d993d18d4101049d0
+license: Apache-2.0
+
+Downloaded from that commit:
+  pinyin_simp.dict.yaml
+  LICENSE saved as pinyin_simp.LICENSE
+  AUTHORS saved as pinyin_simp.AUTHORS
+
+The upstream schema file was not downloaded.

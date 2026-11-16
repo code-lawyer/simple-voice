@@ -3,6 +3,10 @@
 #include "candidate_bar.hpp"
 #include "confirm_box.hpp"
 #include "hotkey_dialog.hpp"
+#include "preferences_window.hpp"
+#include "utf8.hpp"
+#include <commctrl.h>
+#include <ctime>
 #include <objidl.h>
 #include <gdiplus.h>
 #include <filesystem>
@@ -57,10 +61,10 @@ static bool Save(HWND hwnd, const std::filesystem::path& path, bool settle = tru
     Sleep(80);
   }
   RECT rect{};
-  GetWindowRect(hwnd, &rect);
-  rect.right -= rect.left;
-  rect.bottom -= rect.top;
-  HDC dc = GetWindowDC(hwnd);
+  const bool client_only=path.filename().string().find("preferences-bottom-dpi-")!=std::string::npos;
+  if(client_only) GetClientRect(hwnd,&rect);
+  else { GetWindowRect(hwnd,&rect); rect.right-=rect.left; rect.bottom-=rect.top; }
+  HDC dc=client_only?GetDC(hwnd):GetWindowDC(hwnd);
   HDC capture = CreateCompatibleDC(dc);
   HBITMAP bitmap = CreateCompatibleBitmap(dc, rect.right, rect.bottom);
   HGDIOBJ old = SelectObject(capture, bitmap);
@@ -290,6 +294,70 @@ int main(int argc, char** argv) {
     const HWND old=hotkey.hwnd();
     SendMessageW(old,WM_KEYDOWN,VK_ESCAPE,0);
     check(!IsWindow(old),"Esc closes hotkey dialog");
+  }
+  {
+    Lexicon lexicon(":memory:");
+    for(int i=0;i<230;++i) lexicon.SaveTerm("示例术语"+std::to_string(i),"sample"+std::string(1,char('a'+i%26))+std::string(1,char('a'+i/26)),std::time(nullptr));
+    PreferencesWindow preferences; PreferencesActions actions; InputPreferences saved;
+    actions.save=[&](const InputPreferences& next){saved=next;return SaveInputPreferences((output/"input-preferences.ini").wstring(),next);};
+    actions.skin=[](UiSkin){return true;}; actions.terms_changed=[&]{return lexicon.ExportTerms((output/"voiceime_personal.txt").wstring());};
+    actions.input_code=[](const std::string&){return "qingyin";}; actions.diagnostics=[] {return L"Simple Voice RC · Windows x64\r\n语音模型：就绪 · 中英通用\r\n音频只在内存处理；诊断不包含输入正文。";};
+    preferences.Open(&lexicon,{},UiCurrentSkin(),actions,1);
+    const HWND window=preferences.hwnd();
+    check(SendDlgItemMessageW(window,31,LB_GETCOUNT,0,0)==100,"personal terms paginate instead of rendering an unbounded list");
+    SendMessageW(window,WM_COMMAND,40,0);
+    check(SendDlgItemMessageW(window,31,LB_GETCOUNT,0,0)==100,"next page remains bounded");
+    SetDlgItemTextW(window,32,L"轻音输入法"); SetDlgItemTextW(window,33,L"qingyin"); SendMessageW(window,WM_COMMAND,35,0);
+    check(lexicon.Count()==231,"explicit native save creates a personal term");
+    SetDlgItemTextW(window,30,L"轻音");
+    check(SendDlgItemMessageW(window,31,LB_GETCOUNT,0,0)==1,"search narrows personal terms");
+    check(!IsWindowEnabled(GetDlgItem(window,39)) && !IsWindowEnabled(GetDlgItem(window,40)),"single-page search disables both pagination actions");
+    SendDlgItemMessageW(window,31,LB_SETCURSEL,0,0); SendMessageW(window,WM_COMMAND,MAKEWPARAM(31,LBN_SELCHANGE),0);
+    ok=Save(window,output/"preferences-terms.png") && ok;
+    SendMessageW(window,WM_COMMAND,37,0); check(lexicon.Search("轻音").empty(),"native delete removes selected term");
+    SendMessageW(window,WM_COMMAND,38,0); check(lexicon.Search("轻音").size()==1,"native undo restores the deleted term");
+    SetDlgItemTextW(window,30,L"没有这个匹配"); ok=Save(window,output/"preferences-empty-search.png") && ok;
+    for(int page:{0,2,3}) { preferences.Open(&lexicon,{},UiCurrentSkin(),actions,page); ok=Save(window,output/("preferences-page-"+std::to_string(page)+".png")) && ok; }
+    preferences.Open(&lexicon,{},UiCurrentSkin(),actions,0);
+    for(UINT dpi:{144u,192u}) {
+      SendMessageW(window,WM_DPICHANGED,MAKELONG(dpi,dpi),0);
+      SendMessageW(window,WM_VSCROLL,SB_BOTTOM,0);
+      RECT button{},client{}; GetWindowRect(GetDlgItem(window,23),&button); MapWindowPoints(nullptr,window,reinterpret_cast<POINT*>(&button),2); GetClientRect(window,&client);
+      check(button.top>=0 && button.bottom<=client.bottom,"settings save action remains reachable at high DPI");
+      ok=Save(window,output/("preferences-bottom-dpi-"+std::to_string(dpi)+".png")) && ok;
+    }
+    preferences.Close();
+    PreviewEditor editor; std::string edited;
+    editor.Open("这是<unk>","原始识别文本",[&](std::string text){edited=std::move(text);});
+    SendMessageW(editor.hwnd(),WM_COMMAND,IDOK,0);
+    check(IsWindow(editor.hwnd()) && edited.empty(),"unknown speech cannot be saved as a completed preview");
+    SendMessageW(editor.hwnd(),WM_COMMAND,12,0);
+    ok=Save(editor.hwnd(),output/"preview-editor.png") && ok;
+    auto editor_key=[&](int vk) {
+      MSG key{GetFocus(),WM_KEYDOWN,static_cast<WPARAM>(vk),1};
+      if(!editor.Translate(&key)) { TranslateMessage(&key); DispatchMessageW(&key); }
+      MSG pending{};
+      while(PeekMessageW(&pending,nullptr,0,0,PM_REMOVE)) {
+        if(!editor.Translate(&pending)) { TranslateMessage(&pending); DispatchMessageW(&pending); }
+      }
+      key={GetFocus(),WM_KEYUP,static_cast<WPARAM>(vk),1};
+      if(!editor.Translate(&key)) { TranslateMessage(&key); DispatchMessageW(&key); }
+    };
+    SetFocus(GetDlgItem(editor.hwnd(),10));
+    for(int id:{12,13,IDOK,10}) {
+      editor_key(VK_TAB);
+      check(GetFocus()==GetDlgItem(editor.hwnd(),id),"Tab traverses every preview control and returns to text");
+    }
+    BYTE preview_keys[256]{}; preview_keys[VK_SHIFT]=0x80; SetKeyboardState(preview_keys);
+    editor_key(VK_TAB); check(GetFocus()==GetDlgItem(editor.hwnd(),IDOK),"Shift Tab leaves preview text in reverse order");
+    preview_keys[VK_SHIFT]=0; preview_keys[VK_CONTROL]=0x80; SetKeyboardState(preview_keys);
+    editor_key(VK_RETURN); preview_keys[VK_CONTROL]=0; SetKeyboardState(preview_keys);
+    check(edited=="原始识别文本" && !editor.hwnd(),"restore and save preserve the exact original recognition");
+    editor.Open(edited,"原始识别文本",[&](std::string text){edited=std::move(text);});
+    SendDlgItemMessageW(editor.hwnd(),10,EM_SETSEL,0,-1);
+    SendDlgItemMessageW(editor.hwnd(),10,EM_REPLACESEL,TRUE,reinterpret_cast<LPARAM>(L"我修改了预览 GitHub 20"));
+    SendMessageW(editor.hwnd(),WM_COMMAND,IDOK,0);
+    check(edited=="我修改了预览 GitHub 20","manual edits survive saving and reopening the native preview");
   }
   SetKeyboardState(keyboard);
   Gdiplus::GdiplusShutdown(token);

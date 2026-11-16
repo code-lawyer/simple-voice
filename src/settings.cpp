@@ -8,6 +8,7 @@
 #include <io.h>
 #include <charconv>
 #include <string_view>
+#include <sstream>
 
 namespace {
 
@@ -177,4 +178,51 @@ UiSkin LoadSkin(const std::wstring& path) {
 bool SaveSkin(const std::wstring& path, UiSkin skin) {
   const auto id=SkinId(skin);
   return id && WriteConfig(path,std::string("{\"skin\":\"")+id+"\"}");
+}
+
+InputPreferences LoadInputPreferences(const std::wstring& path) {
+  InputPreferences defaults;
+  HANDLE file=CreateFileW(path.c_str(),GENERIC_READ,FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,
+      nullptr,OPEN_EXISTING,0,nullptr);
+  if(file==INVALID_HANDLE_VALUE) return defaults;
+  char buffer[8193]; DWORD size=0;
+  const bool ok=ReadFile(file,buffer,sizeof(buffer),&size,nullptr)!=0;
+  CloseHandle(file);
+  if(!ok || size>8192) return defaults;
+  std::istringstream input(std::string(buffer,size));
+  std::string line;
+  InputPreferences result;
+  unsigned fields=0;
+  while(std::getline(input,line)) {
+    if(!line.empty() && line.back()=='\r') line.pop_back();
+    if(line=="version=1") { if(fields&1) return defaults; fields|=1; }
+    else if(line=="learning=0" || line=="learning=1") {
+      if(fields&2) return defaults; fields|=2; result.learning=line.back()=='1';
+    } else if(line=="guide=0" || line=="guide=1") {
+      if(fields&4) return defaults; fields|=4; result.guide_dismissed=line.back()=='1';
+    } else if(line=="chinese=0" || line=="chinese=1") {
+      if(fields&32) return defaults; fields|=32; result.chinese_only=line.back()=='1';
+    } else if(line.rfind("pause=",0)==0) {
+      if(fields&8) return defaults; fields|=8;
+      const auto number=line.substr(6);
+      const auto parsed=std::from_chars(number.data(),number.data()+number.size(),result.pause_ms);
+      if(parsed.ec!=std::errc{} || parsed.ptr!=number.data()+number.size() || result.pause_ms<500 || result.pause_ms>2000) return defaults;
+    } else if(line.rfind("microphone=",0)==0) {
+      if(fields&16) return defaults; fields|=16;
+      const auto device=line.substr(11);
+      if(device.size()>2048 || device.find('\0')!=std::string::npos) return defaults;
+      if(!device.empty() && !MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,device.data(),static_cast<int>(device.size()),nullptr,0)) return defaults;
+      result.microphone=Utf8ToWide(device);
+    } else return defaults;
+  }
+  return fields==31 || fields==63 ? result : defaults;
+}
+
+bool SaveInputPreferences(const std::wstring& path,const InputPreferences& preferences) {
+  const auto device=WideToUtf8(preferences.microphone);
+  if(preferences.pause_ms<500 || preferences.pause_ms>2000 || device.size()>2048 ||
+      device.find_first_of("\r\n")!=std::string::npos || device.find('\0')!=std::string::npos) return false;
+  return WriteConfig(path,"version=1\nlearning="+std::to_string(preferences.learning?1:0)+
+      "\nguide="+std::to_string(preferences.guide_dismissed?1:0)+"\npause="+std::to_string(preferences.pause_ms)+
+      "\nmicrophone="+device+"\nchinese="+std::to_string(preferences.chinese_only?1:0)+"\n");
 }

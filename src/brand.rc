@@ -1,0 +1,8 @@
+#include "brand_resources.h"
+IDI_SIMPLE_VOICE ICON "../assets/brand/simple-voice.ico"
+IDI_SOUND_CORE_DARK ICON "../assets/brand/sound-core-white.ico"
+IDI_SOUND_CORE_LIGHT ICON "../assets/brand/sound-core-black.ico"
+IDI_MODE_CHINESE ICON "../assets/brand/mode-chinese.ico"
+IDI_MODE_ENGLISH ICON "../assets/brand/mode-english.ico"
+IDI_MODE_CHINESE_LIGHT ICON "../assets/brand/mode-chinese-white.ico"
+IDI_MODE_ENGLISH_LIGHT ICON "../assets/brand/mode-english-white.ico"

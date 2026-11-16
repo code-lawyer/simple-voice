@@ -33,6 +33,7 @@ bool ValidSize(MsgType type, std::size_t body) {
     case MsgType::InsertText: return body > 8;
     case MsgType::InsertResult: return body == 10 || body == 12;
     case MsgType::CancelInsert: return body == 8;
+    case MsgType::PersonalTermUsed: return body>0 && body<=4096;
     case MsgType::InsertAck: return body == 2 || body == 4;
     case MsgType::Draft: case MsgType::Final: case MsgType::CommitDone:
     case MsgType::ListRecent: case MsgType::DeleteEntry: return true;

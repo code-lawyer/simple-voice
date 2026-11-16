@@ -121,27 +121,20 @@ void SettingsRejectCorruptionAndUseTheSameHotkeyPolicy() {
 }
 
 void LexiconStatementFailuresRollBackAndCanRecover() {
-  TestDb db; Lexicon lex(db.path);
-  db.Sql("CREATE TRIGGER deny_word BEFORE INSERT ON entries WHEN NEW.text='坏词' BEGIN SELECT RAISE(ABORT,'injected'); END");
-  CHECK(Throws([&] { lex.Commit("好词坏词", {{"好词","hao ci"},{"坏词","huai ci"}}, 1000); }));
-  CHECK(lex.Recent(10).empty());
-  db.Sql("DROP TRIGGER deny_word");
-  lex.Commit("好词坏词", {{"好词","hao ci"},{"坏词","huai ci"}}, 1000);
-  CHECK(lex.Recent(10).size() == 2);
-  db.Sql("CREATE TRIGGER deny_delete BEFORE DELETE ON entries BEGIN SELECT RAISE(ABORT,'injected'); END");
-  CHECK(Throws([&] { lex.Delete("好词"); })); CHECK(lex.Recent(10).size() == 2);
+  TestDb db; Lexicon lex(db.path); lex.SaveTerm("好词","haoci",1000);
+  db.Sql("CREATE TRIGGER deny_word BEFORE INSERT ON personal_terms WHEN NEW.text='坏词' BEGIN SELECT RAISE(ABORT,'injected'); END");
+  CHECK(Throws([&] { lex.SaveTerm("坏词","huaici",1000,"好词"); }));
+  CHECK(lex.Search("好词").size()==1); CHECK(lex.Search("坏词").empty());
+  db.Sql("DROP TRIGGER deny_word"); lex.SaveTerm("坏词","huaici",1000);
+  db.Sql("CREATE TRIGGER deny_delete BEFORE DELETE ON personal_terms BEGIN SELECT RAISE(ABORT,'injected'); END");
+  CHECK(Throws([&] { lex.Delete("好词"); })); CHECK(lex.Count()==2);
   db.Sql("DROP TRIGGER deny_delete"); CHECK(lex.Delete("好词"));
-  db.Sql("DROP TABLE entries");
-  CHECK(Throws([&] { lex.Recent(10); }));
+  db.Sql("DROP TABLE personal_terms"); CHECK(Throws([&] { lex.Recent(10); }));
 }
-
 void BusyLexiconTransactionDoesNotPoisonLaterWrites() {
-  TestDb db; Lexicon lex(db.path);
-  db.Sql("BEGIN IMMEDIATE");
-  CHECK(Throws([&] { lex.Commit("好词", {{"好词","hao ci"}}, 1000); }));
-  db.Sql("ROLLBACK");
-  lex.Commit("好词", {{"好词","hao ci"}}, 1000);
-  CHECK(lex.Recent(10).size() == 1);
+  TestDb db; Lexicon lex(db.path); db.Sql("BEGIN IMMEDIATE");
+  CHECK(Throws([&] { lex.SaveTerm("好词","haoci",1000); }));
+  db.Sql("ROLLBACK"); lex.SaveTerm("好词","haoci",1000); CHECK(lex.Count()==1);
 }
 
 void LegacyPhraseRetentionStartsOnceAndExpiresAfter365Days() {
@@ -159,7 +152,7 @@ void LegacyPhraseRetentionStartsOnceAndExpiresAfter365Days() {
     CHECK(db.Scalar("SELECT count(*) FROM seen_phrase") == 0);
     lex.Commit("第一次出现的完整长句", {}, upgraded + 366 * 86400LL);
     CHECK(lex.Recent(10).empty());
-    CHECK(db.Scalar("SELECT count(*) FROM seen_phrase") == 1);
+    CHECK(db.Scalar("SELECT count(*) FROM seen_phrase") == 0);
   }
 }
 

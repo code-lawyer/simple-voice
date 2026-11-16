@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-11-15T14:14:31Z",
+  "generatedAt": "2026-11-16T04:41:47Z",
   "title": "Design System: Simple Voice",
   "extensions": {
     "platform": {
@@ -12,12 +12,132 @@
         "src/confirm_box.cpp",
         "src/candidate_bar.cpp",
         "src/engine_main.cpp",
-        "src/settings.cpp"
+        "src/settings.cpp",
+        "src/preferences_window.cpp",
+        "src/preferences_window.hpp",
+        "tools/build-brand-icons.ps1",
+        "src/brand_resources.h",
+        "src/brand.rc",
+        "src/brand_icon.hpp",
+        "src/input_indicator.cpp",
+        "src/input_indicator.hpp",
+        "src/tsf_service.cpp",
+        "src/tsf_service.hpp",
+        "src/register_ime.cpp"
       ],
       "lengthSemantics": "Frontmatter px values represent DIP at 96 DPI; UiPx converts them for each native window.",
       "fontMetrics": "GDI measures line height and wrapped text; no fixed CSS line-height or letter-spacing is asserted.",
       "componentRepresentation": "Native metadata only. The existing browser comparison prototype is a reference, not the production implementation.",
       "referencePrototype": "docs/design/skin-preview/index.html"
+    },
+    "colorMeta": {
+      "brand-ink": { "role": "neutral", "displayName": "声核黑", "purpose": "The sound core and mode icons on light surfaces, and the mark in the static profile badge." },
+      "brand-paper": { "role": "neutral", "displayName": "声核白", "purpose": "The sound core and mode icons on dark surfaces, and the static profile badge plate." },
+      "brand-badge-outline": { "role": "neutral", "displayName": "徽标细边", "purpose": "The translucent black outline of the static profile badge; not a skin border." }
+    },
+    "brand": {
+      "id": "sound-core",
+      "displayName": "声核",
+      "productNames": ["Simple Voice", "轻音输入法"],
+      "approvedDirection": "A",
+      "approvalDate": "2026-11-15",
+      "positioning": "极简、本地",
+      "geometry": {
+        "coordinateSpace": { "viewBox": [0, 0, 24, 24], "unit": "vector unit, not DIP or output pixel" },
+        "enclosurePath": "M 17 21 L 9 21 C 5.6863 21 3 18.3137 3 15 L 3 9 C 3 5.6863 5.6863 3 9 3 L 15 3 C 18.3137 3 21 5.6863 21 9 L 21 16",
+        "enclosureStrokeUnits": 3.4,
+        "corePath": "M 12 9.4 L 12 14.6",
+        "coreStrokeUnits": 4.4,
+        "lineCap": "round",
+        "lineJoin": "round",
+        "signature": "A rounded enclosure open at the lower right, surrounding a central vertical capsule.",
+        "profileBadge": {
+          "componentRef": "brand-profile-badge",
+          "plateBoundsUnits": [0.5, 0.5, 23.5, 23.5],
+          "plateCornerRadiusUnits": 2.5,
+          "outlineColorRef": "{colors.brand-badge-outline}",
+          "outlineStrokeUnits": 0.8,
+          "markScale": 0.75,
+          "markTranslationUnits": [3, 3]
+        }
+      },
+      "resources": {
+        "generator": "tools/build-brand-icons.ps1",
+        "resourceTable": "src/brand.rc",
+        "resourceIds": "src/brand_resources.h",
+        "assetDirectory": "assets/brand/",
+        "sizesPx": [16, 20, 24, 28, 32, 40, 48, 64, 128, 256],
+        "bitDepth": 32,
+        "alpha": true,
+        "families": [
+          { "name": "simple-voice", "resourceId": 100, "componentRef": "brand-profile-badge", "format": "ICO" },
+          { "name": "sound-core-white", "resourceId": 101, "componentRef": "brand-mark-on-dark", "formats": ["ICO", "SVG"] },
+          { "name": "sound-core-black", "resourceId": 102, "componentRef": "brand-mark-on-light", "formats": ["ICO", "SVG"] },
+          { "name": "mode-chinese", "resourceId": 103, "formats": ["ICO", "SVG"] },
+          { "name": "mode-english", "resourceId": 104, "formats": ["ICO", "SVG"] },
+          { "name": "mode-chinese-white", "resourceId": 105, "formats": ["ICO", "SVG"] },
+          { "name": "mode-english-white", "resourceId": 106, "formats": ["ICO", "SVG"] }
+        ]
+      },
+      "systemProfile": {
+        "componentRef": "brand-profile-badge",
+        "resourceId": 100,
+        "iconIndex": -100,
+        "iconReferenceSemantics": "Negative resource identifier explicitly referencing resource 100.",
+        "treatment": "Static black mark on a white badge with a fine translucent outline.",
+        "registrationCategories": ["GUID_TFCAT_TIP_KEYBOARD", "GUID_TFCAT_DISPLAYATTRIBUTEPROVIDER", "GUID_TFCAT_TIPCAP_SYSTRAYSUPPORT"],
+        "registrationApis": ["ITfCategoryMgr::RegisterCategory", "ITfInputProcessorProfileMgr::RegisterProfile"],
+        "registrationSources": ["src/register_ime.cpp", "src/tsf_service.hpp"],
+        "registrationStorage": {
+          "machine": "HKLM owns the COM registration and official profile.",
+          "migration": "Remove only this product's legacy HKCU mirror; do not recreate the mirrored profile and category tree.",
+          "userEnablement": "EnableLanguageProfile retains the current user's Enable=1."
+        },
+        "withdrawnCategories": ["GUID_TFCAT_TIPCAP_IMMERSIVESUPPORT"],
+        "registrationScope": "Desktop registration using keyboard, display-attribute, and system-tray categories only. AppContainer support is neither declared nor accepted.",
+        "shellDisplayStatus": "Passed in the captured local desktop shell: the separate 中 mode and sound core brand icon are both visible."
+      },
+      "engineTray": {
+        "nativeSources": ["src/brand_icon.hpp", "src/engine_main.cpp"],
+        "darkSystemThemeRef": "brand-mark-on-dark",
+        "lightSystemThemeRef": "brand-mark-on-light",
+        "background": "transparent",
+        "themeSource": "SystemUsesLightTheme",
+        "highContrast": "Choose the black or white resource from COLOR_WINDOWTEXT luminance; this does not directly recolor the brand to an arbitrary system foreground.",
+        "sizing": "Convert 16 logical pixels using the taskbar window DPI, with a minimum of 16 output pixels.",
+        "independentOfSkin": true
+      },
+      "inputMode": {
+        "nativeSources": ["src/input_indicator.cpp", "src/brand_icon.hpp", "src/tsf_service.cpp"],
+        "labels": ["中", "A"],
+        "styles": ["TF_LBI_STYLE_BTN_BUTTON", "TF_LBI_STYLE_SHOWNINTRAY"],
+        "modeStrokeUnits": 1.8,
+        "coloring": "ShellUsesLightIcons explicitly selects white mode resources for dark system themes and black mode resources for light themes. High contrast uses COLOR_WINDOWTEXT brightness, as for the tray; no automatic TSF recoloring is requested.",
+        "darkSystemTheme": { "colorRef": "{colors.brand-paper}", "resourceIds": [105, 106] },
+        "lightSystemTheme": { "colorRef": "{colors.brand-ink}", "resourceIds": [103, 104] },
+        "themeRefresh": {
+          "window": "Hidden, nonactivating TSF top-level tool window; never shown and has no taskbar button.",
+          "messages": ["WM_SETTINGCHANGE", "WM_THEMECHANGED", "WM_DISPLAYCHANGE", "WM_DPICHANGED"],
+          "notification": "TF_LBI_ICON"
+        },
+        "action": "Left click and Shift toggle the same Chinese/English input mode; the button is disabled when the active context cannot accept editing.",
+        "modeNotifications": ["TF_LBI_ICON", "TF_LBI_TEXT", "TF_LBI_TOOLTIP"],
+        "availabilityNotification": "TF_LBI_STATUS"
+      },
+      "motion": "Static; the brand does not imply recording, recognition progress, or completed insertion.",
+      "smallSizeReviewRangePx": [16, 48],
+      "preservedSystem": "The three native skins and existing typography remain the authority for their own surfaces.",
+      "evidence": {
+        "preview": "docs/design/brand/sound-core-preview.png",
+        "documentation": "docs/design/brand/README.md",
+        "renderer": "tools/render-brand-preview.ps1",
+        "provenance": "Windows DrawIconEx renders icon resources loaded from the built DLL at actual pixel sizes. The mode examples in this preview are the black variants.",
+        "acceptanceBoundary": "This is native resource rendering, not an actual taskbar screenshot. Installed shell display, real theme changes, and interaction require their separate installation verification.",
+        "nativeShellScreenshot": "build-professional/rc3-taskbar-supported-registration.png",
+        "shellObservation": "The actual local desktop taskbar displays the separate 中 mode and sound core brand icon. This confirms desktop shell brand display for the captured environment, not complete UWP / AppContainer, cross-version, or all-host acceptance.",
+        "activeProfileCapsHex": "0x20000",
+        "registrationDiagnosisBoundary": "The earlier 中 简体 display problem was narrowed to the legacy registration and configuration-refresh chain. Replacing the icon or index, or restarting TextInputHost alone, did not resolve it; cleanup and configuration refresh restored the brand. Writing the old mirror back did not immediately reproduce the problem, so no single HKCU key is established as the sole root cause. Static rendering, registration success, and actual shell display remain separate evidence."
+      }
     },
     "themes": [
       {
@@ -102,7 +222,10 @@
     "typographyMeta": {
       "body": { "displayName": "正文与候选词", "purpose": "Voice preview content, empty-content guidance, and candidate words." },
       "status": { "displayName": "语音状态", "purpose": "The native voice overlay's current phase or recovery condition." },
-      "label": { "displayName": "操作提示", "purpose": "Action hints, scroll hints, candidate indices, and settings entry." }
+      "label": { "displayName": "操作提示", "purpose": "Action hints, scroll hints, candidate indices, and settings entry." },
+      "preferences-title": { "displayName": "设置标题", "purpose": "The product title in the native settings window; not a display style for input overlays." },
+      "preferences-control": { "displayName": "设置控件", "purpose": "Native settings tabs, labels, fields, status feedback, and buttons." },
+      "preview-editor": { "displayName": "预览编辑", "purpose": "The native preview editor's text, status, and buttons." }
     },
     "elevation": {
       "mechanism": "Native window shadow plus solid surfaces, selection fills, and rules.",
@@ -110,7 +233,8 @@
       "ownership": "Windows determines shadow rendering; the project defines no CSS shadow parameters.",
       "transparency": "Opaque GDI surfaces.",
       "backdropBlur": false,
-      "paintStrategy": "UiPaintFrame submits a complete offscreen frame to avoid background-only flashes."
+      "paintStrategy": "UiPaintFrame submits a complete offscreen frame to avoid background-only flashes.",
+      "utilities": "Settings and the preview editor use ordinary Windows top-level frames and native control borders; their nonclient areas and control depth are system-owned."
     },
     "appearance": {
       "entryPoints": ["Tray menu", "Candidate strip settings entry"],
@@ -122,6 +246,7 @@
       "apply": "Save the preference, repaint the voice overlay, and broadcast VoiceIme.AppearanceChanged to existing candidate windows; new windows read the saved selection.",
       "preservedOnSwitch": ["Recording session", "Preview text", "Candidate selection", "Scroll position", "Window position", "Window visibility", "Document focus"],
       "automaticSystemLightDarkSwitch": false,
+      "utilitySurfaces": "The selected skin applies to voice and candidate overlays. Settings retain Titanium background and text; native controls and the preview editor retain Windows colors and states.",
       "highContrastPriority": {
         "background": "COLOR_WINDOW",
         "text": "COLOR_WINDOWTEXT",
@@ -133,7 +258,7 @@
       }
     },
     "layout": {
-      "model": "Caret-anchored, non-activating native popups constrained to the monitor work area.",
+      "model": "Caret-anchored, non-activating input popups; separate activating settings and preview-editing windows.",
       "responsiveBehavior": "Per-window DPI scaling and work-area clamping; no web breakpoints.",
       "voice": {
         "nominalWidthRef": "{components.voice-titanium.width}",
@@ -147,22 +272,68 @@
         "maximumWidthDip": 960,
         "settingsRegionDip": 52,
         "sizing": "GDI-measured words share available width; truncation retains full tooltip and accessible names."
+      },
+      "preferences": {
+        "clientWidthRef": "{components.preferences.width}",
+        "clientHeightRef": "{components.preferences.height}",
+        "contentInsetDip": 28,
+        "windowBounds": "Clamp the complete window to the current monitor work area.",
+        "overflow": "Scroll the whole page vertically when the client height is constrained; buttons are not sticky.",
+        "navigation": "Mouse wheel, native scrollbar, and Tab-driven focus visibility; changing tabs resets to the top."
+      },
+      "previewEditor": {
+        "initialOuterWidthRef": "{components.preview-editor.width}",
+        "initialOuterHeightRef": "{components.preview-editor.height}",
+        "minimumOuterWidthDip": 560,
+        "minimumOuterHeightDip": 330,
+        "clientInsetDip": 20,
+        "buttonHeightDip": 34,
+        "resize": "The multiline edit grows with the client area. Status is below it; restore and copy stay at bottom left, save at bottom right.",
+        "overflow": "Native vertical scrolling in the multiline edit."
       }
     },
     "states": {
       "voice": [
         { "id": "listening", "label": "正在听", "icon": "microphone", "hint": "停顿后自动校准 · Enter 停录预览 · Esc 取消" },
         { "id": "finalizing", "label": "正在校准文字", "icon": "calibration sliders", "hint": "校准后可预览并确认 · Esc 取消" },
-        { "id": "pending", "label": "待确认", "icon": "check", "hint": "Enter 写入正文 · Esc 取消" },
+        { "id": "pending", "label": "待确认", "icon": "check", "hint": "Enter 写入 · 右键编辑 / 复制 · Esc 取消" },
         { "id": "committing", "label": "正在写入正文", "icon": "calibration sliders", "hint": "正在等待应用确认，请稍候" },
-        { "id": "error", "label": "语音暂不可用", "iconInkRole": "secondary", "hint": "检查输入设备和访问权限后重试 · Esc 关闭" },
+        { "id": "error", "label": "语音暂不可用", "iconInkRole": "secondary", "hint": "右键查看设置 / 编辑预览 · Esc 关闭" },
         { "id": "uncertain", "label": "写入结果待核实", "iconInkRole": "secondary", "hint": "请先核对正文 · 确认未写入后 Enter 重试 · Esc 关闭" },
         { "id": "empty", "label": "录音已结束", "hint": "按语音快捷键重新开始 · Esc 关闭" }
       ],
       "confirmation": "Enter during recording stops and finalizes; a subsequent confirmation inserts the final preview. Enter during finalization does not queue insertion.",
       "candidates": "Selected styling takes precedence over hover; ordinary hover retains the normal text roles, while high-contrast hover uses the system highlight foreground.",
       "motion": "Immediate state redraws with no authored animation. Unchanged content and anchors avoid redundant moves, paints, and visibility changes.",
-      "focus": "WS_EX_NOACTIVATE / MA_NOACTIVATE keep the text application's focus."
+      "focus": "Input popups use WS_EX_NOACTIVATE / MA_NOACTIVATE to keep the text application's focus. User-opened settings and the preview editor activate and accept keyboard focus."
+    },
+    "nativeUtilities": {
+      "nativeSource": "src/preferences_window.cpp",
+      "preferences": {
+        "componentRef": "preferences",
+        "palette": "UiPalette(UiSkin::Titanium) supplies the background and static text, including the system high-contrast override.",
+        "controls": "Native Windows tabs, buttons, edit fields, list boxes, and combo boxes retain system focus, selection, and disabled feedback.",
+        "tabs": ["输入与外观", "我的词语", "语音与设备", "使用与诊断"],
+        "keyboard": "Tab / Shift + Tab traverse controls; Ctrl + Tab / Ctrl + Shift + Tab cycle pages; native mnemonics remain available; Esc closes.",
+        "defaultActionByTab": ["Save settings", "Save term", "Save settings", "Close"],
+        "search": "Changing the query resets to page one; up to 100 entries per page. Show the visible result range separately from the complete vocabulary count; disable unavailable pagination actions.",
+        "emptyStates": { "noTerms": "还没有保存词语", "noMatches": "没有找到匹配词语" },
+        "termActions": "Delete is disabled until selection. Undo restores only the most recent deletion. Term saving and general settings saving are separate actions.",
+        "feedback": "Use the shared bottom text status area for saved, deleted, restored, invalid-input, read, and save results; retain actionable context on failure.",
+        "partialSave": "输入设置已保存，外观保存失败。请重试。",
+        "missingMicrophone": "Retain the chosen missing device with an unavailable label and ask the user to select again.",
+        "diagnostics": "Usage instructions precede a read-only multiline field with native scrolling and a separate copy action; copied-content filtering is owned by the application logic."
+      },
+      "previewEditor": {
+        "componentRef": "preview-editor",
+        "background": "System COLOR_WINDOW; edit fields, status, and buttons retain native system treatment.",
+        "initialFocus": "Multiline edit field.",
+        "actions": ["恢复识别原文", "复制", "保存预览"],
+        "keyboard": "Enter inserts a newline in the edit; Ctrl + Enter saves; Tab traverses controls; Esc cancels the edit and closes.",
+        "saveBoundary": "Saving updates the pending preview; the user must return to the input position and confirm insertion.",
+        "invalidContent": "Empty text or unknown-speech placeholders keep the window open with 请补全无法识别的内容，再保存预览。",
+        "recovery": "Restore replaces the edit with the original recognition and reports it; copy success or failure has separate status feedback."
+      }
     },
     "evidence": {
       "nativeScreenshotDirectory": "docs/design/skins/",
@@ -184,7 +355,16 @@
         "hoverRatio": 4.95,
         "smallTextMinimumRatio": 4.5
       },
-      "acceptanceBoundary": "Human microphone use in user applications, physical multi-monitor operation, and screen-reader acceptance remain separate. High-contrast screenshots exercise an injected test branch."
+      "acceptanceBoundary": "Human microphone use in user applications, physical multi-monitor operation, and screen-reader acceptance remain separate. High-contrast screenshots exercise an injected test branch.",
+      "utilityReview": {
+        "directory": ".impeccable/review/",
+        "skinDirectories": ["titanium", "daylight", "deep-space"],
+        "report": "docs/research/ui-review-2026-11-15.md",
+        "screenshots": ["titanium/preferences-terms.png", "titanium/preferences-page-3.png", "titanium/preview-editor.png", "titanium/voice-text.png", "deep-space/preferences-page-0.png", "deep-space/voice-text.png", "daylight/voice-text.png", "titanium/preferences-bottom-dpi-192.png"],
+        "provenance": "Native fixture windows captured by tools/ui_preview.cpp; generated test vocabulary and diagnostic text, no user recordings or personal vocabulary.",
+        "dpiBoundary": "preferences-bottom-dpi-192.png captures only the client area after a synthetic WM_DPICHANGED. It does not validate the DWM frame, physical DPI changes, or multi-monitor operation.",
+        "reviewStatus": "Initial fullreview: fix. Product-workflow wording and search-count wording corrected; refreshed screenshot checked. The report owns the current final reviewer verdict."
+      }
     }
   },
   "components": [
@@ -192,35 +372,50 @@
     { "name": "拼音候选条", "kind": "custom", "refersTo": "candidate-titanium", "description": "A non-activating row of up to five candidates and the settings entry.", "nativeSource": "src/candidate_bar.cpp", "variants": ["candidate-titanium", "candidate-daylight", "candidate-deep-space"] },
     { "name": "候选选中与悬停", "kind": "custom", "refersTo": "candidate-titanium-selected", "description": "Native selection and pointer feedback; system highlight text is used for high-contrast hover.", "nativeSource": "src/candidate_bar.cpp", "variants": ["candidate-titanium-selected", "candidate-titanium-hover", "candidate-daylight-selected", "candidate-daylight-hover", "candidate-deep-space-selected", "candidate-deep-space-hover"] },
     { "name": "长文滚动预览", "kind": "custom", "refersTo": "voice-titanium", "description": "The voice body is clipped to whole font lines and gains a scrollbar and an explicit end hint.", "nativeSource": "src/confirm_box.cpp" },
-    { "name": "设置与皮肤菜单", "kind": "nav", "description": "The candidate entry and tray share a native Windows menu with the selected skin radio-marked; menus and dialog buttons retain Windows styling.", "nativeSources": ["src/candidate_bar.cpp", "src/engine_main.cpp", "src/ui_theme.hpp"] }
+    { "name": "设置与皮肤菜单", "kind": "nav", "description": "The candidate entry and tray share a native Windows menu with the selected skin radio-marked; menus and dialog buttons retain Windows styling.", "nativeSources": ["src/candidate_bar.cpp", "src/engine_main.cpp", "src/ui_theme.hpp"] },
+    { "name": "原生设置窗口", "kind": "custom", "refersTo": "preferences", "description": "Four native tabs on a neutral Titanium surface, with search, bounded term pages, explicit status, keyboard traversal, and whole-page scrolling.", "nativeSource": "src/preferences_window.cpp" },
+    { "name": "原生预览编辑器", "kind": "input", "refersTo": "preview-editor", "description": "A resizable native multiline editor with restore, copy, and save-preview actions; saving retains the separate confirmation step for insertion.", "nativeSource": "src/preferences_window.cpp" },
+    { "name": "声核系统品牌徽标", "kind": "custom", "refersTo": "brand-profile-badge", "description": "Static black sound core on a white badge; resource 100 is explicitly referenced by registered IconIndex -100. The captured local desktop taskbar displays it beside the separate 中 mode icon.", "nativeSources": ["src/brand.rc", "tools/build-brand-icons.ps1", "src/register_ime.cpp"] },
+    { "name": "声核引擎托盘", "kind": "custom", "refersTo": "brand-mark-on-dark", "description": "A static transparent mark selected in black or white using the system theme and high-contrast foreground brightness, independently of the three skins.", "nativeSources": ["src/brand_icon.hpp", "src/engine_main.cpp"], "variants": ["brand-mark-on-dark", "brand-mark-on-light"] },
+    { "name": "中英输入模式", "kind": "custom", "description": "A separate TSF 中/A button using explicitly selected black or white resources; mode, availability, and theme/display changes notify the shell.", "nativeSources": ["src/input_indicator.cpp", "src/input_indicator.hpp", "src/brand_icon.hpp", "src/tsf_service.cpp"] }
   ],
   "narrative": {
     "northStar": "精密输入仪表",
-    "overview": "Simple Voice 的原生 Windows 浮层以可读文字和明确状态形成干净、克制的科技感。语音预览与拼音候选使用同一套字体、色彩职责和边界细节，保持输入内容在视觉上的主导地位。科技感来自精确的分区、细线与低饱和强调色。\n\n用户已确认钛银、极昼、深空三套皮肤全部内置并可切换。默认钛银的冷银灰与深青呈现仪表分节；极昼用净白、蓝色和连续圆角表达轻盈；深空用石墨、冰青和细轮廓适应暗色编辑环境。三套共用布局与行为，Windows 高对比度颜色始终优先。",
+    "overview": "Simple Voice 的原生 Windows 浮层以可读文字和明确状态形成干净、克制的科技感。语音预览与拼音候选使用同一套字体、色彩职责和边界细节，保持输入内容在视觉上的主导地位。科技感来自精确的分区、细线与低饱和强调色。\n\n用户已确认钛银、极昼、深空三套皮肤全部内置并可切换。默认钛银的冷银灰与深青呈现仪表分节；极昼用净白、蓝色和连续圆角表达轻盈；深空用石墨、冰青和细轮廓适应暗色编辑环境。三套共用布局与行为，Windows 高对比度颜色始终优先。\n\n原生设置与语音预览编辑器延续同一中文字体和明确状态层级。设置使用固定钛银中性背景与正文色，选择的皮肤用于输入浮层；表单控件、预览编辑器和窗口框沿用 Windows 原生外观。它们是可激活的工作窗口，允许用户配置和编辑，不继承浮层的禁止激活行为。\n\n用户于 2026-11-15 选定 A「声核」作为 Simple Voice / 轻音输入法的品牌标记。极简、本地的定位落在单色开口圆框与中央胶囊上：圆框表达本机空间，胶囊表达声音。它补充产品身份，不改变三套皮肤、文字层级或状态图标；品牌保持静态，与独立的「中 / A」输入模式分开。",
     "keyCharacteristics": [
       "文字为主，状态与操作提示分层清楚。",
       "同一输入浮层结构承载三套完整皮肤。",
       "实色表面、细线图标与适量圆角。",
-      "浮层不激活，换肤保留正在进行的输入。"
+      "浮层不激活，换肤保留正在进行的输入。",
+      "设置保持中性，编辑与保存使用原生控件及明确文字反馈。",
+      "声核在小尺寸保留开口与中央胶囊，品牌身份与输入模式各自表达。"
     ],
     "rules": [
       { "name": "The Shared Roles Rule", "body": "换肤改变一整组色彩角色，语音与候选同步使用；状态意义、文字层级和操作位置不随皮肤变化。", "section": "colors" },
+      { "name": "The Neutral Utilities Rule", "body": "设置客户区与静态文字复用钛银背景和正文角色，不随输入浮层皮肤改变；按钮、标签页、输入框、列表及预览编辑器保留 Windows 控件配色、焦点和禁用状态。系统高对比度仍优先，不把系统颜色固化为新皮肤。", "section": "colors" },
       { "name": "The System Contrast Rule", "body": "Windows 高对比度开启时，背景取 `COLOR_WINDOW`，正文与次要文字取 `COLOR_WINDOWTEXT`，选中与 hover 底色取 `COLOR_HIGHLIGHT`，其上的候选正文、序号和设置文字取 `COLOR_HIGHLIGHTTEXT`。系统配色覆盖皮肤配色，并恢复可见外轮廓。", "section": "colors" },
       { "name": "The Readable Small Text Rule", "body": "操作提示与候选序号使用同一小字层级；空间不足时先换行或限制容器，而不是继续缩小文字。", "section": "typography" },
-      { "name": "The Stable Input Rule", "body": "相同内容和锚点不重复移动、显隐或重绘；换肤只更新圆角与绘制，不重新定位浮层、不重启录音、不清空预览、不改变候选选择或滚动位置，也不让隐藏浮层重新出现。", "section": "layout" }
+      { "name": "The Stable Input Rule", "body": "相同内容和锚点不重复移动、显隐或重绘；换肤只更新圆角与绘制，不重新定位浮层、不重启录音、不清空预览、不改变候选选择或滚动位置，也不让隐藏浮层重新出现。", "section": "layout" },
+      { "name": "The Identity and Mode Rule", "body": "声核只表达产品身份，保持静态；「中 / A」单独表达输入模式。品牌不代表正在录音、识别进度或已完成写入，不将模式字叠进声核。", "section": "components" },
+      { "name": "The Explicit Completion Rule", "body": "状态文字区分预览已保存、已复制、正在写入和结果待核实；恢复、校对及重试保留明确入口，未完成的动作不显示为完成。", "section": "components" }
     ],
     "dos": [
       "Do 同步使用同一皮肤的语音与候选角色，保留共享的字号、布局和状态语义。",
       "Do 以原生 DIP 与实际字体测量布局，检查正常、选中、hover、长文和高对比状态。",
       "Do 让 Windows 高对比度颜色覆盖预设皮肤，并保持系统高亮底上的对应文字颜色。",
       "Do 换肤时保留输入、预览、选词、滚动位置和窗口可见状态。",
-      "Do 以真实原生截图核对实现，保留截图来源与测试范围。"
+      "Do 以真实原生截图核对实现，保留截图来源与测试范围。",
+      "Do 保留中性设置表面及系统控件状态，把输入浮层换肤与原生编辑窗口分开应用。",
+      "Do 让键盘焦点和底部操作在滚动后可达，并用文字区分空结果、保存失败和等待确认。",
+      "Do 共用已选 A「声核」的黑白几何，让静态品牌、系统主题适配与「中 / A」模式各守其职责。"
     ],
     "donts": [
       "Don't 将浏览器比较板的宽度、三列排版或按钮设计当作原生输入法规范。",
       "Don't 用更浅的小字、大面积霓虹、装饰动效或透明模糊表达未来感。",
       "Don't 为换肤添加新的确认步骤、重启要求或未经批准的自动深浅切换。",
-      "Don't 把高对比度测试分支或截图审查写成真人使用验收结果。"
+      "Don't 把高对比度测试分支或截图审查写成真人使用验收结果。",
+      "Don't 把保存预览写成已经插入正文，或把词库总数写成搜索命中总数。",
+      "Don't 给声核加渐变、发光、模式叠字或录音动画，或把资源预览写成实际任务栏验收。"
     ]
   }
 }

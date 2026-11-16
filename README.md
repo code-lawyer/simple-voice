@@ -4,127 +4,119 @@
 
 **把话说出来，核对后再落笔。**
 
-Windows 本地全拼与语音输入法。干净的界面，明确的确认，留在本机的声音。
+Windows 本地拼音与中英语音输入法。干净的界面，明确的确认，留在本机的声音。
 
-[下载 Windows 预览版](https://github.com/code-lawyer/simple-voice/releases/tag/v0.1.0) · [使用说明](#怎么用) · [源码构建](docs/development.md) · [反馈问题](https://github.com/code-lawyer/simple-voice/issues)
+[公开版本](https://github.com/code-lawyer/simple-voice/releases) · [使用说明](#怎么用) · [源码构建](docs/development.md) · [反馈问题](https://github.com/code-lawyer/simple-voice/issues)
 
 ![钛银语音预览浮层](docs/design/skins/titanium-voice.png)
 
 </div>
 
-Simple Voice 将全拼和离线中文语音放在同一个 Windows 输入法里。说话时显示草稿，
-停顿后完成本地识别定稿、标点与词库校正；**最终文本先留在浮层中，按 Enter 才写入正文**。
+当前源码版本 **v0.2.0-rc.3**，仅支持 **Windows Intel/AMD x64**。这是发布候选，
+不是已经完成真人验收的正式版。公开下载以 Releases 实际附件为准。
+[本轮变化](docs/releases/v0.2.0-rc.3.md) · [验证结果与限制](docs/releases/v0.2.0-rc.3-validation.md)。
 
-当前版本 **v0.1.0 Preview**，仅发布 **Windows x64**。自动化回归和真实模型音频样本
-验证已通过；真人麦克风、浏览器与 Codex 的完整使用验收仍待完成。
+切换到轻音输入法后，Windows 任务栏会显示「声核」标识，旁边的「中」或「A」表示当前输入模式。点击模式图标可以切换中英文。[任务栏实拍](docs/design/brand/windows-taskbar.png)
 
 ## 能做什么
 
-- **全拼输入**：基于 Rime 的中文全拼，五项候选，支持空格、数字键和鼠标选词。
-- **本地语音**：流式草稿、停顿定稿、自动标点和个人同音词校正，无需账号或云端 API。
-- **确认后写入**：语音浮层显示最终文本，支持 Enter 确认、Esc 取消，写入成功后才学习。
-- **三套内置皮肤**：钛银、极昼、深空，候选条和语音浮层统一切换，系统高对比度优先。
-- **克制的桌面交互**：浮层跟随插入点、不抢焦点；支持长文滚动、快捷键修改和最近记词删除。
+- **拼音与英文**：Rime 全拼、简拼、部分错拼容错；中文词组、英语单词与短语补全。Enter 保留原始输入，空格选择候选。
+- **中英本地语音**：双语 Zipformer 流式草稿，Qwen3-ASR 0.6B INT8 定稿；可切换中文优先模型。停顿后先预览最终文本，再确认写入。
+- **保留表达**：取消无上下文同音替换，不用旧整句覆盖新数字或专名。可编辑预览、恢复识别原文、复制文字；无法识别的占位符需要补全后再确认。
+- **三层词库**：公共基础数据、后台拼音偏好、明确添加的“我的词语”。普通语音确认不再自动收集常用词或整句。
+- **可管理的设置**：词语搜索、分页、修改、删除与单次撤销；麦克风选择、输入电平、停顿时长、模型准备与重试。
+- **三套内置皮肤**：钛银、极昼、深空；输入浮层随皮肤切换，设置使用统一中性色和原生控件，高对比度优先。
 
-校准包含识别定稿、标点和词库纠错；当前没有接入大语言模型，也不会扩写原话或补造内容。
+模型识别仍可能出错。“最终预览”指本次将写入的文本已经确定，不代表内容保证正确。
+没有云端润色、自动补写或 R2T2。个人词语目前帮助键盘候选，不承诺改善语音热词识别。
 
 ## 安装
 
-1. 下载 [SimpleVoice-v0.1.0-windows-x64.zip](https://github.com/code-lawyer/simple-voice/releases/download/v0.1.0/SimpleVoice-v0.1.0-windows-x64.zip)。
-2. **完整解压到准备长期保留的目录**，例如 `C:\Apps\SimpleVoice-0.1.0`。不要在 ZIP 内直接运行。
-3. 安装 [Microsoft Visual C++ x64 运行库](https://aka.ms/vc14/vc_redist.x64.exe)（已经安装可跳过）。
-4. 双击 `install.cmd`。首次从 sherpa-onnx 官方 Release 下载运行时和三个模型，约 **492 MiB**，并校验 SHA-256；随后在 Windows 管理员提示中允许注册输入法。
-5. **注销 Windows 后重新登录**，按 `Win + Space` 选择 **轻音输入法**。
+1. 从 [Releases](https://github.com/code-lawyer/simple-voice/releases) 下载对应 Windows ZIP，完整解压到准备长期保留的新目录。
+2. 安装 [Microsoft Visual C++ x64 运行库](https://aka.ms/vc14/vc_redist.x64.exe)（已安装可跳过）。
+3. 双击 `install.cmd`。首次从 sherpa-onnx 官方地址下载运行时和模型并校验 SHA-256，然后请求 Windows 管理员注册。
+4. 注销 Windows 再登录，按 `Win + Space` 选择 **轻音输入法**。
 
-首次下载需要网络；准备好之后，拼音和语音均在本机运行。下载失败可以再次运行
-`install.cmd`，已校验的文件会复用。安装脚本在当前目录注册，不会搬动目录或删除个人数据。
-UAC 授权请使用同一 Windows 账号。
+首次需要下载较大的模型。建议 16 GB 内存、至少 8 GB 可用磁盘（含下载缓存和解压暂存）；
+CPU 即可运行。中英模型在本机集成样本测试中峰值工作集约 2.33 GiB，中文优先约 0.92 GiB，
+其他机器和音频可能不同。当前实测环境为 Windows 11 x64；Windows 10 1903+ 为代码目标，尚未做本轮现场验证。
 
-系统要求：Windows 10（1903+）或 Windows 11、Intel/AMD x64、麦克风；建议至少
-8 GB 内存、2 GB 可用磁盘空间。CPU 即可运行，无需独立显卡。当前验证环境是 Windows 11 x64。
-
-如需在注册前检查完整性，可运行 `check.cmd`：它准备并验证依赖、实际加载模型，不打开
-麦克风、不注册输入法，也不读写个人词库。
-
-> 发布包不附带模型权重。流式模型的上游页面尚未明确标注再分发许可，因此仅从官方地址
-> 下载到使用者本机。模型来源、许可证状态和下载校验见 [第三方说明](THIRD_PARTY_NOTICES.md)。
+`check.cmd` 验证依赖并分别加载两套语音配置，不开麦、不注册、不访问个人词库。
+下载失败可重试，已校验文件会复用。安装后请保留程序目录；UAC 使用同一 Windows 账号。
+模型权重不放入应用 ZIP，来源、许可和校验见 [第三方说明](THIRD_PARTY_NOTICES.md)。
 
 ## 怎么用
 
 | 操作 | 按键 / 入口 |
 | --- | --- |
-| 中文全拼 | 直接输入拼音；空格选首项，`1`–`5` 选择对应候选 |
-| 中英文切换 | 单独按 `Shift` |
-| 开始语音 | `Ctrl + Alt + Space`，可在设置中修改 |
-| 停录并校准 | 停止说话约 500 毫秒，或在录音中按 `Enter` |
-| 写入最终文本 | 等待浮层进入待确认状态，再按 `Enter` |
-| 放弃本次语音 | `Esc` |
-| 切换皮肤 / 修改快捷键 | 候选条右侧「设置」，或系统托盘菜单 |
+| 中文输入 | 全拼或简拼，空格选首项，数字 1–5 / 鼠标选候选 |
+| 英语输入 | 输入单词或前缀后选英语候选；Enter 原样写入字母 |
+| 编辑拼音组合 | 左右方向键、Home、End、Backspace、Delete |
+| 暂时遗忘一个学习候选 | 选中该候选后 Ctrl + Delete（不删除基础词表） |
+| 中英文切换 | 单独按 Shift |
+| 开始语音 | Ctrl + Alt + Space，可修改 |
+| 停录并定稿 | 停顿默认 800 毫秒（可设 500–2000），或录音时按 Enter / 再按语音快捷键 |
+| 写入最终文本 | 浮层待确认后按 Enter |
+| 修改 / 复制 / 恢复原文 | 待确认浮层右键菜单；编辑器 Ctrl + Enter 保存预览 |
+| 取消本次语音 | Esc |
+| 设置与词语 | 候选条设置入口或托盘菜单 |
 
-语音流程：
+录音中的第一次 Enter 只停录。定稿过程中按 Enter 不会预约写入。核对预览后再按 Enter，
+正文收到的就是预览文字。写入回执不明时保留预览并提示检查正文，避免自动重复输入。
+每次录音最长 60 秒；长段会在较安静处切分定稿，缺少停顿时提示核对分段位置。
 
-```text
-开始说话 → 临时草稿 → 停顿 / Enter → 本地校准 → 最终预览 → Enter → 写入正文
-                                                   └─ Esc → 丢弃
-```
-
-录音中的第一次 Enter 只停录并进入校准；校准中的 Enter 不会预约自动写入。
-看到最终文本后，下一次 Enter 才确认。等待正文写入时会暂时锁定重复确认；若无法确认
-写入结果，浮层会保留文字并提示先核对正文，避免重复输入。
+“我的词语”输入码只使用小写英文字母。可点击生成，再核对多音字、姓名或自定义缩写。
+删除后普通语音不会重新收录；修改会在下一次拼音组合生效，已经开始的组合保持稳定。
+英语短语的码可省略空格，如 `machinelearning`；任意中英整句和任意错拼不属于当前能力。
 
 ## 三套皮肤
 
-以下是实际原生窗口截图，三套皮肤共用交互与排版；默认钛银。
+以下为原生窗口截图，三套皮肤共用交互与排版，默认钛银。
 
 | 皮肤 | 语音浮层 | 拼音候选条 |
 | --- | --- | --- |
-| **钛银** · 冷银灰与深青 | ![钛银语音框](docs/design/skins/titanium-voice.png) | ![钛银候选条](docs/design/skins/titanium-candidate.png) |
-| **极昼** · 净白与清蓝 | ![极昼语音框](docs/design/skins/daylight-voice.png) | ![极昼候选条](docs/design/skins/daylight-candidate.png) |
-| **深空** · 石墨与冰青 | ![深空语音框](docs/design/skins/deep-space-voice.png) | ![深空候选条](docs/design/skins/deep-space-candidate.png) |
+| 钛银 | ![钛银语音框](docs/design/skins/titanium-voice.png) | ![钛银候选条](docs/design/skins/titanium-candidate.png) |
+| 极昼 | ![极昼语音框](docs/design/skins/daylight-voice.png) | ![极昼候选条](docs/design/skins/daylight-candidate.png) |
+| 深空 | ![深空语音框](docs/design/skins/deep-space-voice.png) | ![深空候选条](docs/design/skins/deep-space-candidate.png) |
 
-设计规范见 [DESIGN.md](DESIGN.md)。
+[视觉规范](DESIGN.md)。设置和预览编辑器使用 Windows 原生可键盘操作控件。
 
-## 本地数据
+## 本地数据与词库
 
-不需要登录，不上传音频，不保存录音文件。安装阶段从官方地址下载依赖，日常输入无需联网。
-
-为兼容早期版本，个人数据继续保存在 `%LOCALAPPDATA%\VoiceIme\`：
+日常输入不需要账号或网络，不上传音频、不保存录音文件。确认和编辑前的识别文本仅在内存中。
+为兼容旧版，数据继续保存在 `%LOCALAPPDATA%\VoiceIme\`：
 
 | 文件 / 目录 | 用途 |
 | --- | --- |
 | `config.json` | 语音快捷键 |
-| `appearance.json` | 所选皮肤 |
-| `lexicon.sqlite` | 语音学习词库和待学习记录 |
-| `rime\` | 拼音个人词库与 Rime 配置 |
+| `appearance.json` | 浮层皮肤 |
+| `preferences.ini` | 学习开关、设备、停顿、语音模型选择与引导状态 |
+| `lexicon.sqlite` | 显式个人词语及兼容保留的旧记录 |
+| `rime\` | 后台拼音偏好、编译索引和显式词语的候选快照 |
 
-语音学习记录按 **365 天未再次使用**过期清理；旧的无日期语音记录从升级日开始计时。
-Rime 的个人拼音数据独立管理，不适用这项语音记录期限。
+基础词表由版本维护。Rime 选词偏好在后台管理，可以暂停读取和学习，不需要逐条整理。
+“我的词语”只显示自己明确保存的条目，上限 10,000 条，每页最多 100 条。
+显式词语及旧语音记录按 **365 天未使用**在启动/使用时清理；旧无日期记录从首次升级计时。
+旧自动记录不会参与改写，也不会冒充用户明确添加的术语。Rime 原生学习数据独立管理，
+不宣称已经实现同样的 365 天期限。没有新增完整语音历史。
 
-## 更新、卸载与常见问题
+## 更新、回滚、卸载
 
-- **更新**：将新版本解压到新目录，运行新目录的 `install.cmd`，注销再登录。保留原数据目录即可沿用词库和设置。不要覆盖应用仍在加载的 DLL。
-- **卸载**：在当前安装目录运行 `uninstall.cmd`，允许管理员提示；注销再登录后可删除程序目录。个人数据默认保留，如需彻底清除，可自行备份后删除上述数据目录。
-- **没有语音效果**：先运行 `check.cmd`，再检查 Windows「隐私和安全性 → 麦克风」中是否允许桌面应用访问麦克风。
-- **输入法列表没有出现**：检查管理员注册是否成功，确认已经注销再登录，并启用简体中文语言配置。
-- **应用里仍是旧界面**：已打开应用可能保留旧 DLL；注销再登录可统一刷新。
+- **更新**：解压到新目录，运行该目录的 `install.cmd`，注销再登录。个人数据沿用，不覆盖正在加载的 DLL。
+- **回滚**：保留旧程序目录和更新前自行备份的个人数据；重新运行旧目录安装并注销登录。旧程序不会读取新版显式词语表，且可能恢复旧版自动学习和同音改写行为。
+- **卸载**：从当前注册目录运行 `uninstall.cmd`，注销再登录后删除程序目录。个人数据默认保留。
+- **语音不可用**：先运行 `check.cmd`，在设置里刷新/选择麦克风、查看电平并重试模型，再检查 Windows 桌面应用麦克风权限。
+- **应用仍显示旧版**：已打开的应用可能保留旧 DLL，注销再登录后统一刷新。
 
-预览版尚未做代码签名；Windows 可能显示未知发布者提示。当前只提供 x64 输入法 DLL，
-不支持 32 位应用、Windows ARM64、macOS 或 Linux。终端、游戏、特殊编辑控件以及跨进程
-权限不同的场景尚未完成兼容性验证。请在 [Issues](https://github.com/code-lawyer/simple-voice/issues)
-注明 Windows 版本、应用名称、复现步骤和截图；不要提交私密输入内容或个人词库。
+已知限制：很短的英语数字可能漏识别；噪声中文数字有时中文优先配置更好；纯词库整句候选仍有歧义。
+本轮真人麦克风、浏览器/Codex 实际编辑、物理跨屏与屏幕阅读器验收后置。
+当前未代码签名，不支持 32 位应用、ARM64、macOS 或 Linux。特殊控件、游戏及跨权限输入未完成兼容验证。
+提交问题请注明版本、Windows 与应用、步骤；不要上传私密录音或个人词库。
 
 ## 开发与许可
 
-[构建、测试和打包指南](docs/development.md) · [产品行为](PRODUCT.md) · [v0.1.0 发布记录](docs/releases/v0.1.0.md)
+[构建和测试](docs/development.md) · [统一产品方案](PRODUCT.md) · [本轮开发测试计划](docs/plans/professional-release.md)
 
-项目代码使用 [Apache-2.0](LICENSE)。第三方代码、词典、运行库和模型分别遵循其原有
-许可证，详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
-
-感谢 Rime、sherpa-onnx、ONNX Runtime、cppjieba、pinyin-data、SQLite 及各依赖项目。
-
----
-
-**English** — Simple Voice is a Windows x64 Chinese pinyin and local voice input method.
-Speech is finalized and previewed before you confirm insertion. Three native skins are included.
-First-time setup downloads verified upstream models; everyday input works offline.
-This first public release is a preview, with human microphone and application acceptance still pending.
+代码使用 [Apache-2.0](LICENSE)。第三方代码、数据和模型分别遵循其原有许可，
+详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。感谢 Rime、sherpa-onnx、Qwen、
+万象数据、ESDB、ONNX Runtime、cppjieba 等上游项目。

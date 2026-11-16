@@ -31,6 +31,7 @@ void ConcurrentSegmentationAndLearningKeepTheTextIntact() {
 void ConcurrentLexiconReadsWritesAndDeletesAreSerialized() {
   CHECK(sqlite3_threadsafe() != 0);
   Lexicon lex(":memory:");
+  lex.SaveTerm("张杉","zhangshan",1000);
   std::atomic<bool> valid{true};
   auto write = [&] {
     try {
@@ -43,7 +44,7 @@ void ConcurrentLexiconReadsWritesAndDeletesAreSerialized() {
     try {
       for (int i = 0; i < 200; ++i) {
         lex.Recent(20);
-        lex.Commit("临时词", {{"临时词", "lin shi ci"}}, 1000);
+        lex.SaveTerm("临时词","linshici",1000);
         lex.Delete("临时词");
       }
     } catch (...) { valid = false; }
@@ -52,7 +53,7 @@ void ConcurrentLexiconReadsWritesAndDeletesAreSerialized() {
     try {
       for (int i = 0; i < 200; ++i) {
         const auto result = lex.Apply("张山", {{"张山", "zhang shan"}}, 1000);
-        if (result != "张山" && result != "张杉") valid = false;
+        if (result != "张山") valid = false;
       }
     } catch (...) { valid = false; }
   });
@@ -61,5 +62,5 @@ void ConcurrentLexiconReadsWritesAndDeletesAreSerialized() {
   const auto recent = lex.Recent(20);
   CHECK(recent.size() == 1);
   if (!recent.empty()) CHECK(recent[0].count == 400);
-  CHECK(lex.Apply("张山", {{"张山", "zhang shan"}}, 1000) == "张杉");
+  CHECK(lex.Apply("张山", {{"张山", "zhang shan"}}, 1000) == "张山");
 }

@@ -1,11 +1,16 @@
 #include "harness.hpp"
 #include "rime_session.hpp"
+#include "settings.hpp"
+#include "lexicon.hpp"
 
 #include <cstdint>
 #include <filesystem>
 #include <atomic>
 #include <thread>
 #include <string>
+#include <windows.h>
+#include <algorithm>
+#include <ctime>
 
 namespace {
 
@@ -101,11 +106,11 @@ void PeriodCommitsChinesePunct() {
   RimeView done = session.ProcessKey(0xBE, false);
   CHECK(done.commit == "。");
 }
-void UnknownLettersCommitRawOnSpace() {
+void UnknownLettersCommitRawOnEnter() {
   RimeSession session;
   CHECK(session.Start(SharedDataDir(), TempUserDir()));
   for (int i = 0; i < 4; ++i) session.ProcessKey(0x58, false);
-  RimeView done = session.ProcessKey(0x20, false);
+  RimeView done = session.ProcessKey(0x0D, false);
   CHECK(done.commit == "xxxx");
   CHECK(!ContainsCjk(done.commit));
 }
@@ -147,12 +152,25 @@ void EscapeDropsCompositionWithoutCommit() {
   CHECK(dropped.commit.empty());
   CHECK(!dropped.composing);
 }
-void EnterCommitsNihaoOnAFreshUserDir() {
+void EnterPreservesRawPinyin() {
   RimeSession session;
   CHECK(session.Start(SharedDataDir(), TempUserDir()));
   TypeNihao(session);
   RimeView entered = session.ProcessKey(0x0D, false);
-  CHECK(entered.commit == "你好");
+  CHECK(entered.commit == "nihao");
+  const std::vector<std::pair<std::vector<int>,std::string>> edits{
+    {{VK_LEFT},"nihao"}, {{VK_HOME},"nihao"},
+    {{VK_LEFT,VK_DELETE},"niao"}, {{VK_LEFT,VK_BACK},"nhao"},
+    {{VK_LEFT,VK_END},"nihao"}
+  };
+  for(const auto& [keys,expected]:edits) {
+    TypeNihao(session);
+    for(int key:keys) session.ProcessKey(key,false);
+    const auto done=session.ProcessKey(VK_RETURN,false);
+    CHECK(done.commit==expected);
+    CHECK(!done.composing && done.preedit.empty());
+    CHECK(session.ProcessKey(VK_RETURN,false).commit.empty());
+  }
 }
 void SelectingACandidateCreatesAUserDb() {
   RimeSession session;
@@ -211,4 +229,46 @@ void RimeSessionsOnDifferentThreadsRemainIndependent() {
   CHECK(valid.load());
   TypeNihao(keeper);
   CHECK(keeper.ProcessKey(0x20, false).commit == "你好");
+}
+
+void ModernInputAndPersonalTermsSurviveLiveSessions() {
+  const auto root=std::filesystem::path(VOICEIME_SOURCE_DIR)/"build-professional"/("rime-quality-"+std::to_string(GetCurrentProcessId()));
+  const auto user=root/"rime"; std::filesystem::create_directories(user);
+  InputPreferences preferences; CHECK(SaveInputPreferences((root/"preferences.ini").wstring(),preferences));
+  Lexicon terms(":memory:"); terms.SaveTerm("轻音个人术语甲","qysyx",std::time(nullptr));
+  terms.SaveTerm("#include","qyinclude",std::time(nullptr));
+  terms.SaveTerm("#@metadata","qymetadata",std::time(nullptr));
+  terms.SaveTerm("# no comment","qycomment",std::time(nullptr));
+  CHECK(terms.ExportTerms((user/"voiceime_personal.txt").wstring()));
+  RimeSession first,second; CHECK(first.Start(SharedDataDir(),user.wstring())); CHECK(second.Start(SharedDataDir(),user.wstring()));
+  auto type=[](RimeSession& session,const std::string& keys) {
+    session.Clear();
+    for(unsigned char c:keys) session.ProcessKey(c>='a'&&c<='z'?c-32:c,c>='A'&&c<='Z');
+  };
+  auto contains=[](const RimeView& view,const std::string& expected) { return std::find(view.page.begin(),view.page.end(),expected)!=view.page.end(); };
+  for(const auto& pair:std::vector<std::pair<std::string,std::string>>{
+      {"weixin","微信"},{"dayuyanmoxing","大语言模型"},{"rgzn","人工智能"},{"nh","你好"},{"zhognwen","中文"},
+      {"python","Python"},{"codex","Codex"},{"GitHub","GitHub"},{"qysyx","轻音个人术语甲"},
+      {"qyinclude","#include"},{"qymetadata","#@metadata"},{"qycomment","# no comment"}}) {
+    type(first,pair.first); if(!contains(first.view(),pair.second)) std::fprintf(stderr,"missing candidate: %s -> %s\n",pair.first.c_str(),pair.second.c_str());
+    CHECK(contains(first.view(),pair.second));
+  }
+  type(first,"qysyx"); // Keep this generation alive in a composing session.
+  terms.SaveTerm("轻音个人术语乙","qysyx",std::time(nullptr),"轻音个人术语甲");
+  CHECK(terms.ExportTerms((user/"voiceime_personal.txt").wstring()));
+  type(second,"qysyx"); CHECK(contains(second.view(),"轻音个人术语乙")); CHECK(!contains(second.view(),"轻音个人术语甲"));
+  CHECK(contains(first.view(),"轻音个人术语甲"));
+  type(first,"qysyx"); CHECK(contains(first.view(),"轻音个人术语乙"));
+  first.Clear(); second.Clear(); preferences.learning=false;
+  CHECK(SaveInputPreferences((root/"preferences.ini").wstring(),preferences));
+  type(first,"qysyx"); CHECK(contains(first.view(),"轻音个人术语乙"));
+  CHECK(first.ProcessKey(VK_SPACE,false).commit=="轻音个人术语乙");
+  terms.Delete("轻音个人术语乙"); CHECK(terms.ExportTerms((user/"voiceime_personal.txt").wstring()));
+  type(first,"qysyx"); CHECK(!contains(first.view(),"轻音个人术语乙"));
+  first.Clear(); type(first,"nihaoo"); first.ProcessKey(VK_LEFT,false); first.ProcessKey(VK_DELETE,false);
+  CHECK(first.ProcessKey(VK_RETURN,false).commit=="nihao");
+  first.Shutdown(); second.Shutdown(); CHECK(second.Start(SharedDataDir(),user.wstring()));
+  type(second,"qyinclude"); CHECK(second.ProcessKey(VK_SPACE,false).commit=="#include");
+  type(second,"qysyx"); CHECK(!contains(second.view(),"轻音个人术语乙"));
+  type(second,"nihao"); CHECK(second.ProcessKey(VK_SPACE,false).commit=="你好");
 }

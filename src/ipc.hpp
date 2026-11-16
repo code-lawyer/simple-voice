@@ -24,6 +24,7 @@ enum class MsgType : std::uint8_t {
   InsertText = 15,
   InsertResult = 16,
   CancelInsert = 17,
+  PersonalTermUsed = 18,
 };
 
 struct Message {

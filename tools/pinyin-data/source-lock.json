@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "wanxiang_commit": "7de2f3d0b4677d1e058eecdd48ac412d0314edf9",
+  "esdb_commit": "1e5b7d3a72f47a71da5d28686c1dd4b397178485",
+  "pinyin_simp_commit": "0c6861ef7420ee780270ca6d993d18d4101049d0",
+  "sources": [
+    {
+      "path": "wanxiang/dicts/zi.dict.yaml",
+      "url": "https://raw.githubusercontent.com/amzxyz/rime-wanxiang-data/7de2f3d0b4677d1e058eecdd48ac412d0314edf9/dicts/zi.dict.yaml",
+      "bytes": 616568,
+      "sha256": "009c9b11bac7cd6de651029b83dd999a299da8b255497beb6bccf6c9e78fdd2d",
+      "license": "CC-BY-4.0 data only"
+    },
+    {
+      "path": "wanxiang/dicts/jichu.dict.yaml",
+      "url": "https://raw.githubusercontent.com/amzxyz/rime-wanxiang-data/7de2f3d0b4677d1e058eecdd48ac412d0314edf9/dicts/jichu.dict.yaml",
+      "bytes": 52303420,
+      "sha256": "03a5b20f5c573471f46076d4a98d518f06e3b21303748c91a70b000e685d5b39",
+      "license": "CC-BY-4.0 data only"
+    },
+    {
+      "path": "wanxiang/dicts/duoyin.dict.yaml",
+      "url": "https://raw.githubusercontent.com/amzxyz/rime-wanxiang-data/7de2f3d0b4677d1e058eecdd48ac412d0314edf9/dicts/duoyin.dict.yaml",
+      "bytes": 137513,
+      "sha256": "dd41608239d3260655bc0326aefadd131dc1301a7d5231679cf301d9c6f92ffb",
+      "license": "CC-BY-4.0 data only"
+    },
+    {
+      "path": "wanxiang/README.md",
+      "url": "https://raw.githubusercontent.com/amzxyz/rime-wanxiang-data/7de2f3d0b4677d1e058eecdd48ac412d0314edf9/README.md",
+      "bytes": 14748,
+      "sha256": "c5248ecbd8f32d7b2e7425275799f673d505df91cb76fb6323b9f837ba314a1c"
+    },
+    {
+      "path": "wanxiang/LICENSE",
+      "url": "https://raw.githubusercontent.com/amzxyz/rime-wanxiang-data/7de2f3d0b4677d1e058eecdd48ac412d0314edf9/LICENSE",
+      "bytes": 18656,
+      "sha256": "9e5f1b3c610b9c2da5c313bf81d577a7d1acec686bdb0384edefa6df0f90cd94"
+    },
+    {
+      "path": "wanxiang/LICENSE-SCOPE.md",
+      "url": "https://raw.githubusercontent.com/amzxyz/rime-wanxiang-data/7de2f3d0b4677d1e058eecdd48ac412d0314edf9/LICENSE-SCOPE.md",
+      "bytes": 1196,
+      "sha256": "41ba4ac41b6a28a117c172dd22fc8cf31ff3902f79737cc22e22b9412af624f4"
+    },
+    {
+      "path": "wanxiang/NOTICE.md",
+      "url": "https://raw.githubusercontent.com/amzxyz/rime-wanxiang-data/7de2f3d0b4677d1e058eecdd48ac412d0314edf9/NOTICE.md",
+      "bytes": 2328,
+      "sha256": "6c624b06a54d95ad2a33a3200481107f9f8d029dd3e7a224988653daa04bca13"
+    },
+    {
+      "path": "esdb-source.zip",
+      "url": "https://codeload.github.com/en-wl/wordlist/zip/1e5b7d3a72f47a71da5d28686c1dd4b397178485",
+      "bytes": 2344648,
+      "sha256": "4a9acd18d0c16ed595d11458a2dbc226c8a91f93c89970c0f4506444a8f4b161",
+      "license": "ESDB Copyright; see archive/Copyright"
+    },
+    {
+      "path": "pinyin-simp/pinyin_simp.dict.yaml",
+      "url": "https://raw.githubusercontent.com/rime/rime-pinyin-simp/0c6861ef7420ee780270ca6d993d18d4101049d0/pinyin_simp.dict.yaml",
+      "bytes": 1266216,
+      "sha256": "e341598343a0f0f2035bb1aafc34a7f3bb7887deeecb3f60796262aaa2983e6b",
+      "git_blob_sha1": "6f2e996d2792416cb7f41bb49967a1dec7060c92",
+      "cache_alias": "baseline-rime-data/pinyin_simp.dict.yaml",
+      "cache_normalize_lf": true,
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "pinyin-simp/pinyin_simp.AUTHORS",
+      "url": "https://raw.githubusercontent.com/rime/rime-pinyin-simp/0c6861ef7420ee780270ca6d993d18d4101049d0/AUTHORS",
+      "bytes": 177,
+      "sha256": "f4cff0fcbca4668ac449c24a53be547e162bc60cce63fdc5d5906801a452edc4",
+      "git_blob_sha1": "f4d8938974910bab33e972a1dc0d9b3b8ab5770b",
+      "cache_alias": "baseline-rime-data/pinyin_simp.AUTHORS",
+      "cache_normalize_lf": true
+    },
+    {
+      "path": "pinyin-simp/pinyin_simp.LICENSE",
+      "url": "https://raw.githubusercontent.com/rime/rime-pinyin-simp/0c6861ef7420ee780270ca6d993d18d4101049d0/LICENSE",
+      "bytes": 11358,
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "git_blob_sha1": "d645695673349e3947e8e5ae42332d0ac3164cd7",
+      "cache_alias": "baseline-rime-data/pinyin_simp.LICENSE",
+      "cache_normalize_lf": true
+    }
+  ]
+}

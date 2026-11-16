@@ -1,0 +1,48 @@
+# Rime default settings
+# encoding: utf-8
+
+schema_list:
+  - schema: voiceime
+  - schema: voiceime_private
+
+menu:
+  page_size: 5
+
+punctuator:
+  half_shape:
+    ",": { commit: "，" }
+    ".": { commit: "。" }
+    "?": { commit: "？" }
+    "!": { commit: "！" }
+    ":": { commit: "：" }
+    ";": { commit: "；" }
+    "\\": { commit: "、" }
+    "'": { pair: ["‘", "’"] }
+    "\"": { pair: ["“", "”"] }
+    "(": "（"
+    ")": "）"
+    "[": "【"
+    "]": "】"
+    "<": "《"
+    ">": "》"
+    "{": "「"
+    "}": "」"
+    "`": "`"
+    "~": "~"
+    "@": "@"
+    "#": "#"
+    "$": "$"
+    "%": "%"
+    "^": "^"
+    "&": "&"
+    "*": "*"
+    "-": "-"
+    "_": "_"
+    "+": "+"
+    "=": "="
+    "|": "|"
+    "/": "/"
+
+recognizer:
+  patterns:
+    punct: "^/([0-9]+[a-z]*|[a-z]+)$"

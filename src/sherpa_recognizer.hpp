@@ -8,8 +8,8 @@
 class Segmenter;
 class Lexicon;
 
-// model_dir holds streaming/, final/, and punct/. Segmenter and Lexicon are
-// borrowed and must outlive the recognizer. Finalize cuts and applies them.
-// A null segmenter or lexicon returns the punctuated text unchanged.
+// ASR formatting preserves recognized content. Personal dictionaries are never
+// used for unconstrained post-recognition replacement. The legacy arguments
+// remain source-compatible with isolated diagnostic tools.
 std::unique_ptr<Recognizer> MakeSherpaRecognizer(const std::string& model_dir, Segmenter* segmenter,
-                                                 Lexicon* lexicon);
+                                               Lexicon* lexicon, bool chinese_only=false);

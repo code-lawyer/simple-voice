@@ -7,6 +7,8 @@
 #include <cstdio>
 #include <filesystem>
 #include <stdexcept>
+#include <olectl.h>
+#include "brand_icon.hpp"
 
 HINSTANCE VoiceImeModule() { return GetModuleHandleW(nullptr); }
 
@@ -21,6 +23,55 @@ void Hr(HRESULT result, const char* name) {
   if (FAILED(result)) {
     std::fprintf(stderr, "%s HRESULT=%08lx\n", name, static_cast<unsigned long>(result));
     throw std::runtime_error(name);
+  }
+}
+
+class IndicatorSink final : public ITfLangBarItemSink {
+ public:
+  ULONG refs=1; DWORD flags=0; int updates=0;
+  HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid,void** out) override {
+    if(!out)return E_POINTER;
+    *out=nullptr;
+    if(iid!=IID_IUnknown && iid!=IID_ITfLangBarItemSink)return E_NOINTERFACE;
+    *out=static_cast<ITfLangBarItemSink*>(this);AddRef();return S_OK;
+  }
+  ULONG STDMETHODCALLTYPE AddRef() override {return ++refs;}
+  ULONG STDMETHODCALLTYPE Release() override {return --refs;}
+  HRESULT STDMETHODCALLTYPE OnUpdate(DWORD next) override {flags|=next;++updates;return S_OK;}
+};
+std::wstring IndicatorText(ITfLangBarItemButton* item) {
+  BSTR text=nullptr;Hr(item->GetText(&text),"read input mode text");
+  const std::wstring value(text,SysStringLen(text));SysFreeString(text);return value;
+}
+void CheckIndicatorContract() {
+  IndicatorSink sink;
+  auto* item=new InputIndicator(GetModuleHandleW(nullptr),nullptr,nullptr,InputMode::Chinese);
+  DWORD cookie=0,other=0;
+  Hr(item->AdviseSink(IID_ITfLangBarItemSink,&sink,&cookie),"advise indicator updates");
+  Check(item->AdviseSink(IID_ITfLangBarItemSink,&sink,&other)==CONNECT_E_ADVISELIMIT,"indicator refuses duplicate sink without losing observer");
+  item->SetMode(InputMode::English);
+  Check(sink.updates==1 && (sink.flags&(TF_LBI_ICON|TF_LBI_TEXT|TF_LBI_TOOLTIP))==(TF_LBI_ICON|TF_LBI_TEXT|TF_LBI_TOOLTIP),"mode change invalidates icon, text and accessible tooltip");
+  item->SetMode(InputMode::English);
+  Check(sink.updates==1,"unchanged input mode does not repaint repeatedly");
+  Check(item->UnadviseSink(cookie+1)==CONNECT_E_NOCONNECTION,"wrong sink cookie cannot disconnect observer");
+  Hr(item->UnadviseSink(cookie),"unadvise indicator");
+  Check(sink.refs==1,"unadvise releases observer");
+  Hr(item->AdviseSink(IID_ITfLangBarItemSink,&sink,&other),"re-advise indicator");
+  Check(cookie!=other,"old sink cookie cannot disconnect a new subscription");
+  item->Detach();
+  Check(sink.refs==1 && item->OnClick(TF_LBI_CLK_LEFT,{},nullptr)==S_FALSE,"detached shell item releases observer and cannot call former service");
+  item->Release();
+  for(int resource:{IDI_SIMPLE_VOICE,IDI_SOUND_CORE_DARK,IDI_SOUND_CORE_LIGHT,IDI_MODE_CHINESE,IDI_MODE_ENGLISH,IDI_MODE_CHINESE_LIGHT,IDI_MODE_ENGLISH_LIGHT}) {
+    bool valid=true;
+    for(int pixels:{16,20,24,32,40,48}) {
+      const HICON icon=LoadProductIcon(GetModuleHandleW(nullptr),resource,pixels);
+      ICONINFO info{};BITMAP bitmap{};
+      valid=icon && GetIconInfo(icon,&info) && GetObjectW(info.hbmColor,sizeof(bitmap),&bitmap) &&
+          bitmap.bmWidth==pixels && bitmap.bmHeight==pixels && bitmap.bmBitsPixel==32 && valid;
+      if(info.hbmColor)DeleteObject(info.hbmColor);if(info.hbmMask)DeleteObject(info.hbmMask);
+      if(icon)DestroyIcon(icon);
+    }
+    Check(valid,"embedded icon family supplies all six Windows sizes in 32-bit color");
   }
 }
 
@@ -310,6 +361,7 @@ int main(int argc,char** argv) {
     // Environment is private to this disposable executable, not the desktop.
     SetEnvironmentVariableW(L"LOCALAPPDATA",data.c_str());
     Hr(CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED),"initialize COM");
+    CheckIndicatorContract();
     ITfThreadMgrEx* thread=nullptr;
     Hr(CoCreateInstance(CLSID_TF_ThreadMgr,nullptr,CLSCTX_INPROC_SERVER,IID_ITfThreadMgrEx,
                         reinterpret_cast<void**>(&thread)),"create real TSF manager");
@@ -317,6 +369,16 @@ int main(int argc,char** argv) {
     Hr(thread->ActivateEx(&id,TF_TMAE_NOACTIVATETIP | TF_TMAE_NOACTIVATEKEYBOARDLAYOUT | TF_TMAE_SECUREMODE),"activate hidden TSF manager");
     BYTE keyboard[256]{},clear[256]{};
     GetKeyboardState(keyboard);SetKeyboardState(clear);
+    for(bool remove:{false,true}) {
+      Document edited(thread,id);
+      Hr(thread->SetFocus(edited.manager),"focus composition editing fixture");
+      VoiceService service; Hr(service.Activate(thread,id),"activate service for composition editing");
+      Type(service,edited.context,"nihao"); Key(service,edited.context,VK_LEFT);
+      if(remove) Key(service,edited.context,VK_DELETE);
+      Key(service,edited.context,VK_RETURN);
+      Check(edited.store->text==(remove?L"niao":L"nihao"),"Enter commits the complete edited raw input through real TSF");
+      service.Deactivate();
+    }
     {
       Document doc(thread,id);
       Document second(thread,id);
@@ -324,6 +386,29 @@ int main(int argc,char** argv) {
       Hr(thread->SetFocus(doc.manager),"focus document");
       VoiceService service;
       Hr(service.Activate(thread,id),"activate production text service");
+      ITfLangBarItemMgr* language_bar=nullptr;
+      Hr(thread->QueryInterface(IID_ITfLangBarItemMgr,reinterpret_cast<void**>(&language_bar)),"get real language bar manager");
+      ITfLangBarItem* item=nullptr;
+      Hr(language_bar->GetItem(kSystemInputModeItem,&item),"Windows resolves the service input mode item");
+      TF_LANGBARITEMINFO info{};Hr(item->GetInfo(&info),"read indicator identity");
+      Check(info.clsidService==CLSID_VoiceIme && info.guidItem==kSystemInputModeItem,"indicator belongs to Simple Voice and uses Windows input-mode GUID");
+      ITfLangBarItemButton* mode_button=nullptr;
+      Hr(item->QueryInterface(kLangBarButtonIid,reinterpret_cast<void**>(&mode_button)),"get native mode button interface");
+      item->Release();
+      IndicatorSink mode_sink;DWORD mode_cookie=TF_INVALID_COOKIE;
+      Hr(language_bar->AdviseItemSink(&mode_sink,&mode_cookie,kSystemInputModeItem),"observe real system mode item changes");
+      mode_sink.flags=0;
+      SendMessageW(service.IndicatorMessageWindowForTest(),WM_THEMECHANGED,0,0);
+      Check((mode_sink.flags&TF_LBI_ICON)!=0,"system theme change notifies the shell to reload the correctly colored mode icon");
+      Check(!IsWindowVisible(service.IndicatorMessageWindowForTest()) && GetAncestor(service.IndicatorMessageWindowForTest(),GA_PARENT)==GetDesktopWindow(),"theme listener is an invisible top-level tool window");
+      Check(IndicatorText(mode_button)==L"中","active service initially shows Chinese mode");
+      HICON mode_icon=nullptr;Hr(mode_button->GetIcon(&mode_icon),"load embedded mode icon");
+      Check(mode_icon!=nullptr,"input indicator returns a real owned icon");DestroyIcon(mode_icon);
+      BSTR tooltip=nullptr;Hr(mode_button->GetTooltipString(&tooltip),"read accessible input indicator tooltip");
+      Check(std::wstring(tooltip).find(L"轻音输入法 · Simple Voice")!=std::wstring::npos,"indicator tooltip identifies the product in Chinese and English");SysFreeString(tooltip);
+      Hr(mode_button->OnClick(TF_LBI_CLK_LEFT,{},nullptr),"click system mode button");
+      Check(IndicatorText(mode_button)==L"A" && !Key(service,doc.context,'A'),"system mode click changes actual typing behavior to English");
+      Hr(mode_button->OnClick(TF_LBI_CLK_LEFT,{},nullptr),"switch back through system mode button");
       Type(service,doc.context,"nihao");
       Check(!doc.store->text.empty(),"preedit reaches real TSF text store");
       Key(service,doc.context,VK_SPACE);
@@ -335,16 +420,17 @@ int main(int argc,char** argv) {
       Check(doc.store->text==L"你好。","Chinese punctuation commits through TSF");
       Key(service,doc.context,VK_SHIFT);
       Check(!Key(service,doc.context,'A'),"Shift switches to English passthrough");
+      Check(IndicatorText(mode_button)==L"A","Shift keeps the Windows mode indicator synchronized");
       Key(service,doc.context,VK_SHIFT);
       Type(service,doc.context,"nihao");
       Key(service,doc.context,VK_RETURN);
-      Check(doc.store->text==L"你好。你好","Enter commits after switching back to Chinese");
+      Check(doc.store->text==L"你好。nihao","Enter preserves raw input after switching back to Chinese");
       service.HandleCommit({L"语音定稿。",1,0});
-      Check(doc.store->text==L"你好。你好语音定稿。","voice commit inserts at the real TSF selection");
+      Check(doc.store->text==L"你好。nihao语音定稿。","voice commit inserts at the real TSF selection");
       service.HandleCommit({L"语音定稿。",1,0});
-      Check(doc.store->text==L"你好。你好语音定稿。","duplicate commit cannot insert twice");
+      Check(doc.store->text==L"你好。nihao语音定稿。","duplicate commit cannot insert twice");
       service.HandleCommit({L"过期连接",2,99});
-      Check(doc.store->text==L"你好。你好语音定稿。","stale connection cannot insert queued text");
+      Check(doc.store->text==L"你好。nihao语音定稿。","stale connection cannot insert queued text");
       const auto before=doc.store->text;
       Type(service,doc.context,"ni");
       Hr(thread->SetFocus(second.manager),"switch document focus");
@@ -354,8 +440,23 @@ int main(int argc,char** argv) {
       Key(service,second.context,VK_SPACE);
       Check(doc.store->text==before,"focus switch cancels the previous document preedit");
       Check(second.store->text==L"你好","new document receives its own composition");
+      {
+        WNDCLASSW klass{}; klass.lpfnWndProc=DefWindowProcW; klass.hInstance=GetModuleHandleW(nullptr);
+        klass.lpszClassName=L"SimpleVoicePreviewEditor"; RegisterClassW(&klass);
+        HWND editor=CreateWindowExW(0,klass.lpszClassName,L"Isolated preview editor",WS_OVERLAPPED,0,0,600,400,nullptr,nullptr,klass.hInstance,nullptr);
+        HWND field=CreateWindowExW(0,L"EDIT",L"",WS_CHILD|WS_VISIBLE|ES_MULTILINE,0,0,400,200,editor,nullptr,klass.hInstance,nullptr);
+        const HWND old_focus=SetFocus(field);
+        Check(IsInputMethodEditor(GetFocus()),"preview editor is an independent editable context");
+        service.SetVoiceActiveForTest(true);
+        Type(service,second.context,"nihao"); Key(service,second.context,VK_SPACE);
+        Check(second.store->text==L"你好你好","pending voice preview still permits pinyin editing in its own window");
+        Check(!Key(service,second.context,VK_RETURN),"editor Enter is not intercepted as a voice insertion");
+        service.SetVoiceActiveForTest(false); SetFocus(old_focus); DestroyWindow(editor);
+      }
       Hr(thread->SetFocus(readonly.manager),"focus readonly document");
       Check(!Key(service,readonly.context,'N'),"readonly document does not consume pinyin");
+      DWORD mode_status=0;Hr(mode_button->GetStatus(&mode_status),"read disabled mode status");
+      Check((mode_status&TF_LBI_STATUS_DISABLED)!=0 && mode_button->OnClick(TF_LBI_CLK_LEFT,{},nullptr)==S_FALSE,"readonly document disables the system mode button");
       Check(readonly.store->text.empty(),"readonly document stays unchanged");
       Hr(thread->SetFocus(doc.manager),"refocus document for wire tests");
       MSG stale{};
@@ -417,6 +518,7 @@ int main(int argc,char** argv) {
         Check(moved.left==extended.left+100 && moved.top==extended.top+100,"candidate follows editor movement without a key event");
         Key(service,doc.context,VK_ESCAPE);
         doc.store->layout_x=120; doc.store->layout_y=120;
+        mode_sink.flags=0;
         PipeServer server; server.Phase("1"); server.QueryCaret();
         Check(server.Caret(120).caret_h==24,"voice starts at the actual TSF caret");
         doc.store->layout_x=360; doc.store->layout_y=280;
@@ -427,12 +529,24 @@ int main(int argc,char** argv) {
         Check(server.NoCaret(200),"unavailable browser-style layout does not publish a zero or fallback caret");
         doc.store->layout_unavailable=false;
         Check(server.Caret(400).caret_h==24,"voice resumes following when layout becomes available");
+        mode_button->GetStatus(&mode_status);
+        Check((mode_status&TF_LBI_STATUS_DISABLED)!=0 && (mode_sink.flags&TF_LBI_STATUS)!=0,"voice activity notifies Windows to repaint the disabled mode button without a focus change");
+        mode_sink.flags=0;
         server.Phase("0");
         Pump(80); doc.store->layout_y=450;
+        mode_button->GetStatus(&mode_status);
+        Check(mode_status==0 && (mode_sink.flags&TF_LBI_STATUS)!=0,"voice returning idle notifies Windows to re-enable the mode button without a focus change");
         Check(server.NoCaret(200),"idle voice does not keep polling or publishing caret moves");
       }
       const auto start=GetTickCount64();
       service.Deactivate();
+      ITfLangBarItem* removed=nullptr;
+      const HRESULT removed_hr=language_bar->GetItem(kSystemInputModeItem,&removed);
+      Check(FAILED(removed_hr) || !removed,"deactivation removes the mode item from Windows");
+      if(removed)removed->Release();
+      Check(mode_button->OnClick(TF_LBI_CLK_LEFT,{},nullptr)==S_FALSE,"shell-retained button is safe after service deactivation");
+      mode_button->Release();language_bar->Release();
+      Check(mode_sink.refs==1,"deactivation releases Windows mode observers");
       Check(GetTickCount64()-start<2000,"TSF reader exits promptly without an engine");
       thread->SetFocus(nullptr);
     }

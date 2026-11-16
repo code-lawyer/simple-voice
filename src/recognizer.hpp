@@ -12,4 +12,5 @@ class Recognizer {
   virtual std::string Finalize() = 0;
   virtual void Reset() = 0;
   virtual std::string TakeWarning() { return {}; }
+  virtual std::string Original() const { return Partial(); }
 };

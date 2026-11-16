@@ -138,6 +138,7 @@ endif()
 if(NOT VOICEIME_USE_PREBUILT_RIME)
 ExternalProject_Add(voiceime_boost_ext
   URL https://github.com/boostorg/boost/releases/download/boost-1.86.0/boost-1.86.0-cmake.tar.xz
+  URL_HASH SHA256=2c5ec5edcdff47ff55e27ed9560b0a0b94b07bd07ed9928b476150e16b0efc57
   DOWNLOAD_EXTRACT_TIMESTAMP TRUE
   UPDATE_COMMAND ""
   CMAKE_GENERATOR "${CMAKE_GENERATOR}"
@@ -153,6 +154,7 @@ ExternalProject_Add(voiceime_boost_ext
 
 ExternalProject_Add(voiceime_yaml_ext
   URL https://github.com/jbeder/yaml-cpp/archive/refs/tags/0.8.0.tar.gz
+  URL_HASH SHA256=fbe74bbdcee21d656715688706da3c8becfd946d92cd44705cc6098bb23b3a16
   DOWNLOAD_EXTRACT_TIMESTAMP TRUE
   UPDATE_COMMAND ""
   PATCH_COMMAND ${CMAKE_COMMAND} -DSRC=<SOURCE_DIR> -P "${CMAKE_BINARY_DIR}/rime-patch-yaml.cmake"
@@ -172,6 +174,7 @@ ExternalProject_Add(voiceime_yaml_ext
 
 ExternalProject_Add(voiceime_leveldb_ext
   URL https://github.com/google/leveldb/archive/refs/tags/1.23.tar.gz
+  URL_HASH SHA256=9a37f8a6174f09bd622bc723b55881dc541cd50747cbd08831c2a82d620f6d76
   DOWNLOAD_EXTRACT_TIMESTAMP TRUE
   UPDATE_COMMAND ""
   CMAKE_GENERATOR "${CMAKE_GENERATOR}"
@@ -186,6 +189,7 @@ ExternalProject_Add(voiceime_leveldb_ext
 
 ExternalProject_Add(voiceime_marisa_ext
   URL https://github.com/s-yata/marisa-trie/archive/refs/tags/v0.2.6.tar.gz
+  URL_HASH SHA256=1063a27c789e75afa2ee6f1716cc6a5486631dcfcb7f4d56d6485d2462e566de
   DOWNLOAD_EXTRACT_TIMESTAMP TRUE
   UPDATE_COMMAND ""
   PATCH_COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_BINARY_DIR}/marisa-CMakeLists.txt" <SOURCE_DIR>/CMakeLists.txt
@@ -199,6 +203,7 @@ ExternalProject_Add(voiceime_marisa_ext
 
 ExternalProject_Add(voiceime_opencc_ext
   URL https://github.com/BYVoid/OpenCC/archive/refs/tags/ver.1.1.9.tar.gz
+  URL_HASH SHA256=ad4bcd8d87219a240a236d4a55c9decd2132a9436697d2882ead85c8939b0a99
   DOWNLOAD_EXTRACT_TIMESTAMP TRUE
   UPDATE_COMMAND ""
   PATCH_COMMAND ${CMAKE_COMMAND} -DSRC=<SOURCE_DIR> -P "${CMAKE_BINARY_DIR}/rime-patch-opencc.cmake"
@@ -222,6 +227,7 @@ ExternalProject_Add(voiceime_opencc_ext
 
 ExternalProject_Add(voiceime_librime_ext
   URL https://github.com/rime/librime/archive/refs/tags/1.17.0.tar.gz
+  URL_HASH SHA256=a60274da5d8b8a7187e6c7e9ba5023334ed7bdd182535e93c4e96de8cf188377
   DOWNLOAD_EXTRACT_TIMESTAMP TRUE
   UPDATE_COMMAND ""
   DEPENDS voiceime_boost_ext voiceime_yaml_ext voiceime_leveldb_ext voiceime_marisa_ext voiceime_opencc_ext

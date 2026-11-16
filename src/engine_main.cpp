@@ -1,5 +1,6 @@
 #include "confirm_box.hpp"
 #include "product.hpp"
+#include "brand_icon.hpp"
 #include "ui_theme.hpp"
 #include "lexicon.hpp"
 #include "recognizer.hpp"
@@ -8,8 +9,11 @@
 #include "session.hpp"
 #include "settings.hpp"
 #include "hotkey_dialog.hpp"
+#include "preferences_window.hpp"
+#include "recognition_text.hpp"
 #include "sherpa_recognizer.hpp"
 #include "vad.hpp"
+#include "capture_health.hpp"
 
 #include "ipc.hpp"
 #include "pipe_io.hpp"
@@ -47,6 +51,8 @@ constexpr UINT kFinalMessage = WM_APP + 5;
 constexpr UINT kAnnounceMessage = WM_APP + 6;
 constexpr UINT kCaptureErrorMessage = WM_APP + 7;
 constexpr UINT kClientGoneMessage = WM_APP + 8;
+constexpr UINT kPreparedMessage = WM_APP + 9;
+constexpr UINT kCaptureReadyMessage = WM_APP + 10;
 constexpr UINT_PTR kInsertTimer = 1;
 constexpr UINT_PTR kAnchorTimer = 2;
 using ClientId = std::uintptr_t;
@@ -56,7 +62,7 @@ constexpr UINT kTrayMessage = WM_APP + 4;
 constexpr UINT kQuitCommand = 1;
 constexpr UINT kRecordCommand = 2;
 constexpr UINT kSkinBase = 30;
-constexpr UINT kRecentBase = 100;
+constexpr UINT kSettingsCommand=3, kTermsCommand=4, kEditCommand=5, kCopyCommand=6, kRestoreCommand=7, kGuideCommand=8;
 const GUID kFloatFormat = {0x00000003, 0x0000, 0x0010, {0x80, 0x00, 0x00, 0xAA, 0x00, 0x38, 0x9B, 0x71}};
 
 #ifdef VOICEIME_TESTING
@@ -173,9 +179,9 @@ std::string ResourceDir(const wchar_t* relative, const wchar_t* marker) {
 }
 
 std::string DictDir() { return ResourceDir(L"third_party\\cppjieba\\dict", L"jieba.dict.utf8"); }
-std::string ModelDir() { return ResourceDir(L"models", L"streaming\\model.int8.onnx"); }
+std::string ModelDir() { return ResourceDir(L"models", L"streaming-bilingual\\encoder-epoch-99-avg-1.int8.onnx"); }
 
-int CheckInstallation() {
+int CheckInstallation(bool chinese_only=false) {
   SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
   const auto dict = DictDir();
   for (const char* file : {"jieba.dict.utf8", "hmm_model.utf8", "user.dict.utf8", "idf.utf8", "stop_words.utf8", "pinyin.txt"}) {
@@ -189,9 +195,9 @@ int CheckInstallation() {
     return 2;
   }
   Segmenter segmenter(dict);
-  auto recognizer = MakeSherpaRecognizer(ModelDir(), &segmenter, nullptr);
+  auto recognizer = MakeSherpaRecognizer(ModelDir(), &segmenter, nullptr, chinese_only);
   if (!recognizer) return 2;
-  std::printf("%s %s: dictionaries and all three local models loaded.\n", kProductName, SIMPLE_VOICE_VERSION);
+  std::printf("%s %s: dictionaries and %s speech models loaded.\n", kProductName, SIMPLE_VOICE_VERSION, chinese_only?"Chinese-preferred":"bilingual");
   std::puts("No microphone, input-method registration or personal data was accessed.");
   return 0;
 }
@@ -249,12 +255,17 @@ class Engine {
   LRESULT OnMessage(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam);
   void OnPipe(ClientId sender, const Message& message);
   void ShowMenu(HWND hwnd);
+  void OpenPreferences(int page=0);
+  void BeginPrepare();
+  bool ExportTerms();
+  std::wstring Diagnostics() const;
+  void EditPreview();
   void OnPartial();
   void OnEndpoint();
   void StartCapture();
   void StopCapture();
   void UpdateBox();
-  void CaptureMain(int generation);
+  void CaptureMain(int generation,std::wstring microphone);
   void PipeMain();
   void ClientLoop(ClientId id, HANDLE pipe);
   void ReapClients();
@@ -284,6 +295,21 @@ class Engine {
   std::thread capture_thread_;
   std::thread pipe_thread_;
   std::thread finalize_thread_;
+  std::thread prepare_thread_;
+  std::unique_ptr<Recognizer> prepared_;
+  std::string final_result_, final_error_, original_text_;
+  bool preparing_=false, fake_=false, recognizer_chinese_=false, preparing_chinese_=false;
+#ifdef VOICEIME_TESTING
+  int prepare_attempts_=0;
+#endif
+  std::string model_error_;
+  ClientId queued_start_=0;
+  std::atomic<bool> capture_ready_{false};
+  std::atomic<int> input_level_{0};
+  InputPreferences preferences_;
+  std::wstring data_path_, preferences_path_;
+  PreferencesWindow preferences_window_;
+  PreviewEditor preview_editor_;
   int finalize_generation_ = 0;
   int capture_generation_ = 0;
   std::string pending_insert_;
@@ -291,6 +317,7 @@ class Engine {
   ClientId insert_client_ = 0;
   ClientId commit_client_ = 0;
   bool insert_uncertain_ = false;
+  std::uint64_t utterance_generation_ = 0;
   std::string lexicon_warning_;
   std::atomic<bool> stop_capture_{false};
   std::atomic<bool> stop_pipe_{false};
@@ -348,20 +375,20 @@ int Engine::Run(bool fake) {
   }();
   try { lexicon_ = std::make_unique<Lexicon>(WideToUtf8(data + L"\\lexicon.sqlite")); }
   catch (const std::exception& e) { LexiconWarning(e.what()); }
+  data_path_=data; preferences_path_=data+L"\\preferences.ini";
+  preferences_=LoadInputPreferences(preferences_path_);
+  ExportTerms();
   config_path_ = WideToUtf8(data + L"\\config.json");
   settings_ = LoadSettings(config_path_);
   skin_path_ = data + L"\\appearance.json";
   box_.SetSkin(LoadSkin(skin_path_));
   const std::string dict = DictDir();
   if (!dict.empty()) segmenter_ = std::make_unique<Segmenter>(dict);
-  if (fake) {
-    recognizer_ = std::make_unique<FakeRecognizer>();
-    std::fprintf(stderr, "voiceime_engine --fake\n");
-  } else {
-    recognizer_ = MakeSherpaRecognizer(ModelDir(), segmenter_.get(), lexicon_.get());
-    if (!recognizer_) return 2;
-    std::fprintf(stderr, "voiceime_engine\n");
-  }
+  fake_=fake;
+  if(fake) recognizer_=std::make_unique<FakeRecognizer>();
+#ifdef VOICEIME_TESTING
+  if(TestEnvironment(L"VOICEIME_TEST_CAPTURE").find(L"model-")==0) recognizer_.reset();
+#endif
 
   if (!box_.Create(GetModuleHandleW(nullptr), &Engine::Hook, this)) return 1;
 #ifndef VOICEIME_TESTING
@@ -373,7 +400,7 @@ int Engine::Run(bool fake) {
 
   MSG message;
   while (GetMessageW(&message, nullptr, 0, 0) > 0) {
-    if (hotkey_dialog_.Translate(&message)) continue;
+    if (hotkey_dialog_.Translate(&message) || preview_editor_.Translate(&message) || preferences_window_.Translate(&message)) continue;
     TranslateMessage(&message);
     DispatchMessageW(&message);
   }
@@ -390,6 +417,7 @@ int Engine::Run(bool fake) {
   }
   StopCapture();
   if (finalize_thread_.joinable()) finalize_thread_.join();
+  if (prepare_thread_.joinable()) prepare_thread_.join();
   if (pipe_thread_.joinable()) pipe_thread_.join();
   for (auto& client : client_threads_) {
     if (client.thread.joinable()) client.thread.join();
@@ -413,10 +441,13 @@ void Engine::AddTray() {
   icon.uID = 1;
   icon.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
   icon.uCallbackMessage = kTrayMessage;
-  icon.hIcon = LoadIconW(nullptr, MAKEINTRESOURCEW(32512));
+  icon.hIcon = LoadProductIcon(GetModuleHandleW(nullptr),
+      ShellUsesLightIcons() ? IDI_SOUND_CORE_DARK : IDI_SOUND_CORE_LIGHT,ShellIconPixels());
   const std::wstring tip = std::wstring(kProductDisplayName) + L" · Simple Voice";
   wcsncpy(icon.szTip, tip.c_str(), 127);
-  tray_added_ = Shell_NotifyIconW(NIM_ADD, &icon) == TRUE;
+  const bool updated = Shell_NotifyIconW(tray_added_ ? NIM_MODIFY : NIM_ADD, &icon) == TRUE;
+  tray_added_ = tray_added_ || updated;
+  if(icon.hIcon)DestroyIcon(icon.hIcon);
 }
 
 void Engine::RemoveTray() {
@@ -455,7 +486,10 @@ void Engine::UpdateBox() {
   if (caret_known_ && caret_process_!=0 && caret_process_!=foreground_process) { box_.Hide(); return; }
   if (!caret_known_ && GetTickCount64()-listening_started_<180) return;
 #endif
-  const std::string text = mic_error_.empty() ? session_.box_text() : mic_error_;
+  box_.SetActivity(preparing_?L"正在准备语音模型":queued_start_?L"正在结束上一段识别":
+      session_.phase()==Phase::Listening && !capture_ready_?L"正在连接麦克风":L"");
+  const std::string text = mic_error_.empty() ?
+      (session_.phase()==Phase::Listening && !capture_ready_?"收到采样后即可开始说话":session_.box_text()) : mic_error_;
   Rect caret{0, 0, 0, 0};
   Rect window = ForegroundClient();
   if (caret_known_) {
@@ -508,13 +542,8 @@ void Engine::StoreLexicon() {
   std::string stored;
   if (!session_.TakeLexiconWrite(&stored) || !lexicon_) return;
   try {
-  std::vector<Token> tokens;
-  if (segmenter_) {
-    segmenter_->Remember(stored);
-    tokens = segmenter_->Cut(stored);
-    for (const Token& token : tokens) segmenter_->Remember(token.text);
-  }
-  lexicon_->Commit(stored, tokens, static_cast<std::int64_t>(std::time(nullptr)));
+  lexicon_->Commit(stored, {}, static_cast<std::int64_t>(std::time(nullptr)));
+  ExportTerms();
   lexicon_warning_.clear();
   } catch (const std::exception& e) { LexiconWarning(e.what()); }
 }
@@ -563,44 +592,45 @@ void Engine::LoseInsertConfirmation() {
 }
 
 void Engine::BeginFinalize() {
-  if (session_.phase() == Phase::Listening) session_.OnSpeechEnded();
-  if (session_.phase() != Phase::Finalizing) return;
-  if (finalize_thread_.joinable()) return;
-  const int generation = ++finalize_generation_;
-  PublishPhase();
-  finalize_thread_ = std::thread([this, generation] {
-    std::string text = recognizer_ ? recognizer_->Finalize() : std::string();
-    auto* held = new std::string(std::move(text));
-    if (box_.hwnd() == nullptr ||
-        !PostMessageW(box_.hwnd(), kFinalMessage, static_cast<WPARAM>(generation), reinterpret_cast<LPARAM>(held))) {
-      delete held;
-    }
+  if(session_.phase()==Phase::Listening) session_.OnSpeechEnded();
+  if(session_.phase()!=Phase::Finalizing || finalize_thread_.joinable()) return;
+  const int generation=++finalize_generation_; PublishPhase();
+  final_result_.clear(); final_error_.clear();
+  finalize_thread_=std::thread([this,generation] {
+    try { final_result_=recognizer_?recognizer_->Finalize():std::string(); }
+    catch(...) { final_error_="语音校准失败。可编辑已有草稿，或取消后重新录音。"; }
+    PostMessageW(box_.hwnd(),kFinalMessage,static_cast<WPARAM>(generation),0);
   });
 }
 
 void Engine::PublishFinal(const std::string& final_text) {
+  original_text_=recognizer_?recognizer_->Original():final_text;
+  if(original_text_.empty()) original_text_=final_text;
   session_.OnFinal(final_text);
-  if (recognizer_ && !recognizer_->TakeWarning().empty()) LexiconWarning("recognition retained without lexicon bias");
-  if (session_.phase() != Phase::Idle) RequestCaret();
-  UpdateBox();
-  PublishPhase();
+  if(recognizer_) { const auto warning=recognizer_->TakeWarning(); if(!warning.empty()) mic_error_=warning; }
+  if(final_text.empty()) mic_error_="没有识别到文字。检查麦克风后重新录音。";
+  else if(HasUnknownSpeech(final_text)) mic_error_="有内容无法识别。右键打开编辑预览，补全后再写入。";
+  if(session_.phase()!=Phase::Idle) RequestCaret(); UpdateBox(); PublishPhase();
 }
 
 void Engine::StartCapture() {
   StopCapture();
   mic_error_.clear();
-  vad_.Reset();
+  vad_=Vad(VadConfig{16000,preferences_.pause_ms,60000,800});
+  capture_ready_=false; input_level_=0;
   partial_posted_ = false;
   stop_capture_ = false;
   wake_ = CreateEventW(nullptr, FALSE, FALSE, nullptr);
   const int generation = ++capture_generation_;
-  capture_thread_ = std::thread([this, generation] { CaptureMain(generation); });
+  const auto device=preferences_.microphone;
+  capture_thread_ = std::thread([this, generation,device] { CaptureMain(generation,device); });
 }
 
 void Engine::StopCapture() {
   stop_capture_ = true;
   if (wake_ != nullptr) SetEvent(wake_);
   if (capture_thread_.joinable()) capture_thread_.join();
+  capture_ready_=false; input_level_=0;
   if (wake_ != nullptr) {
     CloseHandle(wake_);
     wake_ = nullptr;
@@ -623,38 +653,103 @@ void Engine::OnEndpoint() {
 }
 
 void Engine::ShowMenu(HWND hwnd) {
-  HMENU menu = CreatePopupMenu();
-  HMENU recent = CreatePopupMenu();
-  recent_menu_.clear();
-  if (lexicon_) {
-    try {
-    for (const Entry& entry : lexicon_->Recent(20)) {
-      if (recent_menu_.size() >= 20) break;
-      recent_menu_.push_back(entry.text);
-      AppendMenuW(recent, MF_STRING, kRecentBase + static_cast<UINT>(recent_menu_.size() - 1),
-                  Utf8ToWide("删除「" + entry.text + "」").c_str());
-    }
-    } catch (const std::exception& e) { LexiconWarning(e.what()); }
+  HMENU menu=CreatePopupMenu();
+  if(session_.phase()==Phase::Pending && !session_.box_text().empty()) {
+    AppendMenuW(menu,MF_STRING,kEditCommand,L"编辑预览…");
+    AppendMenuW(menu,MF_STRING,kCopyCommand,L"复制预览");
+    AppendMenuW(menu,MF_STRING,kRestoreCommand,L"恢复识别原文");
+    AppendMenuW(menu,MF_SEPARATOR,0,nullptr);
   }
-  if (recent_menu_.empty()) {
-    AppendMenuW(recent, MF_STRING | MF_GRAYED, kRecentBase, Utf8ToWide("（空）").c_str());
-  }
-  AppendMenuW(menu, MF_STRING, kRecordCommand, Utf8ToWide("设置快捷键").c_str());
-  if (const auto skins=UiSkinMenu(box_.skin(),kSkinBase))
-    AppendMenuW(menu,MF_POPUP,reinterpret_cast<UINT_PTR>(skins),L"皮肤");
-  if (!lexicon_warning_.empty()) AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, Utf8ToWide(lexicon_warning_).c_str());
-  AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(recent), Utf8ToWide("最近记住的词（点击删除）").c_str());
-  AppendMenuW(menu, MF_STRING, kQuitCommand, Utf8ToWide("退出").c_str());
-  POINT point;
-  GetCursorPos(&point);
-  SetForegroundWindow(hwnd);
-  TrackPopupMenu(menu, TPM_RIGHTBUTTON, point.x, point.y, 0, hwnd, nullptr);
-  DestroyMenu(menu);
+  AppendMenuW(menu,MF_STRING,kSettingsCommand,L"设置…");
+  AppendMenuW(menu,MF_STRING,kTermsCommand,L"我的词语…");
+  AppendMenuW(menu,MF_STRING,kGuideCommand,L"使用与诊断…");
+  AppendMenuW(menu,MF_STRING,kRecordCommand,L"语音快捷键…");
+  if(const auto skins=UiSkinMenu(box_.skin(),kSkinBase)) AppendMenuW(menu,MF_POPUP,reinterpret_cast<UINT_PTR>(skins),L"外观");
+  if(!lexicon_warning_.empty()) AppendMenuW(menu,MF_STRING|MF_GRAYED,0,Utf8ToWide(lexicon_warning_).c_str());
+  AppendMenuW(menu,MF_SEPARATOR,0,nullptr);
+  AppendMenuW(menu,MF_STRING,kQuitCommand,L"退出轻音输入法");
+  POINT point{}; GetCursorPos(&point); SetForegroundWindow(hwnd);
+  TrackPopupMenu(menu,TPM_RIGHTBUTTON,point.x,point.y,0,hwnd,nullptr); DestroyMenu(menu);
 }
 
+bool Engine::ExportTerms() {
+  try { return lexicon_ && lexicon_->ExportTerms(data_path_+L"\\rime\\voiceime_personal.txt"); }
+  catch(...) { return false; }
+}
+std::wstring Engine::Diagnostics() const {
+  return L"Simple Voice "+Utf8ToWide(SIMPLE_VOICE_VERSION)+L" · Windows x64\r\n"+
+    (preparing_?L"语音模型：正在准备":recognizer_?L"语音模型：就绪":L"语音模型：未就绪，请重试或修复安装")+
+    L" · "+(recognizer_chinese_?L"中文优先":L"中英通用")+
+    L"\r\n麦克风："+(capture_ready_?L"已收到采样":L"未录音 / 等待采样")+
+    L"  输入电平："+std::to_wstring(input_level_.load())+L"%\r\n拼音学习："+(preferences_.learning?L"开启":L"暂停")+
+    L"\r\n音频只在内存中处理；诊断不包含输入正文。";
+}
+void Engine::OpenPreferences(int page) {
+  if(page==0 && !preferences_.guide_dismissed) page=3;
+  PreferencesActions actions;
+  actions.save=[this](const InputPreferences& next) {
+    if(!SaveInputPreferences(preferences_path_,next)) return false;
+    const bool model_changed=preferences_.chinese_only!=next.chinese_only;
+    preferences_=next; if(model_changed) BeginPrepare(); return true;
+  };
+  actions.skin=[this](UiSkin skin) {
+    if(!SaveSkin(skin_path_,skin)) return false;
+    box_.SetSkin(skin);
+#ifndef VOICEIME_TESTING
+    SendNotifyMessageW(HWND_BROADCAST,UiSkinChangedMessage(),0,0);
+#endif
+    return true;
+  };
+  actions.hotkey=[this]{BeginRecordHotkey();};
+  actions.retry_models=[this]{BeginPrepare();};
+  actions.diagnostics=[this]{return Diagnostics();};
+  actions.terms_changed=[this]{return ExportTerms();};
+  actions.input_code=[this](const std::string& text) {
+    std::string code;
+    if(segmenter_) for(const auto& token:segmenter_->Cut(text)) code+=token.pinyin;
+    if(code.empty()) code=text;
+    std::string clean;
+    for(unsigned char c:code) if(c>='A'&&c<='Z') clean+=char(c+32); else if(c>='a'&&c<='z') clean+=char(c);
+    return clean;
+  };
+  preferences_window_.Open(lexicon_.get(),preferences_,box_.skin(),std::move(actions),page);
+}
+void Engine::EditPreview() {
+  if(session_.phase()!=Phase::Pending || queued_start_) return;
+  const auto generation=utterance_generation_;
+  preview_editor_.Open(session_.box_text(),original_text_,[this,generation](std::string text){
+    if(session_.phase()!=Phase::Pending || queued_start_ || generation!=utterance_generation_) return;
+    // Editing cannot prove whether a previous insertion reached its document.
+    session_.RestorePending(text); mic_error_.clear(); UpdateBox(); PublishPhase();
+  },insert_uncertain_);
+}
+void Engine::BeginPrepare() {
+  if(preparing_ || capture_thread_.joinable() || finalize_thread_.joinable() || session_.phase()==Phase::Listening || session_.phase()==Phase::Finalizing || session_.phase()==Phase::Committing) return;
+  if(prepare_thread_.joinable()) prepare_thread_.join();
+  preparing_=true; model_error_.clear(); preparing_chinese_=preferences_.chinese_only;
+  recognizer_.reset();
+  prepare_thread_=std::thread([this] {
+#ifdef VOICEIME_TESTING
+    const auto fixture=TestEnvironment(L"VOICEIME_TEST_CAPTURE");
+    ++prepare_attempts_;
+    if(fixture==L"model-slow" || fixture==L"model-fail-once") Sleep(500);
+    if(fixture==L"model-fail-once" && prepare_attempts_==1) {
+      prepared_.reset(); PostMessageW(box_.hwnd(),kPreparedMessage,0,0); return;
+    }
+#endif
+    try { prepared_=fake_?std::make_unique<FakeRecognizer>():MakeSherpaRecognizer(ModelDir(),segmenter_.get(),nullptr,preparing_chinese_); }
+    catch(...) { prepared_.reset(); }
+    PostMessageW(box_.hwnd(),kPreparedMessage,0,0);
+  });
+}
 void Engine::OnPipe(ClientId sender, const Message& message) {
+  if(message.type==MsgType::PersonalTermUsed) {
+    if(lexicon_) try { lexicon_->Commit(message.text,{},std::time(nullptr)); ExportTerms(); }
+      catch(const std::exception& error) { LexiconWarning(error.what()); }
+    return;
+  }
   if (message.type == MsgType::ShowSettings) {
-    ShowMenu(box_.hwnd());
+    OpenPreferences();
     return;
   }
   if (message.type == MsgType::InsertResult) {
@@ -713,7 +808,7 @@ void Engine::OnPipe(ClientId sender, const Message& message) {
     if (session_.phase() == Phase::Committing) return;
     ++finalize_generation_;
     StopCapture();
-    if (finalize_thread_.joinable()) finalize_thread_.join();
+    queued_start_=0; ++utterance_generation_; preview_editor_.Close();
     session_.Escape();
     pending_insert_.clear();
     insert_id_ = 0;
@@ -725,14 +820,26 @@ void Engine::OnPipe(ClientId sender, const Message& message) {
     return;
   }
   if (message.type != MsgType::StartListen) return;
-  if (session_.phase() == Phase::Listening) {
-    StopCapture();
-    session_.Hotkey();
-    BeginFinalize();
-    UpdateBox();
-    return;
+  // A changed preference applies to the next utterance. Handle active audio
+  // before examining model selection, so a stop hotkey cannot unload a model
+  // still owned by the capture/finalization thread.
+  if(session_.phase()==Phase::Listening) {
+    StopCapture(); session_.Hotkey(); BeginFinalize(); UpdateBox(); return;
   }
-  if (session_.phase() == Phase::Finalizing || session_.phase() == Phase::Committing) return;
+  if(session_.phase()==Phase::Finalizing || session_.phase()==Phase::Committing) return;
+  // Invalidate the previous editor as soon as a new utterance is accepted,
+  // including paths that wait for preparation or a cancelled finalizer.
+  ++utterance_generation_;
+  preview_editor_.Close(); original_text_.clear();
+  if(preparing_ || (finalize_thread_.joinable() && session_.phase()!=Phase::Finalizing)) {
+    queued_start_=sender; session_.RestorePending("");
+    mic_error_=preparing_?"正在准备语音模型，请稍候。Esc 取消。":"正在结束上一段识别，请稍候。Esc 取消。";
+    listening_started_=GetTickCount64(); UpdateBox(); PublishPhase(); return;
+  }
+  if(!recognizer_ || recognizer_chinese_!=preferences_.chinese_only) {
+    queued_start_=sender; session_.RestorePending(""); mic_error_="正在准备语音模型，请稍候。Esc 取消。";
+    BeginPrepare(); listening_started_=GetTickCount64(); UpdateBox(); PublishPhase(); return;
+  }
   if (finalize_thread_.joinable()) finalize_thread_.join();
   recognizer_->Reset();
   caret_known_ = false;
@@ -747,6 +854,11 @@ void Engine::OnPipe(ClientId sender, const Message& message) {
 }
 
 LRESULT Engine::OnMessage(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
+  static const UINT taskbar_created=RegisterWindowMessageW(L"TaskbarCreated");
+  if(taskbar_created && message==taskbar_created) { tray_added_=false;AddTray();return 0; }
+  if(message==WM_SETTINGCHANGE || message==WM_THEMECHANGED || message==WM_DPICHANGED || message==WM_DISPLAYCHANGE) {
+    AddTray();return 0;
+  }
   if (message == kClientGoneMessage) {
     if (insert_id_ != 0 && static_cast<ClientId>(wparam) == insert_client_) LoseInsertConfirmation();
     return 0;
@@ -768,14 +880,25 @@ LRESULT Engine::OnMessage(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
     PublishPhase();
     return 0;
   }
+  if(message==kPreparedMessage) {
+    if(prepare_thread_.joinable()) prepare_thread_.join();
+    preparing_=false;
+    if(prepared_) { recognizer_=std::move(prepared_); recognizer_chinese_=preparing_chinese_; }
+    else { model_error_="语音模型未能准备。请在设置中重试，或重新安装完整模型。"; mic_error_=model_error_; }
+    const auto pending=queued_start_; queued_start_=0;
+    if(pending && recognizer_) { Message start; start.type=MsgType::StartListen; OnPipe(pending,start); }
+    else { UpdateBox(); PublishPhase(); }
+    return 0;
+  }
+  if(message==kCaptureReadyMessage) { if(static_cast<int>(wparam)==capture_generation_) UpdateBox(); return 0; }
   if (message == kFinalMessage) {
-    auto* text = reinterpret_cast<std::string*>(lparam);
-    const int generation = static_cast<int>(wparam);
-    if (finalize_thread_.joinable()) finalize_thread_.join();
-    if (text != nullptr) {
-      if (generation == finalize_generation_ && session_.phase() == Phase::Finalizing) PublishFinal(*text);
-      delete text;
+    if(finalize_thread_.joinable()) finalize_thread_.join();
+    if(static_cast<int>(wparam)==finalize_generation_ && session_.phase()==Phase::Finalizing) {
+      if(final_error_.empty()) PublishFinal(final_result_);
+      else { mic_error_=final_error_; session_.RestorePending(session_.box_text()); UpdateBox(); PublishPhase(); }
     }
+    const auto pending=queued_start_; queued_start_=0;
+    if(pending) { Message start; start.type=MsgType::StartListen; OnPipe(pending,start); }
     return 0;
   }
   if (message == kPartialMessage) {
@@ -791,13 +914,13 @@ LRESULT Engine::OnMessage(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
       StopCapture();
       // The capture thread posts a static diagnostic; UI state has one owner.
       mic_error_ = reinterpret_cast<const char*>(lparam);
-      session_.RestorePending("");
+      session_.RestorePending(session_.box_text());
       UpdateBox();
       PublishPhase();
     }
     return 0;
   }
-  if (message == kTrayMessage && (lparam == WM_RBUTTONUP || lparam == WM_LBUTTONUP)) {
+  if (message == WM_CONTEXTMENU || (message == kTrayMessage && (lparam == WM_RBUTTONUP || lparam == WM_LBUTTONUP))) {
     ShowMenu(hwnd);
     return 0;
   }
@@ -832,11 +955,14 @@ LRESULT Engine::OnMessage(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
       }
       return 0;
     }
-    if (lexicon_ != nullptr && id >= kRecentBase && id < kRecentBase + recent_menu_.size()) {
-      try { lexicon_->Delete(recent_menu_[id - kRecentBase]); lexicon_warning_.clear(); }
-      catch (const std::exception& e) { LexiconWarning(e.what()); }
-      return 0;
+    if(id==kSettingsCommand || id==kTermsCommand || id==kGuideCommand) { OpenPreferences(id==kTermsCommand?1:id==kGuideCommand?3:0); return 0; }
+    if(id==kEditCommand) { EditPreview(); return 0; }
+    if(id==kCopyCommand) { CopyUserText(hwnd,Utf8ToWide(session_.box_text())); return 0; }
+    if(id==kRestoreCommand && session_.phase()==Phase::Pending && !original_text_.empty()) {
+      session_.RestorePending(original_text_); mic_error_=HasUnknownSpeech(original_text_)?"请编辑无法识别的内容，再确认写入。":"";
+      UpdateBox(); PublishPhase(); return 0;
     }
+
   }
   if (message == WM_DESTROY) {
     RemoveTray();
@@ -979,7 +1105,7 @@ void Engine::PipeMain() {
   }
 }
 
-void Engine::CaptureMain(int generation) {
+void Engine::CaptureMain(int generation,std::wstring microphone) {
 #ifdef VOICEIME_TESTING
   const auto fixture = TestEnvironment(L"VOICEIME_TEST_CAPTURE");
   if (fixture == L"error") {
@@ -990,6 +1116,7 @@ void Engine::CaptureMain(int generation) {
   std::vector<std::int16_t> fixture_samples(fixture == L"silence" ? 16000 * 6 : 320, 0);
   int fixture_frames=0;
   while (!stop_capture_) {
+    if(!capture_ready_.exchange(true)) PostMessageW(box_.hwnd(),kCaptureReadyMessage,generation,0);
     if(fixture==L"speech-end") std::fill(fixture_samples.begin(),fixture_samples.end(),fixture_frames++<5 ? 1200 : 0);
     recognizer_->AcceptAudio(fixture_samples.data(), fixture_samples.size());
     if (fixture == L"silence" || fixture == L"speech-end") {
@@ -1019,8 +1146,9 @@ void Engine::CaptureMain(int generation) {
                               reinterpret_cast<void**>(&enumerator))) ||
       enumerator == nullptr) {
     fail("未能打开麦克风。");
-  } else if (FAILED(enumerator->GetDefaultAudioEndpoint(eCapture, eConsole, &device)) || device == nullptr) {
-    fail("未能打开麦克风。");
+  } else if (FAILED(microphone.empty()?enumerator->GetDefaultAudioEndpoint(eCapture,eConsole,&device):
+      enumerator->GetDevice(microphone.c_str(),&device)) || device == nullptr) {
+    fail("麦克风不可用。请在设置中选择可用设备，或重新连接后重试。");
   } else if (FAILED(device->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, reinterpret_cast<void**>(&client))) ||
              client == nullptr || FAILED(client->GetMixFormat(&format)) || format == nullptr) {
     fail("未能打开麦克风。");
@@ -1036,13 +1164,16 @@ void Engine::CaptureMain(int generation) {
 
   std::unique_ptr<Resampler16k> resampler;
   if (started) {
-    if (format->nSamplesPerSec == 0 || format->nSamplesPerSec > 384000) {
+    if (format->nSamplesPerSec == 0 || format->nSamplesPerSec > 384000 ||
+        (IsFloatFormat(format)?format->wBitsPerSample!=32:(format->wBitsPerSample!=16 && format->wBitsPerSample!=32))) {
       fail("麦克风采样格式暂不支持，请更换输入设备。");
     } else resampler = std::make_unique<Resampler16k>(format->nSamplesPerSec);
   }
+  CaptureHealth health(GetTickCount64());
   while (started && !stop_capture_) {
     const DWORD waited = WaitForSingleObject(wake_, 200);
     if (stop_capture_) break;
+    if(const char* error=health.Error(GetTickCount64())) { fail(error); break; }
     if (waited != WAIT_OBJECT_0 && waited != WAIT_TIMEOUT) { fail("麦克风采集已中断"); break; }
     UINT32 packet = 0;
     if (FAILED(capture->GetNextPacketSize(&packet))) { fail("麦克风采集已中断"); break; }
@@ -1063,6 +1194,10 @@ void Engine::CaptureMain(int generation) {
       }
       capture->ReleaseBuffer(frames);
       std::vector<std::int16_t> samples = resampler->Process(mono.data(), mono.size());
+      health.Push(samples.data(),samples.size(),GetTickCount64());
+      input_level_=health.level();
+      if(health.received() && !capture_ready_.exchange(true)) PostMessageW(box_.hwnd(),kCaptureReadyMessage,generation,0);
+      if(const char* error=health.Error(GetTickCount64())) { fail(error); break; }
       recognizer_->AcceptAudio(samples.data(), samples.size());
       const VadEvent event = vad_.Push(samples.data(), samples.size());
       if (event == VadEvent::Endpoint || event == VadEvent::ForcedEndpoint) {
@@ -1094,10 +1229,11 @@ int main(int argc, char** argv) {
   bool fake = false;
   for (int i = 1; i < argc; ++i) {
     if (std::strcmp(argv[i], "--version") == 0) {
-      std::printf("%s %s-preview\n", kProductName, SIMPLE_VOICE_VERSION);
+      std::printf("%s %s\n", kProductName, SIMPLE_VOICE_VERSION);
       return 0;
     }
     if (std::strcmp(argv[i], "--check") == 0) return CheckInstallation();
+    if (std::strcmp(argv[i], "--check-chinese") == 0) return CheckInstallation(true);
     if (std::strcmp(argv[i], "--fake") == 0) fake = true;
   }
   Engine engine;

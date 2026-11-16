@@ -3,6 +3,7 @@
 #include "tsf_service.hpp"
 
 #include "candidate_bar.hpp"
+#include "input_indicator.hpp"
 #include "ui_theme.hpp"
 #include "hotkey.hpp"
 #include "settings.hpp"
@@ -10,6 +11,7 @@
 #include "pipe_io.hpp"
 #include "register_status.hpp"
 #include "rime_session.hpp"
+#include "utf8.hpp"
 
 #include <msctf.h>
 #include <oleauto.h>
@@ -19,6 +21,7 @@
 #include <atomic>
 #include <cstring>
 #include <mutex>
+#include <new>
 #include <string>
 #include <vector>
 
@@ -51,14 +54,6 @@ struct IncomingCommit {
   std::uint64_t id = 0, connection = 0;
 };
 
-std::wstring Utf8ToWide(const std::string& utf8) {
-  if (utf8.empty()) return L"";
-  const int count = MultiByteToWideChar(CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()), nullptr, 0);
-  std::wstring wide(count > 0 ? count : 0, L'\0');
-  if (count > 0) MultiByteToWideChar(CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()), wide.data(), count);
-  return wide;
-}
-
 Hotkey ReadConfiguredHotkey() {
   wchar_t local[MAX_PATH];
   const DWORD count = GetEnvironmentVariableW(L"LOCALAPPDATA", local, MAX_PATH);
@@ -90,6 +85,13 @@ bool EatsKey(KeyAction action) {
 
 bool NeedsVoicePipe(KeyAction action) {
   return action == KeyAction::OpenVoice || action == KeyAction::VoiceEnter || action == KeyAction::VoiceEscape;
+}
+
+bool IsInputMethodEditor(HWND focus) {
+  HWND root=focus?GetAncestor(focus,GA_ROOT):nullptr;
+  if(!root) return false;
+  wchar_t name[80]{}; GetClassNameW(root,name,80);
+  return lstrcmpW(name,L"SimpleVoicePreviewEditor")==0 || lstrcmpW(name,L"SimpleVoicePreferences")==0;
 }
 
 void MoveCaretToEnd(TfEditCookie cookie, ITfContext* context, ITfRange* range) {
@@ -292,6 +294,10 @@ class VoiceService : public ITfTextInputProcessor {
   HRESULT STDMETHODCALLTYPE Deactivate() override;
 
   HRESULT OnKey(ITfContext* context, WPARAM vk, LPARAM lparam, WINBOOL* eaten, bool down);
+#ifdef VOICEIME_TESTING
+  void SetVoiceActiveForTest(bool active) { active_=active; }
+  HWND IndicatorMessageWindowForTest() const { return host_; }
+#endif
   HRESULT OnKeyUp(ITfContext* context, WPARAM vk, WINBOOL* eaten, bool down);
   void OnForeground(bool foreground) {
     foreground_ = foreground;
@@ -529,6 +535,9 @@ class VoiceService : public ITfTextInputProcessor {
   bool DocumentAcceptsText(ITfContext* context) const;
   bool WriteClient(const Message& message, std::uint64_t connection = 0);
   void RequestSettings();
+  void UpdateInputIndicator();
+  static bool CanToggleInputMode(void* self);
+  static bool ToggleInputMode(void* self);
   static void SettingsClicked(void* self);
   static void CandidateClicked(void* self, int index);
   bool EnsureRime();
@@ -563,6 +572,7 @@ class VoiceService : public ITfTextInputProcessor {
   RimeSession rime_;
   PinyinController pinyin_;
   CandidateBar bar_;
+  InputIndicator* input_indicator_ = nullptr;
   ITfComposition* composition_ = nullptr;
   ITfContext* composition_context_ = nullptr;
   bool ending_composition_ = false;
@@ -658,6 +668,37 @@ void VoiceService::SettingsClicked(void* self) {
   static_cast<VoiceService*>(self)->RequestSettings();
 }
 
+void VoiceService::UpdateInputIndicator() {
+  if(!input_indicator_)return;
+  input_indicator_->SetMode(pinyin_.mode());
+  ITfContext* context=FocusContext();
+  input_indicator_->SetEnabled(DocumentAcceptsText(context) && !active_);
+  if(context)context->Release();
+}
+
+bool VoiceService::CanToggleInputMode(void* self) {
+  auto* service=static_cast<VoiceService*>(self);
+  ITfContext* context=service->FocusContext();
+  const bool allowed=service->DocumentAcceptsText(context) && !service->active_;
+  if(context)context->Release();
+  return allowed;
+}
+
+bool VoiceService::ToggleInputMode(void* self) {
+  auto* service=static_cast<VoiceService*>(self);
+  ITfContext* context=service->FocusContext();
+  const bool allowed=service->DocumentAcceptsText(context) && !service->active_;
+  if(allowed) {
+    service->RunComposition(context,CompositionEdit::Cancel,L"");
+    service->pinyin_.ToggleMode();
+    service->pending_toggle_=false;
+    service->bar_.Hide();
+    service->UpdateInputIndicator();
+  }
+  if(context)context->Release();
+  return allowed;
+}
+
 void VoiceService::CandidateClicked(void* self, int index) {
   auto* service = static_cast<VoiceService*>(self);
   if (index < 0 || index >= static_cast<int>(service->pinyin_.view().page.size())) return;
@@ -703,7 +744,10 @@ void VoiceService::EnsureWindow() {
   window_class.hInstance = VoiceImeModule();
   window_class.lpszClassName = L"VoiceImeTsfHost";
   RegisterClassW(&window_class);
-  host_ = CreateWindowExW(0, L"VoiceImeTsfHost", L"", 0, 0, 0, 0, 0, HWND_MESSAGE, nullptr, VoiceImeModule(), this);
+  // Hidden, nonactivating top-level window receives shell theme/display broadcasts;
+  // HWND_MESSAGE windows do not. It is never shown and has no taskbar button.
+  host_ = CreateWindowExW(WS_EX_TOOLWINDOW|WS_EX_NOACTIVATE, L"VoiceImeTsfHost", L"", WS_POPUP,
+      0,0,0,0,nullptr,nullptr,VoiceImeModule(),this);
 }
 
 LRESULT CALLBACK VoiceService::WindowProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
@@ -726,8 +770,14 @@ LRESULT CALLBACK VoiceService::WindowProc(HWND hwnd, UINT message, WPARAM wparam
     self->HandleCaret(true);
     return 0;
   }
-  if (message == kTrackingMessage) { self->UpdateTracking(); self->TrackCaret(); return 0; }
+  if (message == kTrackingMessage) {
+    self->UpdateInputIndicator();self->UpdateTracking();self->TrackCaret();return 0;
+  }
   if (message == WM_TIMER && wparam == kTrackingTimer) { self->TrackCaret(); return 0; }
+  if(message==WM_SETTINGCHANGE || message==WM_THEMECHANGED || message==WM_DISPLAYCHANGE || message==WM_DPICHANGED) {
+    if(self->input_indicator_)self->input_indicator_->RefreshIcon();
+    return 0;
+  }
   return DefWindowProcW(hwnd, message, wparam, lparam);
 }
 
@@ -767,7 +817,7 @@ void VoiceService::HandleCommit(const IncomingCommit& request) {
     context->Release();
   }
   handled_id_ = request.id; handled_success_ = inserted;
-  if (inserted) active_ = false;
+  if (inserted) {active_=false;UpdateInputIndicator();}
   Message ack;
   ack.type = MsgType::InsertResult;
   ack.request_id = request.id;
@@ -914,10 +964,16 @@ DWORD WINAPI VoiceReader(void* param) {
 
 HRESULT VoiceService::Activate(ITfThreadMgr* manager, TfClientId client_id) {
   if (manager == nullptr) return E_INVALIDARG;
+  if (thread_mgr_ != nullptr) return E_UNEXPECTED;
   thread_mgr_ = manager;
   thread_mgr_->AddRef();
   client_id_ = client_id;
   EnsureWindow();
+  input_indicator_=new(std::nothrow) InputIndicator(VoiceImeModule(),&VoiceService::ToggleInputMode,this,pinyin_.mode(),&VoiceService::CanToggleInputMode);
+  if(input_indicator_ && FAILED(input_indicator_->Attach(manager))) {
+    input_indicator_->Release();input_indicator_=nullptr;
+  }
+  UpdateInputIndicator();
   ITfKeystrokeMgr* keys = nullptr;
   if (SUCCEEDED(manager->QueryInterface(IID_ITfKeystrokeMgr, reinterpret_cast<void**>(&keys))) && keys != nullptr) {
     advised_keys_ = SUCCEEDED(keys->AdviseKeyEventSink(client_id_, &key_sink_, TRUE));
@@ -938,6 +994,9 @@ HRESULT VoiceService::Activate(ITfThreadMgr* manager, TfClientId client_id) {
 }
 
 HRESULT VoiceService::Deactivate() {
+  if(input_indicator_) {
+    input_indicator_->Detach();input_indicator_->Release();input_indicator_=nullptr;
+  }
   if (host_) KillTimer(host_, kTrackingTimer);
   tracking_ = false;
   last_caret_sent_.clear();
@@ -1054,7 +1113,9 @@ KeyState VoiceService::MakeKeyState(ITfContext* context, WPARAM vk, LPARAM lpara
   KeyState state{};
   state.mode = pinyin_.mode();
   state.accepts = DocumentAcceptsText(context);
-  state.voice_active = active_;
+  // The preview and term editor are themselves editable documents. A global
+  // pending voice session must never steal their Enter/Esc or disable pinyin.
+  state.voice_active = active_ && !IsInputMethodEditor(GetFocus());
   state.composing = view.composing;
   state.candidate_count = static_cast<int>(view.page.size());
   auto held = [](int key) {
@@ -1075,11 +1136,12 @@ void VoiceService::SendVoice(MsgType type, WPARAM vk, WINBOOL* eaten) {
   Message message;
   message.type = type;
   if (!WriteClient(message)) {
-    if (type == MsgType::Enter || type == MsgType::Cancel) active_ = false;
+    if (type == MsgType::Enter || type == MsgType::Cancel) {active_=false;UpdateInputIndicator();}
     return;
   }
   if (type == MsgType::StartListen) active_ = true;
   if (type == MsgType::Cancel) active_ = false;
+  UpdateInputIndicator();
   UpdateTracking();
   if (active_) HandleCaret(true);
   eaten_vk_ = static_cast<int>(vk);
@@ -1153,7 +1215,17 @@ void VoiceService::SetCompositionText(TfEditCookie cookie, ITfContext* context, 
   if (composition_ == nullptr || FAILED(composition_->GetRange(&range)) || range == nullptr) return;
   range->SetText(cookie, TF_ST_CORRECTION, text.c_str(), static_cast<LONG>(text.size()));
   SetInputAttribute(cookie, context, range, true);
-  MoveCaretToEnd(cookie, context, range);
+  ITfRange* caret=nullptr;
+  if(SUCCEEDED(range->Clone(&caret)) && caret) {
+    caret->Collapse(cookie,TF_ANCHOR_START);
+    const auto& view=pinyin_.view();
+    const auto prefix=Utf8ToWide(view.preedit.substr(0,std::clamp(view.caret,0,static_cast<int>(view.preedit.size()))));
+    LONG shifted=0;
+    caret->ShiftStart(cookie,static_cast<LONG>(prefix.size()),&shifted,nullptr);
+    caret->Collapse(cookie,TF_ANCHOR_START);
+    TF_SELECTION selection{}; selection.range=caret; selection.style.ase=TF_AE_NONE;
+    context->SetSelection(cookie,1,&selection); caret->Release();
+  }
   range->Release();
 }
 
@@ -1162,10 +1234,11 @@ void VoiceService::CommitComposition(TfEditCookie cookie, ITfContext* context, c
   if (composition_ == nullptr) return;
   ITfRange* range = nullptr;
   if (SUCCEEDED(composition_->GetRange(&range)) && range != nullptr) {
-    range->SetText(cookie, 0, text.c_str(), static_cast<LONG>(text.size()));
+    if(FAILED(range->SetText(cookie, 0, text.c_str(), static_cast<LONG>(text.size())))) { range->Release(); return; }
     SetInputAttribute(cookie, context, range, false);
     MoveCaretToEnd(cookie, context, range);
     range->Release();
+    if(!text.empty()) { Message used; used.type=MsgType::PersonalTermUsed; used.text=WideToUtf8(text); WriteClient(used); }
   }
   ITfComposition* held = composition_;
   ending_composition_ = true;
@@ -1284,6 +1357,14 @@ void VoiceService::OnDocumentFocus(ITfDocumentMgr* current, ITfDocumentMgr* prev
     bar_.Hide();
   }
   if (active_) HandleCaret();
+  // During OnSetFocus, GetFocus can still return the previous document.
+  // Use the document supplied by the notification, including a null focus.
+  if(input_indicator_) {
+    ITfContext* context=nullptr;
+    if(current)current->GetTop(&context);
+    input_indicator_->SetEnabled(DocumentAcceptsText(context) && !active_);
+    if(context)context->Release();
+  }
   UpdateTracking();
 }
 
@@ -1387,6 +1468,7 @@ HRESULT VoiceService::OnKeyUp(ITfContext* context, WPARAM vk, WINBOOL* eaten, bo
     if (decided == KeyAction::ToggleMode) {
       RunComposition(context, CompositionEdit::Cancel, L"");
       bar_.Hide();
+      UpdateInputIndicator();
     }
   }
   const bool eat = eaten_vk_ != 0 && eaten_vk_ == static_cast<int>(vk);

@@ -11,12 +11,16 @@ struct RimeView {
   std::vector<std::string> page;
   int highlight = 0;
   std::string commit;
+  int caret = 0;  // UTF-8 byte offset into preedit, as supplied by librime.
 };
 
 class Composer {
  public:
   virtual ~Composer() = default;
   virtual RimeView ProcessKey(int vk, bool shift) = 0;
+  virtual RimeView ProcessKeyWithModifiers(int vk, bool shift, bool ctrl, bool alt) {
+    return ProcessKey(vk, shift);
+  }
   virtual void Clear() = 0;
   virtual const RimeView& view() const = 0;
 };
@@ -25,6 +29,10 @@ class PinyinController {
  public:
   explicit PinyinController(Composer* composer) : composer_(composer) {}
   InputMode mode() const { return mode_; }
+  void ToggleMode() {
+    composer_->Clear();
+    mode_ = mode_ == InputMode::Chinese ? InputMode::English : InputMode::Chinese;
+  }
   const RimeView& view() const { return composer_->view(); }
   KeyDecision Apply(KeyState state, Hotkey hotkey);
 
@@ -42,8 +50,7 @@ inline KeyDecision PinyinController::Apply(KeyState state, Hotkey hotkey) {
   const KeyDecision decision = RouteKey(state, hotkey);
   switch (decision.action) {
     case KeyAction::ToggleMode:
-      composer_->Clear();
-      mode_ = mode() == InputMode::Chinese ? InputMode::English : InputMode::Chinese;
+      ToggleMode();
       break;
     case KeyAction::OpenVoice:
       composer_->Clear();
@@ -52,7 +59,8 @@ inline KeyDecision PinyinController::Apply(KeyState state, Hotkey hotkey) {
       composer_->Clear();
       break;
     case KeyAction::ToRime:
-      composer_->ProcessKey(state.vk, state.shift);
+      composer_->ProcessKeyWithModifiers(state.vk,
+          state.shift != (state.caps && state.vk>=0x41 && state.vk<=0x5a), state.ctrl, state.alt);
       break;
     case KeyAction::Pass:
     case KeyAction::Consume:

@@ -1,0 +1,77 @@
+#include "harness.hpp"
+#include "lexicon.hpp"
+#include "recognition_text.hpp"
+#include "capture_health.hpp"
+#include "audio_segments.hpp"
+#include "settings.hpp"
+#include <filesystem>
+#include <fstream>
+#include <ctime>
+
+void RecognitionFormattingPreservesInformation() {
+  CHECK(PreserveRecognizedContent("今天使用GitHub处理20个文件","今天使用GitHub处理20个文件。") == "今天使用GitHub处理20个文件。");
+  for(const auto& bad:{"今天使用Github处理20个文件。","今天使用GitHub处理10个文件。","今天处理20个文件。"})
+    CHECK(PreserveRecognizedContent("今天使用GitHub处理20个文件",bad)=="今天使用GitHub处理20个文件");
+  CHECK(PreserveRecognizedContent("价格1.5元","价格15元。") == "价格1.5元");
+  CHECK(PreserveRecognizedContent("10:30开始","1030开始。") == "10:30开始");
+  CHECK(PreserveRecognizedContent("v1.2.3","v12.3。") == "v1.2.3");
+  CHECK(PreserveRecognizedContent("GitHub API","Git Hub API.")=="GitHub API");
+  CHECK(PreserveRecognizedContent("10 20","1020。")=="10 20");
+  CHECK(PreserveRecognizedContent("a part","apart.")=="a part");
+  CHECK(PreserveRecognizedContent("don't change foo_bar","dont change foo bar.")=="don't change foo_bar");
+  CHECK(HasUnknownSpeech("这是<unk>")); CHECK(HasUnknownSpeech("< unk >。"));
+  CHECK(!HasUnknownSpeech("unknown"));
+}
+
+void AudioReadinessAndChunkingProtectBoundaries() {
+  CaptureHealth no_frames(100); CHECK(!no_frames.received()); CHECK(no_frames.Error(5099)==nullptr); CHECK(no_frames.Error(5100)!=nullptr);
+  CaptureHealth silent(0); std::vector<std::int16_t> samples(16000*8,0);
+  silent.Push(samples.data(),samples.size(),8000); CHECK(silent.received()); CHECK(silent.level()==0); CHECK(silent.Error(8000)!=nullptr);
+  CaptureHealth signal(0); std::vector<std::int16_t> voice(320,1500); signal.Push(voice.data(),voice.size(),20);
+  CHECK(signal.received()); CHECK(signal.level()>0); CHECK(signal.Error(20)==nullptr); CHECK(signal.Error(5020)!=nullptr);
+  samples.assign(16000*60,2000);
+  for(int second:{12,24,36,48}) std::fill(samples.begin()+second*16000,samples.begin()+second*16000+1600,0);
+  const auto parts=SegmentAudio(samples); std::size_t covered=0;
+  for(const auto& part:parts) { CHECK(part.offset==covered); CHECK(part.count>0 && part.count<=15*16000); covered+=part.count; }
+  CHECK(covered==samples.size()); CHECK(parts.size()>=3); CHECK(!parts.front().forced);
+  CHECK(SegmentAudio({}).empty());
+  InputPreferences preferences; preferences.learning=false; preferences.chinese_only=true; preferences.pause_ms=1200;
+  preferences.microphone=L"{0.0.1.test}.测试设备";
+  const std::wstring file=L"build/personal-terms-test/preferences.ini";
+  std::filesystem::create_directories("build/personal-terms-test");
+  CHECK(SaveInputPreferences(file,preferences)); const auto loaded=LoadInputPreferences(file);
+  CHECK(!loaded.learning && loaded.chinese_only && loaded.pause_ms==1200 && loaded.microphone==preferences.microphone);
+  preferences.microphone=L"device\nlearning=1"; CHECK(!SaveInputPreferences(file,preferences));
+  CHECK(!LoadInputPreferences(file).learning);
+}
+void PersonalTermsAreExplicitSearchableAndReversible() {
+  Lexicon lex(":memory:"); const auto now=std::time(nullptr);
+  for(int i=0;i<1000;++i) lex.Commit("今天讨论项目进度",{{"项目","xiang mu"}},now);
+  CHECK(lex.Count()==0); CHECK(lex.LegacyCount()==0);
+  lex.SaveTerm("Simple Voice","simplevoice",now);
+  lex.SaveTerm("轻音输入法","qingyin",now);
+  CHECK(lex.Search("VOICE").size()==1); CHECK(lex.Search("qingyin").size()==1);
+  CHECK(lex.Search("%_").empty());
+  const auto before=lex.Search("轻音").at(0);
+  CHECK(lex.Delete(before.text)); lex.Commit(before.text,{},now+1); CHECK(lex.Search("轻音").empty());
+  lex.SaveTerm(before.text,before.pinyin,before.last_commit_unix);
+  CHECK(lex.Count()==2);
+  lex.SaveTerm("轻音","qy",now+1,before.text); CHECK(lex.Search("qingyin").empty());
+  CHECK(lex.Search("qy").at(0).text=="轻音");
+  bool rejected=false; try{lex.SaveTerm("bad\ntext","bad",now);}catch(...){rejected=true;} CHECK(rejected);
+  rejected=false; try{lex.SaveTerm("bad","bad\tkey",now);}catch(...){rejected=true;} CHECK(rejected);
+  for(const auto& invalid:{"123","ai1","GitHub"}) {
+    rejected=false; try{lex.SaveTerm("invalid code",invalid,now);}catch(...){rejected=true;} CHECK(rejected);
+  }
+  CHECK(lex.ExportTerms(L"build/personal-terms-test/voiceime_personal.txt"));
+  std::ifstream file("build/personal-terms-test/voiceime_personal.txt");
+  std::string body((std::istreambuf_iterator<char>(file)),{});
+  CHECK(body.find("轻音\tqy\t")!=std::string::npos);
+  Lexicon large(":memory:");
+  for(int i=0;i<10000;++i) large.SaveTerm("term "+std::to_string(i),"term",now);
+  CHECK(large.Count()==10000); CHECK(large.Search("term",100,9900).size()==100);
+  CHECK(large.Search("term",100,10000).empty());
+  rejected=false; try{large.SaveTerm("overflow","overflow",now);}catch(...){rejected=true;} CHECK(rejected);
+  large.SaveTerm("term 0","updated",now+1); CHECK(large.Search("updated").size()==1);
+  CHECK(large.Count()==10000);
+}

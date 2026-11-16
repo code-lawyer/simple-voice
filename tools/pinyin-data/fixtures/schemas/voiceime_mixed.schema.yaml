@@ -1,0 +1,11 @@
+schema:
+  schema_id: voiceime_mixed
+  name: Simple Voice mixed table
+  version: "2026-11-15-study-1"
+translator:
+  dictionary: voiceime_mixed
+speller:
+  alphabet: abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ
+  algebra:
+    - 'derive/^.+$/\U$0/'
+    - 'derive/^[a-z]/\U$0/'

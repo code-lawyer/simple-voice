@@ -1,0 +1,83 @@
+# Independently authored Simple Voice candidate schema; no Lua/model required.
+schema:
+  schema_id: voiceime
+  name: 轻音全拼
+  version: "2026-11-15-study-2"
+  dependencies:
+    - voiceime_english
+    - voiceime_mixed
+engine:
+  processors:
+    - recognizer
+    - key_binder
+    - speller
+    - punctuator
+    - selector
+    - navigator
+    - express_editor
+  segmentors:
+    - ascii_segmentor
+    - matcher
+    - abc_segmentor
+    - punct_segmentor
+    - fallback_segmentor
+  translators:
+    - punct_translator
+    - table_translator@personal
+    - script_translator
+    - table_translator@english
+    - table_translator@mixed
+  filters:
+    - uniquifier
+speller:
+  alphabet: abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ
+  delimiter: " '"
+  algebra:
+    - "erase/^xx$/"
+    - "derive/^([nl])ue$/$1ve/"
+    - "derive/^([jqxy])u/$1v/"
+    - "abbrev/^([a-z]).+$/$1/"
+    - "abbrev/^([zcs]h).+$/$1/"
+    - "derive/([aeiou])ng$/$1gn/"
+    - "derive/ao$/oa/"
+    - "derive/([iu])a(o|ng?)$/a$1$2/"
+translator:
+  dictionary: voiceime
+  enable_user_dict: true
+  enable_completion: true
+  enable_correction: false
+  max_sentences: 5
+  sentence_cutoff_threshold: 1.0
+  max_homophones: 8
+  initial_quality: 1.2
+  preedit_format:
+    - "xform/([nl])v/$1ü/"
+    - "xform/([nl])ue/$1üe/"
+    - "xform/([jqxy])v/$1ü/"
+english:
+  dictionary: voiceime_english
+  enable_user_dict: false
+  enable_sentence: false
+  enable_completion: true
+  initial_quality: 1.1
+mixed:
+  dictionary: voiceime_mixed
+  enable_user_dict: false
+  enable_sentence: false
+  enable_completion: false
+  initial_quality: 1.3
+personal:
+  dictionary: ""
+  user_dict: voiceime_personal
+  db_class: stabledb
+  enable_sentence: false
+  enable_completion: true
+  initial_quality: 2.0
+punctuator:
+  import_preset: default
+recognizer:
+  import_preset: default
+key_binder:
+  bindings:
+    - { when: has_menu, accept: minus, send: Page_Up }
+    - { when: has_menu, accept: equal, send: Page_Down }

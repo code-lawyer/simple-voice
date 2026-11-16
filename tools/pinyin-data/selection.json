@@ -1,0 +1,26 @@
+{
+  "version": "2026-11-15",
+  "initial_chinese_core_limit": 200000,
+  "long_entry_min_weight": 5000,
+  "essential_chinese": [
+    "大语言模型", "多模态", "提示词", "生成式人工智能", "智能体", "检索增强生成",
+    "语音识别", "语音输入", "机器学习", "深度学习", "自然语言处理", "神经网络", "强化学习",
+    "开源软件", "开源项目", "开源社区", "开发环境", "开发工具", "开发计划", "项目管理",
+    "数据分析", "数据隐私", "数据安全", "数据库", "输入法", "浏览器", "屏幕截图", "人工智能",
+    "微信", "微信输入法", "轻音输入法"
+  ],
+  "authored_english": [
+    "API", "CPU", "GPU", "JSON", "HTML", "CSS", "SQL", "HTTP", "HTTPS", "URL", "UTF",
+    "GitHub", "Python", "JavaScript", "TypeScript", "ChatGPT", "Codex", "OpenAI", "Windows",
+    "Linux", "macOS", "Visual Studio Code", "Simple Voice", "machine learning",
+    "deep learning", "open source", "artificial intelligence", "language model"
+  ],
+  "authored_mixed": [
+    ["AI模型", "aimoxing", 1000], ["AI助手", "aizhushou", 1000],
+    ["Python脚本", "pythonjiaoben", 1000], ["GitHub项目", "githubxiangmu", 1000],
+    ["API文档", "apiwendang", 1000], ["JSON文件", "jsonwenjian", 1000],
+    ["3D打印", "sanddayin", 1000], ["B站", "bzhan", 1000],
+    ["3D打印", "sanDdayin", 1000], ["C语言", "cyuyan", 1000],
+    ["Windows系统", "windowsxitong", 1000], ["轻音输入法", "qingyinshurufa", 1000]
+  ]
+}

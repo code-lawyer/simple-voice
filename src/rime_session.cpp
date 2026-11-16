@@ -8,9 +8,14 @@
 #endif
 
 #include "rime_api.h"
+#include "settings.hpp"
+#include "product.hpp"
 
 #include <filesystem>
 #include <mutex>
+#include <fstream>
+#include <sstream>
+#include <iomanip>
 #include <windows.h>
 
 namespace {
@@ -24,11 +29,64 @@ struct RimeRuntime {
   std::wstring user_path;
   std::string shared_utf8;
   std::string user_utf8;
+  std::string personal_generation;
+  std::uint64_t personal_stamp=0;
 };
 
 RimeRuntime& Runtime() {
   static RimeRuntime runtime;
   return runtime;
+}
+
+void ConfigurePersonal(RimeApi* api,RimeRuntime& runtime) {
+  const auto path=std::filesystem::path(runtime.user_path)/"voiceime_personal.txt";
+  WIN32_FILE_ATTRIBUTE_DATA attributes{};
+  if(!GetFileAttributesExW(path.c_str(),GetFileExInfoStandard,&attributes)) return;
+  const auto stamp=(std::uint64_t(attributes.ftLastWriteTime.dwHighDateTime)<<32)|attributes.ftLastWriteTime.dwLowDateTime;
+  if(stamp==runtime.personal_stamp && !runtime.personal_generation.empty()) return;
+  if(attributes.nFileSizeHigh || attributes.nFileSizeLow>8*1024*1024) return;
+  std::ifstream input(path,std::ios::binary);
+  if(!input) return;
+  std::string content((std::istreambuf_iterator<char>(input)),{});
+  std::uint64_t hash=14695981039346656037ULL;
+  for(unsigned char c:content) { hash^=c; hash*=1099511628211ULL; }
+  std::ostringstream id; id<<"voiceime_personal_g"<<std::hex<<std::setw(16)<<std::setfill('0')<<hash;
+  const auto generation=id.str();
+  const auto target=std::filesystem::path(runtime.user_path)/(generation+".txt");
+  if(!std::filesystem::exists(target)) {
+    // Hash-addressed immutable snapshots let one live session finish its
+    // composition while the next session opens the newly edited dictionary.
+    const auto temporary=target.wstring()+L"."+std::to_wstring(GetCurrentProcessId())+L".tmp";
+    { std::ofstream output(std::filesystem::path(temporary),std::ios::binary); if(!output) return;
+      output.write(content.data(),content.size()); output.flush(); if(!output) return; }
+    if(!MoveFileExW(temporary.c_str(),target.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH)) { DeleteFileW(temporary.c_str()); return; }
+  }
+  runtime.personal_generation=generation; runtime.personal_stamp=stamp;
+  // These files are generated snapshots, never the authoritative user terms.
+  // Loaded stabledb objects keep their data in memory after the file closes.
+  std::error_code error;
+  for(const auto& entry:std::filesystem::directory_iterator(runtime.user_path,error)) {
+    const auto name=entry.path().filename().string();
+    if(name.size()==39 && name.rfind("voiceime_personal_g",0)==0 && name.substr(name.size()-4)==".txt" && entry.path()!=target) {
+      std::filesystem::remove(entry.path(),error); error.clear();
+    }
+  }
+}
+
+uintptr_t CreateConfiguredSession(RimeApi* api,bool learning,const std::string& generation) {
+  RimeConfig main{},private_config{};
+  const bool have_main=api->schema_open("voiceime",&main)!=0;
+  const bool have_private=api->schema_open("voiceime_private",&private_config)!=0;
+  // Schema configs are weak-cached by librime. Keep both handles alive until
+  // the new engine owns the selected schema, including the private schema.
+  if(!generation.empty()) {
+    if(have_main) api->config_set_string(&main,"personal/user_dict",generation.c_str());
+    if(have_private) api->config_set_string(&private_config,"personal/user_dict",generation.c_str());
+  }
+  auto session=api->create_session();
+  if(session && !api->select_schema(session,learning?"voiceime":"voiceime_private")) { api->destroy_session(session); session=0; }
+  if(have_main) api->config_close(&main); if(have_private) api->config_close(&private_config);
+  return session;
 }
 
 constexpr int kShiftMask = 1;
@@ -83,7 +141,7 @@ void MapKey(int vk, bool shift, int* keycode, int* mask) {
       *mask = 0;
       break;
     case 0x0D:
-      *keycode = 0x20;
+      *keycode = 0xff0d;
       *mask = 0;
       break;
     case 0x1B:
@@ -106,6 +164,12 @@ void MapKey(int vk, bool shift, int* keycode, int* mask) {
       *keycode = kKeyDelete;
       *mask = 0;
       break;
+    case 0x23: *keycode=0xff57; break; // End
+    case 0x24: *keycode=0xff50; break; // Home
+    case 0x25: *keycode=0xff51; break;
+    case 0x26: *keycode=0xff52; break;
+    case 0x27: *keycode=0xff53; break;
+    case 0x28: *keycode=0xff54; break;
     case 0xBA:
       *keycode = Shifted(shift, ';', ':');
       break;
@@ -186,7 +250,7 @@ bool RimeSession::Start(const std::wstring& shared_dir, const std::wstring& user
     traits.user_data_dir = runtime.user_utf8.c_str();
     traits.distribution_name = "Simple Voice";
     traits.distribution_code_name = "voiceime";
-    traits.distribution_version = "0.1.0";
+    traits.distribution_version = SIMPLE_VOICE_VERSION;
     traits.app_name = "rime.voiceime";
     traits.min_log_level = 2;
 
@@ -198,8 +262,11 @@ bool RimeSession::Start(const std::wstring& shared_dir, const std::wstring& user
     }
   }
 
-  const uintptr_t session = api->create_session();
-  if (session == 0 || !api->select_schema(session, "voiceime")) {
+  ConfigurePersonal(api,runtime);
+  learning_=LoadInputPreferences((std::filesystem::path(user_path).parent_path()/"preferences.ini").wstring()).learning;
+  personal_generation_=runtime.personal_generation;
+  const uintptr_t session=CreateConfiguredSession(api,learning_,runtime.personal_generation);
+  if (session == 0) {
     if (session != 0 && api->destroy_session != nullptr) api->destroy_session(session);
     if (runtime.sessions == 0 && api->finalize != nullptr) api->finalize();
     return false;
@@ -227,6 +294,7 @@ void RimeSession::Shutdown() {
     runtime.user_path.clear();
     runtime.shared_utf8.clear();
     runtime.user_utf8.clear();
+    runtime.personal_generation.clear(); runtime.personal_stamp=0;
   }
   api_ = nullptr;
   ready_ = false;
@@ -234,17 +302,57 @@ void RimeSession::Shutdown() {
 }
 
 RimeView RimeSession::ProcessKey(int vk, bool shift) {
+  return ProcessKeyWithModifiers(vk,shift,false,false);
+}
+
+RimeView RimeSession::ProcessKeyWithModifiers(int vk, bool shift, bool ctrl, bool alt) {
   std::lock_guard<std::mutex> lock(Runtime().mutex);
+  if(ready_ && !view_.composing) RefreshResources();
   if (ready_ && api_ != nullptr && session_ != 0) {
+    auto* api = static_cast<RimeApi*>(api_);
+    if (vk == VK_RETURN && !ctrl && !alt && view_.composing) {
+      // Rime's express_editor commits only the prefix before its caret.
+      // Enter in Simple Voice preserves the entire edited raw input instead.
+      const char* input = api->get_input(session_);
+      const std::string raw = input ? input : "";
+      api->clear_composition(session_);
+      Refresh();
+      view_.commit = raw;
+      return view_;
+    }
     int keycode = 0;
     int mask = 0;
     MapKey(vk, shift, &keycode, &mask);
+    if(ctrl) mask |= 4;
+    if(alt) mask |= 8;
     if (keycode != 0) {
       static_cast<RimeApi*>(api_)->process_key(session_, keycode, mask);
     }
   }
   Refresh();
   return view_;
+}
+
+bool RimeSession::SetLearning(bool enabled) {
+  std::lock_guard<std::mutex> lock(Runtime().mutex);
+  if(!ready_ || !api_) return false;
+  auto* api=static_cast<RimeApi*>(api_);
+  const bool ok=api->select_schema(session_,enabled?"voiceime":"voiceime_private")!=0;
+  if(ok) { learning_=enabled; Refresh(); }
+  return ok;
+}
+
+void RimeSession::RefreshResources() {
+  auto& runtime=Runtime(); auto* api=static_cast<RimeApi*>(api_);
+  ConfigurePersonal(api,runtime);
+  const auto next=LoadInputPreferences((std::filesystem::path(runtime.user_path).parent_path()/"preferences.ini").wstring()).learning;
+  if(learning_==next && personal_generation_==runtime.personal_generation) return;
+  const auto replacement=CreateConfiguredSession(api,next,runtime.personal_generation);
+  if(!replacement) {
+    if(replacement) api->destroy_session(replacement); return;
+  }
+  api->destroy_session(session_); session_=replacement;
+  personal_generation_=runtime.personal_generation; learning_=next; Refresh();
 }
 
 void RimeSession::Clear() {
@@ -275,6 +383,7 @@ void RimeSession::Refresh() {
   RIME_STRUCT(RimeContext, context);
   if (api->get_context != nullptr && api->get_context(session_, &context)) {
     if (context.composition.preedit != nullptr) view_.preedit = context.composition.preedit;
+    view_.caret=context.composition.cursor_pos;
     int count = context.menu.num_candidates;
     if (count > 5) count = 5;
     if (count < 0) count = 0;

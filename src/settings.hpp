@@ -20,3 +20,13 @@ Settings LoadSettings(const std::wstring& path);
 Settings ParseSettings(const std::string& json);
 bool SaveSettings(const std::string& path, Settings settings);
 bool HotkeyAccepted(Hotkey hotkey);
+
+struct InputPreferences {
+  bool learning = true;
+  int pause_ms = 800;
+  std::wstring microphone; // Empty follows the system default.
+  bool guide_dismissed = false;
+  bool chinese_only = false;
+};
+InputPreferences LoadInputPreferences(const std::wstring& path);
+bool SaveInputPreferences(const std::wstring& path, const InputPreferences& preferences);

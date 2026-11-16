@@ -1,0 +1,75 @@
+name: Windows build and regression
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      real_models:
+        description: Download pinned models and run offline initialization and sample smoke
+        type: boolean
+        default: false
+permissions:
+  contents: read
+jobs:
+  windows-x64:
+    runs-on: windows-2022
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+      - name: Make UCRT tools available to PowerShell
+        shell: msys2 {0}
+        run: cygpath -w /ucrt64/bin >> "$GITHUB_PATH"
+      - name: Verify runtime SDK
+        run: ./tools/download_models.ps1 -RuntimeOnly
+      - name: Configure and build
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cmake --build build -j2
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Unit, IPC, real TSF and popup regression
+        run: |
+          ctest --test-dir build --output-on-failure -j1
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Native control assertions and fixture captures
+        run: |
+          foreach ($skin in @('titanium','daylight','deep-space')) {
+            $env:VOICEIME_TEST_SKIN=$skin
+            ./build/voiceime_ui_check.exe "build/ui-$skin"
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          }
+      - name: Optional real model smoke
+        if: github.event_name == 'workflow_dispatch' && inputs.real_models
+        run: |
+          ./tools/download_models.ps1
+          ./build/voiceime_engine.exe --check
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          ./build/voiceime_engine.exe --check-chinese
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          ./build/voiceime_recognizer_smoke.exe
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Package without models or private data
+        run: ./tools/package.ps1 -BuildDir build -OutputDir dist/ci
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: windows-x64-regression
+          path: |
+            build/Testing/Temporary/LastTest.log
+            build/ui-*/*.png
+            dist/ci/*.zip
+            dist/ci/*.sha256
+          if-no-files-found: warn

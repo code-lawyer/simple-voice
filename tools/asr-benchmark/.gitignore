@@ -1,0 +1,6 @@
+.work/
+*.exe
+*.dll
+*.wav
+*.onnx
+*.tar.bz2

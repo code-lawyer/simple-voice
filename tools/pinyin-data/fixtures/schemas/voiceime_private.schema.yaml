@@ -1,0 +1,9 @@
+schema:
+  schema_id: voiceime_private
+  name: 轻音全拼（暂停学习）
+  version: "2026-11-15-study-3"
+__include: voiceime.schema:/
+__patch:
+  schema/schema_id: voiceime_private
+  schema/name: 轻音全拼（暂停学习）
+  translator/enable_user_dict: false

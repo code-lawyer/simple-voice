@@ -5,10 +5,17 @@
 #include <stdexcept>
 #include <utility>
 #include <ctime>
+#include <algorithm>
+#include <fstream>
+#include <sstream>
+#include <filesystem>
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
 
 namespace {
 constexpr std::int64_t kDay = 86400;
-constexpr std::int64_t kBiasSeconds = 180 * kDay;
 constexpr std::int64_t kDropSeconds = 365 * kDay;
 void Check(sqlite3* db, int code) {
   if (code != SQLITE_OK) throw std::runtime_error(sqlite3_errmsg(db));
@@ -57,19 +64,8 @@ void Purge(sqlite3* db, std::int64_t now) {
   purge.Int(1, now); purge.Int(2, kDropSeconds); purge.Done();
   Statement seen(db, "DELETE FROM seen_phrase WHERE (?1 - last_seen_unix) > ?2");
   seen.Int(1, now); seen.Int(2, kDropSeconds); seen.Done();
-}
-std::string JoinPinyin(const std::vector<Token>& tokens) {
-  std::string joined;
-  for (const Token& token : tokens) {
-    if (token.pinyin.empty()) continue;
-    if (!joined.empty()) joined.push_back(' ');
-    joined += token.pinyin;
-  }
-  return joined;
-}
-bool Better(const Entry& row, const Entry* best) {
-  return best == nullptr || row.count > best->count ||
-      (row.count == best->count && row.last_commit_unix > best->last_commit_unix);
+  Statement terms(db, "DELETE FROM personal_terms WHERE (?1-last_commit_unix)>?2");
+  terms.Int(1,now); terms.Int(2,kDropSeconds); terms.Done();
 }
 Entry ReadEntry(const Statement& query) {
   return {query.Text(0), query.Text(1), static_cast<int>(query.Int(2)), query.Int(3), query.Text(4)};
@@ -90,7 +86,9 @@ Lexicon::Lexicon(const std::string& path) : db_(std::make_unique<Db>()) {
   Exec(db_->raw,
       "CREATE TABLE IF NOT EXISTS entries (text TEXT PRIMARY KEY,pinyin TEXT NOT NULL,"
       "count INTEGER NOT NULL,last_commit_unix INTEGER NOT NULL,kind TEXT NOT NULL);"
-      "CREATE TABLE IF NOT EXISTS seen_phrase (text TEXT PRIMARY KEY);");
+      "CREATE TABLE IF NOT EXISTS seen_phrase (text TEXT PRIMARY KEY);"
+      "CREATE TABLE IF NOT EXISTS personal_terms (text TEXT PRIMARY KEY,pinyin TEXT NOT NULL,"
+      "count INTEGER NOT NULL,last_commit_unix INTEGER NOT NULL,kind TEXT NOT NULL DEFAULT 'user');");
   // Legacy rows have no date: start their retention period once, at upgrade.
   Transaction migration(db_->raw);
   bool dated = false;
@@ -108,94 +106,93 @@ Lexicon::Lexicon(const std::string& path) : db_(std::make_unique<Db>()) {
 }
 Lexicon::~Lexicon() = default;
 
-void Lexicon::Commit(const std::string& text, const std::vector<Token>& tokens, std::int64_t now) {
+void Lexicon::Commit(const std::string& text, const std::vector<Token>&, std::int64_t now) {
   std::lock_guard<std::mutex> lock(db_->mutex);
   Transaction transaction(db_->raw);
   Purge(db_->raw, now);
-  Statement word(db_->raw,
-      "INSERT INTO entries(text,pinyin,count,last_commit_unix,kind) VALUES(?1,?2,1,?3,'word') "
-      "ON CONFLICT(text) DO UPDATE SET count=count+1,last_commit_unix=excluded.last_commit_unix,pinyin=excluded.pinyin");
-  for (const Token& token : tokens) {
-    const auto length = CodePointCount(token.text);
-    if (length < 2 || length > 8) continue;
-    word.Reset(); word.Text(1, token.text); word.Text(2, token.pinyin); word.Int(3, now); word.Done();
-  }
-  if (CodePointCount(text) > 8) {
-    bool exists = false;
-    {
-      Statement find(db_->raw, "SELECT 1 FROM entries WHERE text=?1 AND kind='phrase'");
-      find.Text(1, text); exists = find.Row();
-    }
-    const auto pinyin = JoinPinyin(tokens);
-    if (exists) {
-      Statement bump(db_->raw, "UPDATE entries SET count=count+1,last_commit_unix=?2,pinyin=?3 WHERE text=?1");
-      bump.Text(1, text); bump.Int(2, now); bump.Text(3, pinyin); bump.Done();
-    } else {
-      bool again = false;
-      {
-        Statement seen(db_->raw, "SELECT 1 FROM seen_phrase WHERE text=?1");
-        seen.Text(1, text); again = seen.Row();
-      }
-      if (!again) {
-        Statement mark(db_->raw, "INSERT INTO seen_phrase(text,last_seen_unix) VALUES(?1,?2)");
-        mark.Text(1, text); mark.Int(2, now); mark.Done();
-      } else {
-        Statement add(db_->raw,
-            "INSERT INTO entries(text,pinyin,count,last_commit_unix,kind) VALUES(?1,?2,2,?3,'phrase')");
-        add.Text(1, text); add.Text(2, pinyin); add.Int(3, now); add.Done();
-        Statement drop(db_->raw, "DELETE FROM seen_phrase WHERE text=?1");
-        drop.Text(1, text); drop.Done();
-      }
-    }
-  }
+  // Ordinary confirmation only refreshes terms the user explicitly saved.
+  Statement touch(db_->raw,
+      "UPDATE personal_terms SET count=MIN(count+1,1000000),last_commit_unix=?2 WHERE instr(?1,text)>0");
+  touch.Text(1,text); touch.Int(2,now); touch.Done();
   transaction.Commit();
 }
-std::string Lexicon::Apply(const std::string& recognized, const std::vector<Token>& tokens, std::int64_t now) {
+std::string Lexicon::Apply(const std::string& recognized, const std::vector<Token>&, std::int64_t now) {
   std::lock_guard<std::mutex> lock(db_->mutex);
   Purge(db_->raw, now);
-  Statement query(db_->raw,
-      "SELECT text,pinyin,count,last_commit_unix,kind FROM entries WHERE count>=2 AND (?1-last_commit_unix)<=?2");
-  query.Int(1, now); query.Int(2, kBiasSeconds);
-  std::vector<Entry> rows;
-  while (query.Row()) rows.push_back(ReadEntry(query));
-  const auto full = JoinPinyin(tokens);
-  if (!full.empty()) {
-    const Entry* best = nullptr;
-    for (const auto& row : rows) {
-      if (row.kind == "phrase" && row.pinyin == full && Better(row, best)) best = &row;
-    }
-    if (best) return best->text;
-  }
-  std::string result;
-  for (const auto& token : tokens) {
-    const Entry* best = nullptr;
-    if (!token.pinyin.empty()) {
-      for (const auto& row : rows) {
-        if (row.kind == "word" && row.pinyin == token.pinyin && Better(row, best)) best = &row;
-      }
-    }
-    result += best ? best->text : token.text;
-  }
-  return tokens.empty() ? recognized : result;
+  // Frequency and homophones are not sufficient evidence to rewrite ASR.
+  return recognized;
 }
-std::vector<Entry> Lexicon::Recent(int limit) {
+std::vector<Entry> Lexicon::Recent(int limit) { return Search("", limit); }
+std::vector<Entry> Lexicon::Search(const std::string& query, int limit, int offset) {
   std::lock_guard<std::mutex> lock(db_->mutex);
-  Statement query(db_->raw,
-      "SELECT text,pinyin,count,last_commit_unix,kind FROM entries ORDER BY last_commit_unix DESC LIMIT ?1");
-  query.Int(1, limit);
-  std::vector<Entry> entries;
-  while (query.Row()) entries.push_back(ReadEntry(query));
-  return entries;
+  Statement statement(db_->raw,
+      "SELECT text,pinyin,count,last_commit_unix,kind FROM personal_terms "
+      "WHERE instr(lower(text),lower(?1))>0 OR instr(lower(pinyin),lower(?1))>0 "
+      "ORDER BY last_commit_unix DESC,text LIMIT ?2 OFFSET ?3");
+  statement.Text(1,query); statement.Int(2,std::clamp(limit,0,10000)); statement.Int(3,std::max(0,offset));
+  std::vector<Entry> rows;
+  while(statement.Row()) rows.push_back(ReadEntry(statement));
+  return rows;
+}
+int Lexicon::Count() {
+  std::lock_guard<std::mutex> lock(db_->mutex);
+  Statement statement(db_->raw,"SELECT count(*) FROM personal_terms");
+  return statement.Row()?static_cast<int>(statement.Int(0)):0;
+}
+int Lexicon::LegacyCount() {
+  std::lock_guard<std::mutex> lock(db_->mutex);
+  Statement statement(db_->raw,"SELECT (SELECT count(*) FROM entries)+(SELECT count(*) FROM seen_phrase)");
+  return statement.Row()?static_cast<int>(statement.Int(0)):0;
+}
+void Lexicon::ClearLegacy() {
+  std::lock_guard<std::mutex> lock(db_->mutex);
+  Transaction transaction(db_->raw);
+  Exec(db_->raw,"DELETE FROM entries; DELETE FROM seen_phrase;");
+  transaction.Commit();
+}
+void Lexicon::SaveTerm(const std::string& text, const std::string& code, std::int64_t now, const std::string& previous) {
+  if(text.empty() || CodePointCount(text)>128 || MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,text.data(),static_cast<int>(text.size()),nullptr,0)==0 ||
+      std::any_of(text.begin(),text.end(),[](unsigned char c){return c<32 || c==127;}) ||
+      code.empty() || code.size()>256 ||
+      std::any_of(code.begin(),code.end(),[](unsigned char c){return !(c>='a'&&c<='z');}))
+    throw std::invalid_argument("词语须为1至128字，输入码仅使用小写英文字母");
+  std::lock_guard<std::mutex> lock(db_->mutex);
+  Transaction transaction(db_->raw);
+  if(!previous.empty() && previous!=text) {
+    Statement duplicate(db_->raw,"SELECT 1 FROM personal_terms WHERE text=?1");
+    duplicate.Text(1,text);
+    if(duplicate.Row()) throw std::invalid_argument("这个词语已经存在，请编辑已有词语");
+    Statement remove(db_->raw,"DELETE FROM personal_terms WHERE text=?1"); remove.Text(1,previous); remove.Done();
+  }
+  Statement count(db_->raw,"SELECT count(*) FROM personal_terms WHERE text<>?1"); count.Text(1,text);
+  if(count.Row() && count.Int(0)>=10000) throw std::invalid_argument("个人词语已达到10000条，请先整理后再添加");
+  Statement save(db_->raw,
+      "INSERT INTO personal_terms(text,pinyin,count,last_commit_unix,kind) VALUES(?1,?2,0,?3,'user') "
+      "ON CONFLICT(text) DO UPDATE SET pinyin=excluded.pinyin,last_commit_unix=excluded.last_commit_unix");
+  save.Text(1,text); save.Text(2,code); save.Int(3,now); save.Done(); transaction.Commit();
 }
 bool Lexicon::Delete(const std::string& text) {
   std::lock_guard<std::mutex> lock(db_->mutex);
-  Transaction transaction(db_->raw);
-  Statement drop(db_->raw, "DELETE FROM entries WHERE text=?1");
-  drop.Text(1, text); drop.Done();
-  const int removed = sqlite3_changes(db_->raw);
-  Statement seen(db_->raw, "DELETE FROM seen_phrase WHERE text=?1");
-  seen.Text(1, text); seen.Done();
-  const bool changed = removed > 0 || sqlite3_changes(db_->raw) > 0;
-  transaction.Commit();
-  return changed;
+  Statement drop(db_->raw,"DELETE FROM personal_terms WHERE text=?1");
+  drop.Text(1,text); drop.Done(); return sqlite3_changes(db_->raw)>0;
+}
+bool Lexicon::ExportTerms(const std::wstring& file) {
+  auto rows=Search("",10000);
+  std::sort(rows.begin(),rows.end(),[](const auto& a,const auto& b){return a.text<b.text;});
+  const std::filesystem::path target(file), temp(file+L".tmp");
+  std::error_code error; std::filesystem::create_directories(target.parent_path(),error);
+  if(error) return false;
+  std::ostringstream body;
+  body<<"# Rime table: explicitly saved personal terms. Generated locally.\n";
+  // Official TSV directive: following rows are data, including # and #@ terms.
+  body<<"# no comment\n";
+  for(const auto& row:rows) body<<row.text<<'\t'<<row.pinyin<<"\t100\n";
+  const auto content=body.str();
+  { std::ifstream existing(target,std::ios::binary);
+    if(existing && std::string((std::istreambuf_iterator<char>(existing)),{})==content) return true; }
+  { std::ofstream out(temp,std::ios::binary|std::ios::trunc); if(!out) return false;
+    out.write(content.data(),content.size());
+    out.flush(); if(!out) return false;
+  }
+  return MoveFileExW(temp.c_str(),target.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH)!=0;
 }

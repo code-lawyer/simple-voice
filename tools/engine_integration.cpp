@@ -12,6 +12,11 @@
 
 namespace {
 int checks = 0;
+bool WaitWindowClosed(HWND window) {
+  const auto deadline=GetTickCount64()+1000;
+  while(IsWindow(window) && GetTickCount64()<deadline) Sleep(10);
+  return !IsWindow(window);
+}
 void Require(bool ok, const char* name) {
   if (!ok) throw std::runtime_error(name);
   ++checks;
@@ -109,14 +114,14 @@ class Client {
   std::string buffer_;
   std::deque<Message> messages_;
 };
-struct WindowSearch { DWORD pid; HWND window = nullptr; };
+struct WindowSearch { DWORD pid; const wchar_t* name=L"VoiceImeConfirm"; HWND window = nullptr; };
 BOOL CALLBACK FindEngine(HWND hwnd, LPARAM arg) {
   auto* search = reinterpret_cast<WindowSearch*>(arg);
   DWORD pid = 0;
   GetWindowThreadProcessId(hwnd, &pid);
   wchar_t name[80]{};
   GetClassNameW(hwnd, name, 80);
-  if (pid == search->pid && std::wstring(name) == L"VoiceImeConfirm") search->window = hwnd;
+  if (pid == search->pid && std::wstring(name) == search->name) search->window = hwnd;
   return TRUE;
 }
 class Host {
@@ -159,8 +164,8 @@ class Host {
     if (process_.hProcess) CloseHandle(process_.hProcess);
   }
   std::wstring Pipe() const { return L"\\\\.\\pipe\\VoiceImeQA_" + id_; }
-  HWND Window() const {
-    WindowSearch search{process_.dwProcessId};
+  HWND Window(const wchar_t* name=L"VoiceImeConfirm") const {
+    WindowSearch search{process_.dwProcessId,name};
     EnumWindows(FindEngine, reinterpret_cast<LPARAM>(&search));
     return search.window;
   }
@@ -191,7 +196,7 @@ int main(int argc, char** argv) {
       sqlite3* db=nullptr;
       Require(sqlite3_open((data/"lexicon.sqlite").string().c_str(),&db)==SQLITE_OK,"fault database opens");
       const char* sql="CREATE TABLE IF NOT EXISTS entries(text TEXT PRIMARY KEY,pinyin TEXT NOT NULL,count INTEGER NOT NULL,last_commit_unix INTEGER NOT NULL,kind TEXT NOT NULL);"
-          "CREATE TRIGGER IF NOT EXISTS reject_learning BEFORE INSERT ON entries BEGIN SELECT RAISE(ABORT,'injected write failure'); END;";
+          "CREATE TABLE IF NOT EXISTS personal_terms(text TEXT PRIMARY KEY,pinyin TEXT NOT NULL,count INTEGER NOT NULL,last_commit_unix INTEGER NOT NULL,kind TEXT NOT NULL); INSERT OR IGNORE INTO personal_terms VALUES('假字','jiazi',0,strftime('%s','now'),'user'); CREATE TRIGGER IF NOT EXISTS reject_learning BEFORE UPDATE ON personal_terms BEGIN SELECT RAISE(ABORT,'injected write failure'); END;";
       const auto code=sqlite3_exec(db,sql,nullptr,nullptr,nullptr);
       sqlite3_close(db);
       Require(code==SQLITE_OK,"learning failure is injected into isolated data");
@@ -257,6 +262,29 @@ int main(int argc, char** argv) {
       Sleep(5200); client.Phase("3");
       Require(client.Wait(MsgType::CancelInsert).request_id == request.request_id,
               "confirmation timeout cancels queued insert by ID");
+      SendMessageW(engine.Window(),WM_COMMAND,5,0);
+      const auto editor=engine.Window(L"SimpleVoicePreviewEditor");
+      Require(editor!=nullptr,"uncertain insertion remains editable");
+      wchar_t notice[2048]{}; GetDlgItemTextW(editor,11,notice,2048);
+      Require(std::wstring(notice).find(L"待核实")!=std::wstring::npos,"editor explains that saving cannot confirm a previous insert");
+      SendMessageW(editor,WM_COMMAND,IDOK,0); client.Phase("3");
+      Require(WaitWindowClosed(editor),"saving preview completes before it is reopened");
+      GetWindowTextW(engine.Window(),notice,2048);
+      Require(std::wstring(notice).find(L"写入结果待核实")!=std::wstring::npos,"saving unchanged preview retains uncertain insertion warning");
+      SendMessageW(engine.Window(),WM_COMMAND,5,0);
+      const auto edited=engine.Window(L"SimpleVoicePreviewEditor");
+      Require(edited!=nullptr,"uncertain preview can be reopened");
+      // Exercise the native EDIT buffer, not its cross-process window caption.
+      SendDlgItemMessageW(edited,10,EM_SETSEL,0,-1);
+      SendDlgItemMessageW(edited,10,EM_REPLACESEL,TRUE,reinterpret_cast<LPARAM>(L"手工修订文本"));
+      SendMessageW(edited,WM_COMMAND,IDOK,0); client.Phase("3");
+      Require(WaitWindowClosed(edited),"saving corrected preview closes its editor");
+      GetWindowTextW(engine.Window(),notice,2048);
+      Require(std::wstring(notice).find(L"待核实")!=std::wstring::npos && std::wstring(notice).find(L"手工修订文本")!=std::wstring::npos,"editing preserves both text and uncertainty");
+      Require(client.Quiet(100),"saving an uncertain preview never replays insertion");
+      client.Send(MsgType::Enter);
+      Require(client.Wait(MsgType::InsertText).text=="手工修订文本","explicit retry inserts exactly the corrected preview");
+      client.Phase("4"); client.Send(MsgType::InsertResult,"ok"); client.Phase("0");
       client.Send(MsgType::StartListen); client.Phase("1");
       client.Send(MsgType::InsertResult,"fail",false,request.request_id);
       client.Quiet(100);
@@ -436,6 +464,72 @@ int main(int argc, char** argv) {
       SendMessageW(engine.Window(),WM_COMMAND,32,0); CloseHandle(held);
       Require(LoadSkin((data/"appearance.json").wstring())==UiSkin::Titanium,"failed skin save retains the previous selection");
       client.Send(MsgType::Cancel); client.Phase("0"); engine.Stop();
+    }
+    {
+      const auto data=output/"model-selection-race";
+      std::filesystem::create_directories(data);
+      InputPreferences initial; initial.guide_dismissed=true; Require(SaveInputPreferences((data/"preferences.ini").wstring(),initial),"model profile fixture starts bilingual");
+      Host engine(host,data,L"slow-final"); Client client(engine.Pipe()); client.Phase("0");
+      client.Send(MsgType::StartListen); client.Phase("1");
+      SendMessageW(engine.Window(),WM_COMMAND,3,0);
+      const auto settings=engine.Window(L"SimpleVoicePreferences"); Require(settings!=nullptr,"native preferences open during recording");
+      SendDlgItemMessageW(settings,57,BM_SETCHECK,BST_CHECKED,0); SendMessageW(settings,WM_COMMAND,23,0);
+      Require(LoadInputPreferences((data/"preferences.ini").wstring()).chinese_only,"changed model preference is saved for next utterance");
+      client.Send(MsgType::StartListen); client.Phase("2"); client.Phase("3");
+      wchar_t text[2048]{}; GetWindowTextW(engine.Window(),text,2048);
+      Require(std::wstring(text).find(L"假字。")!=std::wstring::npos,"stop hotkey finishes the current model without discarding the draft");
+      client.Send(MsgType::Cancel); client.Phase("0");
+      client.Send(MsgType::StartListen); client.Phase("1");
+      client.Send(MsgType::Enter); client.Phase("2");
+      const auto began=GetTickCount64(); client.Send(MsgType::Cancel); client.Phase("0");
+      Require(GetTickCount64()-began<200,"cancel responds before slow final inference returns");
+      client.Send(MsgType::StartListen); client.Phase("1");
+      client.Send(MsgType::Enter); client.Phase("3"); Require(client.Quiet(100),"late cancelled result cannot insert or replace the next preview");
+      client.Send(MsgType::Cancel); client.Phase("0"); engine.Stop();
+    }
+    {
+      Host engine(host,output/"model-preparing",L"model-slow"); Client client(engine.Pipe()); client.Phase("0");
+      client.Send(MsgType::StartListen); client.Phase("3");
+      wchar_t title[1024]{}; GetWindowTextW(engine.Window(),title,1024);
+      Require(std::wstring(title).find(L"准备")!=std::wstring::npos,"model preparation is visible before microphone capture");
+      const auto began=GetTickCount64(); client.Send(MsgType::Cancel); client.Phase("0");
+      Require(GetTickCount64()-began<200,"model loading does not block cancellation");
+      Require(client.Quiet(650),"cancelled model preparation never commits");
+      GetWindowTextW(engine.Window(),title,1024);
+      Require(!IsWindowVisible(engine.Window()),"late model readiness does not restart a cancelled recording");
+      client.Send(MsgType::StartListen); client.Phase("1"); client.Send(MsgType::Cancel); client.Phase("0"); engine.Stop();
+    }
+    {
+      Host engine(host,output/"model-retry",L"model-fail-once"); Client client(engine.Pipe()); client.Phase("0");
+      client.Send(MsgType::StartListen); client.Phase("3"); Require(client.Quiet(650),"failed model preparation cannot insert");
+      wchar_t title[1024]{}; GetWindowTextW(engine.Window(),title,1024);
+      Require(std::wstring(title).find(L"未能准备")!=std::wstring::npos,"model loading failure gives retry guidance");
+      client.Send(MsgType::Enter); Require(client.Quiet(80),"model error cannot be confirmed as text");
+      client.Send(MsgType::StartListen); client.Phase("1");
+      client.Send(MsgType::Enter); client.Phase("3"); Require(client.Quiet(100),"retry succeeds without automatic insertion");
+      client.Send(MsgType::Cancel); client.Phase("0"); engine.Stop();
+    }
+    {
+      const auto data=output/"preview-generation";
+      std::filesystem::create_directories(data);
+      InputPreferences initial; initial.guide_dismissed=true;
+      Require(SaveInputPreferences((data/"preferences.ini").wstring(),initial),"editor generation fixture starts bilingual");
+      Host engine(host,data,L"model-slow"); Client client(engine.Pipe()); client.Phase("0");
+      client.Send(MsgType::StartListen); client.Phase("3"); client.Phase("1"); Sleep(40);
+      client.Send(MsgType::Enter); client.Phase("2"); client.Phase("3");
+      SendMessageW(engine.Window(),WM_COMMAND,5,0);
+      const auto editor=engine.Window(L"SimpleVoicePreviewEditor");
+      Require(editor!=nullptr,"previous utterance has an editable preview");
+      SendMessageW(engine.Window(),WM_COMMAND,3,0);
+      const auto settings=engine.Window(L"SimpleVoicePreferences");
+      SendDlgItemMessageW(settings,57,BM_SETCHECK,BST_CHECKED,0); SendMessageW(settings,WM_COMMAND,23,0);
+      client.Send(MsgType::StartListen); client.Phase("3");
+      Require(!IsWindow(editor),"accepting a queued recording closes the previous utterance editor");
+      SendMessageW(engine.Window(),WM_COMMAND,5,0);
+      Require(!engine.Window(L"SimpleVoicePreviewEditor"),"model preparation cannot open an editor for an absent preview");
+      client.Send(MsgType::Enter);
+      Require(client.Quiet(100),"Enter while preparing cannot insert the previous utterance");
+      client.Phase("1"); client.Send(MsgType::Cancel); client.Phase("0"); engine.Stop();
     }
     std::printf("%d engine integration checks passed (isolated pipe, synthetic capture)\n", checks);
     return 0;

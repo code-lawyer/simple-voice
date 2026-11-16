@@ -14,6 +14,8 @@
 #include <iterator>
 #include <cstdio>
 #include <vector>
+#include <sstream>
+#include "recognition_text.hpp"
 
 static unsigned U16(const std::vector<unsigned char>& b, std::size_t p) {
   return b[p] | unsigned(b[p + 1]) << 8;
@@ -44,7 +46,42 @@ static std::vector<std::int16_t> ReadWave(const char* file) {
   return {};
 }
 
-int main() {
+static std::string Fold(std::string text) { for(char& c:text) if(c>='A'&&c<='Z') c+=32; return text; }
+static int Corpus(const char* path,bool chinese) {
+  using Clock=std::chrono::steady_clock;
+  auto recognizer=MakeSherpaRecognizer("models",nullptr,nullptr,chinese);
+  if(!recognizer) return 2;
+  std::ifstream list(path); std::string line; int passed=0,failed=0;
+  while(std::getline(list,line)) {
+    if(!line.empty()&&line.back()=='\r')line.pop_back(); if(line.empty()||line.front()=='#')continue;
+    std::istringstream row(line); std::string id,file,expected; std::getline(row,id,'\t'); std::getline(row,file,'\t'); std::getline(row,expected,'\t');
+    const auto samples=ReadWave(file.c_str()); if(samples.empty()) {std::fprintf(stderr,"Unreadable corpus fixture %s\n",id.c_str());return 2;}
+    recognizer->Reset();
+    for(std::size_t offset=0;offset<samples.size();offset+=320) recognizer->AcceptAudio(samples.data()+offset,std::min<std::size_t>(320,samples.size()-offset));
+    const auto start=Clock::now(); const auto final=recognizer->Finalize(); const auto raw=recognizer->Original();
+    bool ok=!HasUnknownSpeech(final) && PreserveRecognizedContent(raw,final)==final;
+    if(expected=="<empty>") ok=ok&&final.empty();
+    else if(expected!="<observe>") {
+      ok=ok&&!final.empty(); const auto folded=Fold(final); std::istringstream words(expected); std::string word;
+      while(std::getline(words,word,';')) {
+        const auto equal=word.find('='); const int count=equal==std::string::npos?1:std::stoi(word.substr(equal+1));
+        if(equal!=std::string::npos)word.resize(equal);
+        std::size_t offset=0; int found=0; while(!word.empty()&&(offset=folded.find(Fold(word),offset))!=std::string::npos){++found;offset+=word.size();}
+        if(found<count) ok=false;
+      }
+    }
+    if(!final.empty()) { Session preview; preview.Hotkey(); preview.Enter(); preview.OnFinal(final); std::string commit;
+      ok=ok&&preview.phase()==Phase::Pending&&!preview.TakeCommit(&commit)&&preview.box_text()==final; preview.Enter(); ok=ok&&preview.TakeCommit(&commit)&&commit==final; }
+    std::printf("%s %s duration=%.2fs final_ms=%lld\nraw=%s\nfinal=%s\nwarning=%s\n",ok?"PASS":"FAIL",id.c_str(),samples.size()/16000.0,
+      static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now()-start).count()),raw.c_str(),final.c_str(),recognizer->TakeWarning().c_str()); std::fflush(stdout);
+    if(ok)++passed;else ++failed;
+  }
+  PROCESS_MEMORY_COUNTERS memory{};GetProcessMemoryInfo(GetCurrentProcess(),&memory,sizeof(memory));
+  std::printf("corpus_passed=%d corpus_failed=%d peak_working_set_mib=%.1f\n",passed,failed,memory.PeakWorkingSetSize/1048576.0);
+  return passed>0&&failed==0?0:1;
+}
+int main(int argc,char** argv) {
+  if(argc>=2) return Corpus(argv[1],argc>=3 && std::string(argv[2])=="--chinese");
   SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
   using Clock = std::chrono::steady_clock;
   const auto began = Clock::now();
@@ -94,7 +131,7 @@ int main() {
   recognizer->Reset();
   const auto samples=ReadWave("models/final/test_wavs/0.wav");
   recognizer->AcceptAudio(samples.data(),samples.size());
-  if (recognizer->Finalize().empty() || recognizer->TakeWarning().empty()) return 1;
-  std::puts("3 real-model fixtures and lexicon-failure fallback passed");
+  if (recognizer->Finalize().empty() || !recognizer->TakeWarning().empty()) return 1;
+  std::puts("3 real-model fixtures passed; broken legacy dictionary cannot affect recognition");
   return 0;
 }

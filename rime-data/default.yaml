@@ -3,6 +3,7 @@
 
 schema_list:
   - schema: voiceime
+  - schema: voiceime_private
 
 menu:
   page_size: 5

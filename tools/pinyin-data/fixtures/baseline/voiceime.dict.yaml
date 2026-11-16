@@ -1,0 +1,11 @@
+# Rime dictionary
+# encoding: utf-8
+
+---
+name: voiceime
+version: "1"
+sort: by_weight
+import_tables:
+  - pinyin_simp
+...
+你好	ni hao	999999

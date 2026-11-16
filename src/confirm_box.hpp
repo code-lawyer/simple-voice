@@ -23,6 +23,7 @@ class ConfirmBox {
                 Phase phase = Phase::Pending, bool error = false, bool uncertain = false);
   void Hide();
   void SetSkin(UiSkin skin);
+  void SetActivity(std::wstring activity);
   UiSkin skin() const { return skin_; }
   HWND hwnd() const { return hwnd_; }
   std::wstring StatusText() const;
@@ -35,6 +36,7 @@ class ConfirmBox {
   Hook hook_ = nullptr;
   void* hook_self_ = nullptr;
   std::wstring text_;
+  std::wstring activity_;
   Phase phase_ = Phase::Pending;
   bool error_ = false;
   bool uncertain_ = false;

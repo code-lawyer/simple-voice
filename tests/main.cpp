@@ -1,4 +1,8 @@
 #include "harness.hpp"
+void RecognitionFormattingPreservesInformation();
+void AudioReadinessAndChunkingProtectBoundaries();
+void ModernInputAndPersonalTermsSurviveLiveSessions();
+void PersonalTermsAreExplicitSearchableAndReversible();
 void MalformedFramesAreRejectedWithoutConsumingOrLooping();
 void CorrelatedFramesSurviveFragmentationAndHaveBounds();
 void CommittingWaitsForConfirmationAndEmptyResultsNeverCommit();
@@ -11,7 +15,7 @@ void DownsamplingRejectsAliasedHighFrequencyAudio();
 
 void Utf8CountsCharactersNotBytes();
 void FirstSentenceAndSingleCountDoNotReplace();
-void PreferredHomophoneReplacesOnlySamePinyin();
+void PersonalHomophonesNeverRewriteSpeech();
 void ExpiredEntriesDropOut();
 void CutsANameIntoTokensWithPinyin();
 void RememberKeepsAUserWord();
@@ -36,7 +40,7 @@ void SkinsPersistWithoutChangingLegacyHotkeys();
 void InvalidAppearanceFallsBackAndFailedSavePreservesSkin();
 void EnterDuringListeningPreviewsBeforeSecondEnter();
 void RejectedInsertRestoresThePendingFinal();
-void PunctuationDoesNotBlockARepeatedSentence();
+void RepeatedSentencesNeverOverwriteNewInformation();
 void PhaseAndInsertAckRoundTrip();
 void ChineseLetterGoesToRime();
 void ChordPassesToTheDocument();
@@ -57,12 +61,12 @@ void LetterIsSentToTheComposer();
 void NihaoCommitsTheWeightedWord();
 void LongPinyinProducesHanzi();
 void PeriodCommitsChinesePunct();
-void UnknownLettersCommitRawOnSpace();
+void UnknownLettersCommitRawOnEnter();
 void NumpadSelectsThePageEntry();
 void ShiftOneCommitsFullwidthExclamation();
 void DigitSelectsThePageEntry();
 void EscapeDropsCompositionWithoutCommit();
-void EnterCommitsNihaoOnAFreshUserDir();
+void EnterPreservesRawPinyin();
 void SelectingACandidateCreatesAUserDb();
 void ClampPullsTheRectInsideTheWorkArea();
 void SettingsHitIsTheRightStrip();
@@ -112,9 +116,13 @@ int main(int argc, char** argv) {
       {"pipe.DisconnectFinishesPendingRead", PipeDisconnectFinishesPendingRead},
       {"pipe.StopCancelsBlockedWrite", PipeStopCancelsBlockedWrite},
       {"pipe.StopFinishesPendingRead", PipeStopFinishesPendingRead},
+      {"text.InformationIsPreserved", RecognitionFormattingPreservesInformation},
+      {"audio.ReadinessAndChunkingProtectBoundaries", AudioReadinessAndChunkingProtectBoundaries},
+      {"rime.ModernInputAndPersonalTermsSurviveLiveSessions", ModernInputAndPersonalTermsSurviveLiveSessions},
+      {"lexicon.ExplicitTerms", PersonalTermsAreExplicitSearchableAndReversible},
       {"Utf8CountsCharactersNotBytes", Utf8CountsCharactersNotBytes},
       {"lexicon.FirstSentenceAndSingleCountDoNotReplace", FirstSentenceAndSingleCountDoNotReplace},
-      {"lexicon.PreferredHomophoneReplacesOnlySamePinyin", PreferredHomophoneReplacesOnlySamePinyin},
+      {"lexicon.PersonalHomophonesNeverRewriteSpeech", PersonalHomophonesNeverRewriteSpeech},
       {"lexicon.ExpiredEntriesDropOut", ExpiredEntriesDropOut},
       {"segmenter.CutsANameIntoTokensWithPinyin", CutsANameIntoTokensWithPinyin},
       {"segmenter.RememberKeepsAUserWord", RememberKeepsAUserWord},
@@ -137,7 +145,7 @@ int main(int argc, char** argv) {
       {"settings.SettingsRoundTripOnANonAsciiPath", SettingsRoundTripOnANonAsciiPath},
       {"session.EnterDuringListeningPreviewsBeforeSecondEnter", EnterDuringListeningPreviewsBeforeSecondEnter},
       {"session.RejectedInsertRestoresThePendingFinal", RejectedInsertRestoresThePendingFinal},
-      {"lexicon.PunctuationDoesNotBlockARepeatedSentence", PunctuationDoesNotBlockARepeatedSentence},
+      {"lexicon.RepeatedSentencesNeverOverwriteNewInformation", RepeatedSentencesNeverOverwriteNewInformation},
       {"ipc.PhaseAndInsertAckRoundTrip", PhaseAndInsertAckRoundTrip},
       {"keyroute.ChineseLetterGoesToRime", ChineseLetterGoesToRime},
       {"keyroute.ChordPassesToTheDocument", ChordPassesToTheDocument},
@@ -158,12 +166,12 @@ int main(int argc, char** argv) {
       {"rime.NihaoCommitsTheWeightedWord", NihaoCommitsTheWeightedWord},
       {"rime.LongPinyinProducesHanzi", LongPinyinProducesHanzi},
       {"rime.PeriodCommitsChinesePunct", PeriodCommitsChinesePunct},
-      {"rime.UnknownLettersCommitRawOnSpace", UnknownLettersCommitRawOnSpace},
+      {"rime.UnknownLettersCommitRawOnEnter", UnknownLettersCommitRawOnEnter},
       {"rime.NumpadSelectsThePageEntry", NumpadSelectsThePageEntry},
       {"rime.ShiftOneCommitsFullwidthExclamation", ShiftOneCommitsFullwidthExclamation},
       {"rime.DigitSelectsThePageEntry", DigitSelectsThePageEntry},
       {"rime.EscapeDropsCompositionWithoutCommit", EscapeDropsCompositionWithoutCommit},
-      {"rime.EnterCommitsNihaoOnAFreshUserDir", EnterCommitsNihaoOnAFreshUserDir},
+      {"rime.EnterPreservesRawPinyin", EnterPreservesRawPinyin},
       {"rime.SelectingACandidateCreatesAUserDb", SelectingACandidateCreatesAUserDb},
       {"candidate.ClampPullsTheRectInsideTheWorkArea", ClampPullsTheRectInsideTheWorkArea},
       {"candidate.SettingsHitIsTheRightStrip", SettingsHitIsTheRightStrip},

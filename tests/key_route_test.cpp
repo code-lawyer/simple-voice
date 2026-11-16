@@ -94,10 +94,10 @@ void ShiftLetterDoesNotToggle() {
   s.composing = true;
   s.shift = true;
   s.vk = 0x42;
-  CHECK(RouteKey(s, DefaultHotkey()).action == KeyAction::PassAfterClear);
+  CHECK(RouteKey(s, DefaultHotkey()).action == KeyAction::ToRime);
   s.shift = false;
   s.caps = true;
-  CHECK(RouteKey(s, DefaultHotkey()).action == KeyAction::PassAfterClear);
+  CHECK(RouteKey(s, DefaultHotkey()).action == KeyAction::ToRime);
 }
 void BareShiftToggles() {
   KeyState s{};
