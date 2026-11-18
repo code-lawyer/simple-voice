@@ -144,7 +144,18 @@ void ChinesePeriodGoesToRime() {
   s.mode = InputMode::Chinese;
   s.vk = 0xBE;
   CHECK(RouteKey(s, DefaultHotkey()).action == KeyAction::ToRime);
+  s.ctrl = true;
+  CHECK(RouteKey(s, DefaultHotkey()).action == KeyAction::ToRime);
+  s.repeat = true;
+  CHECK(RouteKey(s, DefaultHotkey()).action == KeyAction::Consume);
+  s.repeat = false;
+  CHECK(RouteKey(s, Hotkey{1, 0xBE}).action == KeyAction::OpenVoice);
+  s.alt = true;
+  CHECK(RouteKey(s, DefaultHotkey()).action == KeyAction::Pass);
+  s.alt = false;
   s.mode = InputMode::English;
+  CHECK(RouteKey(s, DefaultHotkey()).action == KeyAction::Pass);
+  s.ctrl = false;
   CHECK(RouteKey(s, DefaultHotkey()).action == KeyAction::Pass);
 }
 void PageKeyOnlyWhileComposing() {
@@ -155,6 +166,11 @@ void PageKeyOnlyWhileComposing() {
   CHECK(RouteKey(s, DefaultHotkey()).action == KeyAction::Pass);
   s.composing = true;
   CHECK(RouteKey(s, DefaultHotkey()).action == KeyAction::ToRime);
+  s.composing = false;
+  s.shift = true;
+  CHECK(RouteKey(s, DefaultHotkey()).action == KeyAction::ToRime);
+  s.mode = InputMode::English;
+  CHECK(RouteKey(s, DefaultHotkey()).action == KeyAction::Pass);
 }
 void VoiceHotkeyStillOpensWhileVoiceIsActive() {
   KeyState s{};

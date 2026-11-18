@@ -12,7 +12,7 @@ class InputIndicator final : public ITfLangBarItemButton, public ITfSource {
   InputIndicator(HINSTANCE module,Toggle toggle,void* owner,InputMode mode,Enabled enabled=nullptr);
   HRESULT Attach(ITfThreadMgr* manager);
   void Detach();
-  void SetMode(InputMode mode);
+  void SetMode(InputMode mode, bool ascii_punctuation = false);
   void SetEnabled(bool enabled);
   void RefreshIcon();
   HRESULT STDMETHODCALLTYPE QueryInterface(REFIID,void**) override;
@@ -38,6 +38,7 @@ class InputIndicator final : public ITfLangBarItemButton, public ITfSource {
   Enabled query_enabled_;
   void* owner_;
   InputMode mode_;
+  bool ascii_punctuation_ = false;
   bool enabled_=true;
   ITfLangBarItemMgr* manager_=nullptr;
   ITfLangBarItemSink* sink_=nullptr;

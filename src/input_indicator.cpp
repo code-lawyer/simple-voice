@@ -53,8 +53,13 @@ HRESULT InputIndicator::GetStatus(DWORD* status) {
 HRESULT InputIndicator::Show(BOOL) { return S_OK; }
 HRESULT InputIndicator::GetTooltipString(BSTR* text) {
   if(!text)return E_POINTER;
-  const std::wstring value=std::wstring(kProductDisplayName)+L" · Simple Voice\n"+
-      (mode_==InputMode::Chinese?L"中文输入 · Shift 切换英文":L"英文直输 · Shift 切换中文");
+  std::wstring value=std::wstring(kProductDisplayName)+L" · Simple Voice\n";
+  if (mode_ == InputMode::Chinese) {
+    value += ascii_punctuation_ ? L"中文输入 · 英文标点" : L"中文输入 · 中文标点";
+    value += L"\nShift 切换英文，Ctrl + . 切换标点";
+  } else {
+    value += L"英文直输 · Shift 切换中文";
+  }
   *text=SysAllocString(value.c_str());return *text ? S_OK : E_OUTOFMEMORY;
 }
 HRESULT InputIndicator::GetText(BSTR* text) {
@@ -94,9 +99,13 @@ void InputIndicator::Notify(DWORD flags) {
   auto* sink=sink_;
   if(sink) {sink->AddRef();sink->OnUpdate(flags);sink->Release();}
 }
-void InputIndicator::SetMode(InputMode mode) {
-  if(mode_==mode)return;
-  mode_=mode;Notify(TF_LBI_ICON|TF_LBI_TEXT|TF_LBI_TOOLTIP);
+void InputIndicator::SetMode(InputMode mode, bool ascii_punctuation) {
+  if (mode_ == mode && ascii_punctuation_ == ascii_punctuation) return;
+  DWORD flags = TF_LBI_TOOLTIP;
+  if (mode_ != mode) flags |= TF_LBI_ICON | TF_LBI_TEXT;
+  mode_ = mode;
+  ascii_punctuation_ = ascii_punctuation;
+  Notify(flags);
 }
 void InputIndicator::SetEnabled(bool enabled) {
   if(enabled_==enabled)return;

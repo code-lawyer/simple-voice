@@ -2,16 +2,19 @@
 
 #include <string>
 
-enum class Phase { Idle, Listening, Finalizing, Pending, Committing };
+// Append new phases to preserve the existing IPC values.
+enum class Phase { Idle, Listening, Finalizing, Pending, Committing, Stopped };
 
 class Session {
  public:
   Phase phase() const;
   bool mic_open() const;
+  bool can_finalize() const;
   const std::string& box_text() const;
   void Hotkey();
   void OnDraft(std::string text);
   void OnSpeechEnded();
+  void OnCaptureLimit();
   void OnFinal(std::string punctuated);
   void Enter();
   void RestorePending(std::string text);

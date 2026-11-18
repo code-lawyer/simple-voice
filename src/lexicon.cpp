@@ -71,6 +71,18 @@ void Purge(sqlite3* db, std::int64_t now) {
 Entry ReadEntry(const Statement& query) {
   return {query.Text(0), query.Text(1), static_cast<int>(query.Int(2)), query.Int(3), query.Text(4)};
 }
+bool ValidTerm(const std::string& text,const std::string& code) {
+  return !text.empty() && CodePointCount(text)<=128 &&
+      MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,text.data(),static_cast<int>(text.size()),nullptr,0)>0 &&
+      std::none_of(text.begin(),text.end(),[](unsigned char c){return c<32 || c==127;}) &&
+      !code.empty() && code.size()<=256 &&
+      std::all_of(code.begin(),code.end(),[](char c){return c>='a' && c<='z';});
+}
+void CheckTermCapacity(sqlite3* db,const std::string& text) {
+  Statement count(db,"SELECT count(*) FROM personal_terms WHERE text<>?1");
+  count.Text(1,text);
+  if(count.Row() && count.Int(0)>=10000) throw std::invalid_argument("个人词语已达到10000条，请先整理后再添加");
+}
 }  // namespace
 
 struct Lexicon::Db {
@@ -146,10 +158,7 @@ void Lexicon::ClearLegacy() {
   transaction.Commit();
 }
 void Lexicon::SaveTerm(const std::string& text, const std::string& code, std::int64_t now, const std::string& previous) {
-  if(text.empty() || CodePointCount(text)>128 || MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,text.data(),static_cast<int>(text.size()),nullptr,0)==0 ||
-      std::any_of(text.begin(),text.end(),[](unsigned char c){return c<32 || c==127;}) ||
-      code.empty() || code.size()>256 ||
-      std::any_of(code.begin(),code.end(),[](unsigned char c){return !(c>='a'&&c<='z');}))
+  if(!ValidTerm(text,code))
     throw std::invalid_argument("词语须为1至128字，输入码仅使用小写英文字母");
   std::lock_guard<std::mutex> lock(db_->mutex);
   Transaction transaction(db_->raw);
@@ -159,27 +168,42 @@ void Lexicon::SaveTerm(const std::string& text, const std::string& code, std::in
     if(duplicate.Row()) throw std::invalid_argument("这个词语已经存在，请编辑已有词语");
     Statement remove(db_->raw,"DELETE FROM personal_terms WHERE text=?1"); remove.Text(1,previous); remove.Done();
   }
-  Statement count(db_->raw,"SELECT count(*) FROM personal_terms WHERE text<>?1"); count.Text(1,text);
-  if(count.Row() && count.Int(0)>=10000) throw std::invalid_argument("个人词语已达到10000条，请先整理后再添加");
+  CheckTermCapacity(db_->raw,text);
   Statement save(db_->raw,
       "INSERT INTO personal_terms(text,pinyin,count,last_commit_unix,kind) VALUES(?1,?2,0,?3,'user') "
       "ON CONFLICT(text) DO UPDATE SET pinyin=excluded.pinyin,last_commit_unix=excluded.last_commit_unix");
   save.Text(1,text); save.Text(2,code); save.Int(3,now); save.Done(); transaction.Commit();
 }
-bool Lexicon::Delete(const std::string& text) {
+bool Lexicon::Delete(const std::string& text,Entry* removed) {
   std::lock_guard<std::mutex> lock(db_->mutex);
-  Statement drop(db_->raw,"DELETE FROM personal_terms WHERE text=?1");
-  drop.Text(1,text); drop.Done(); return sqlite3_changes(db_->raw)>0;
+  Statement drop(db_->raw,"DELETE FROM personal_terms WHERE text=?1 RETURNING text,pinyin,count,last_commit_unix,kind");
+  drop.Text(1,text);
+  if(!drop.Row()) return false;
+  Entry deleted;
+  if(removed) deleted=ReadEntry(drop);
+  drop.Done();
+  if(removed) *removed=std::move(deleted);
+  return true;
+}
+bool Lexicon::RestoreDeletedTerm(const Entry& removed) {
+  if(!ValidTerm(removed.text,removed.pinyin) || removed.count<0 || removed.count>1000000 || removed.last_commit_unix<0)
+    throw std::invalid_argument("无法恢复这条词语的数据");
+  std::lock_guard<std::mutex> lock(db_->mutex);
+  Transaction transaction(db_->raw);
+  CheckTermCapacity(db_->raw,removed.text);
+  Statement add(db_->raw,"INSERT INTO personal_terms(text,pinyin,count,last_commit_unix,kind) "
+      "VALUES(?1,?2,?3,?4,'user') ON CONFLICT(text) DO NOTHING");
+  add.Text(1,removed.text); add.Text(2,removed.pinyin); add.Int(3,removed.count); add.Int(4,removed.last_commit_unix);
+  add.Done();
+  const bool restored=sqlite3_changes(db_->raw)>0;
+  transaction.Commit();
+  return restored;
 }
 void Lexicon::ReplaceTerms(const std::vector<Entry>& rows,const std::function<void()>& update) {
   if(rows.size()>10000)throw std::invalid_argument("备份词语数量超出限制");
   std::set<std::string> seen;
   for(const auto& row:rows) {
-    if(row.text.empty() || CodePointCount(row.text)>128 ||
-       !MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,row.text.data(),static_cast<int>(row.text.size()),nullptr,0) ||
-       std::any_of(row.text.begin(),row.text.end(),[](unsigned char c){return c<32 || c==127;}) ||
-       row.pinyin.empty() || row.pinyin.size()>256 ||
-       std::any_of(row.pinyin.begin(),row.pinyin.end(),[](char c){return c<'a'||c>'z';}) ||
+    if(!ValidTerm(row.text,row.pinyin) ||
        row.count<0 || row.count>1000000 || row.last_commit_unix<0 || !seen.insert(row.text).second)
       throw std::invalid_argument("备份词语格式无效");
   }

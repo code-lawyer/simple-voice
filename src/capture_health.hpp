@@ -20,10 +20,10 @@ class CaptureHealth {
   }
   const char* Error(std::uint64_t now) const {
     if(now-last_frame_>=5000) return received_?"麦克风采样已中断。请检查连接后重试。":"麦克风没有返回采样。请检查访问权限和设备后重试。";
-    if(samples_>=16000*8 && !nonzero_) return "麦克风持续静音。请检查静音开关或更换输入设备。";
-    if(samples_>=16000*12 && !signal_) return "未检测到声音。请靠近麦克风，或在设置中更换设备。";
     return nullptr;
   }
+  // Live silent samples are a hint, not a device failure or a stop command.
+  bool quiet() const { return (samples_>=16000*8 && !nonzero_) || (samples_>=16000*12 && !signal_); }
   bool received() const { return received_; }
   int level() const { return level_; }
  private:

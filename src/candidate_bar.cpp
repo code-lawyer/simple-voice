@@ -1,4 +1,5 @@
 #include "candidate_bar.hpp"
+#include "candidate_paint.hpp"
 #include "ui_theme.hpp"
 #include <commctrl.h>
 #include <oleacc.h>
@@ -6,12 +7,6 @@
 #include <atomic>
 
 namespace {
-std::wstring Wide(const std::string& text) {
-  const int count = MultiByteToWideChar(CP_UTF8,0,text.data(),static_cast<int>(text.size()),nullptr,0);
-  std::wstring result(count,L'\0');
-  if (count) MultiByteToWideChar(CP_UTF8,0,text.data(),static_cast<int>(text.size()),result.data(),count);
-  return result;
-}
 HINSTANCE Module() {
   HMODULE module = nullptr;
   static int marker;
@@ -212,7 +207,7 @@ void CandidateBar::Layout() {
   int x=pad;
   std::wstring accessible=L"拼音候选：";
   for (int i=0;i<count;++i) {
-    labels_.push_back(std::to_wstring(i+1)+L" "+Wide(view_.page[i]));
+    labels_.push_back(std::to_wstring(i+1)+L" "+Utf8ToWide(view_.page[i]));
     RECT measure{};
     DrawTextW(dc,labels_.back().c_str(),-1,&measure,DT_CALCRECT | DT_SINGLELINE | DT_NOPREFIX);
     const int width=std::min(static_cast<int>(measure.right)+UiPx(18,dpi_),remaining/(count-i));
@@ -262,43 +257,8 @@ int CandidateBar::Hit(int x,int y) const {
 
 void CandidateBar::Paint() {
   UiDpiScope coordinates;
-  UiPaintFrame frame(hwnd_); HDC dc=frame.dc(); const RECT client=frame.rect();
-  const auto colors=UiPalette(skin_);
-  UiSurface(dc,client,colors,dpi_);
-  SetBkMode(dc,TRANSPARENT);
-  HFONT font=UiFont(16,dpi_);
-  auto old=SelectObject(dc,font);
-  for (std::size_t i=0;i<items_.size();++i) {
-    RECT item=items_[i];
-    const bool selected=static_cast<int>(i)==view_.highlight;
-    const bool highlight_ink=selected || (colors.high_contrast && hover_==static_cast<int>(i));
-    if (selected || hover_==static_cast<int>(i)) {
-      HBRUSH brush=CreateSolidBrush(selected ? colors.selected : colors.hover);
-      auto old_brush=SelectObject(dc,brush); auto old_pen=SelectObject(dc,GetStockObject(NULL_PEN));
-      const int round=UiPx(skin_==UiSkin::Daylight ? 18 : 12,dpi_);
-      RoundRect(dc,item.left,item.top,item.right,item.bottom,round,round);
-      SelectObject(dc,old_pen); SelectObject(dc,old_brush); DeleteObject(brush);
-      if (selected && skin_==UiSkin::Titanium && !colors.high_contrast)
-        UiFill(dc,{item.left+UiPx(5,dpi_),item.bottom-UiPx(2,dpi_),item.right-UiPx(5,dpi_),item.bottom-UiPx(1,dpi_)},colors.accent);
-    }
-    item.left+=UiPx(8,dpi_); item.right-=UiPx(5,dpi_);
-    HFONT number=UiFont(12,dpi_); SelectObject(dc,number);
-    SetTextColor(dc,highlight_ink ? colors.selected_text : colors.secondary);
-    RECT index_rect=item; index_rect.right=std::min(item.right,item.left+UiPx(15,dpi_));
-    DrawTextW(dc,std::to_wstring(i+1).c_str(),-1,&index_rect,DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX);
-    SelectObject(dc,font); DeleteObject(number);
-    item.left=index_rect.right;
-    SetTextColor(dc,highlight_ink ? colors.selected_text : colors.text);
-    const auto label=Wide(view_.page[i]);
-    DrawTextW(dc,label.c_str(),-1,&item,DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX);
-  }
-  RECT settings{client.right-UiPx(52,dpi_),UiPx(5,dpi_),client.right-UiPx(3,dpi_),client.bottom-UiPx(5,dpi_)};
-  if (hover_==5) UiFill(dc,settings,colors.hover);
-  UiFill(dc,{settings.left,UiPx(13,dpi_),settings.left+std::max(1,UiPx(1,dpi_)),client.bottom-UiPx(13,dpi_)},colors.rule);
-  HFONT label_font=UiFont(12,dpi_); SelectObject(dc,label_font);
-  SetTextColor(dc,colors.high_contrast && hover_==5 ? colors.selected_text : colors.secondary);
-  DrawTextW(dc,L"设置",-1,&settings,DT_SINGLELINE | DT_CENTER | DT_VCENTER | DT_NOPREFIX);
-  SelectObject(dc,old); DeleteObject(label_font); DeleteObject(font);
+  UiPaintFrame frame(hwnd_);
+  PaintCandidateStrip(frame.dc(),frame.rect(),skin_,dpi_,items_,view_.page,view_.highlight,hover_);
 }
 
 LRESULT CALLBACK CandidateBar::Proc(HWND hwnd,UINT message,WPARAM wp,LPARAM lp) {

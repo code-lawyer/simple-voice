@@ -24,6 +24,7 @@ class ConfirmBox {
   void Hide();
   void SetSkin(UiSkin skin);
   void SetActivity(std::wstring activity);
+  void SetRecordingProgress(int seconds,bool quiet);
   UiSkin skin() const { return skin_; }
   HWND hwnd() const { return hwnd_; }
   std::wstring StatusText() const;
@@ -38,6 +39,8 @@ class ConfirmBox {
   std::wstring text_;
   std::wstring activity_;
   Phase phase_ = Phase::Pending;
+  int recording_seconds_ = 0;
+  bool quiet_capture_ = false;
   bool error_ = false;
   bool uncertain_ = false;
   UINT dpi_ = 96;

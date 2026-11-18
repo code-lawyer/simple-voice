@@ -2,7 +2,7 @@
 schema:
   schema_id: voiceime
   name: 轻音全拼
-  version: "2026-11-15-study-2"
+  version: "2026-11-17"
   dependencies:
     - voiceime_english
     - voiceime_mixed
@@ -79,5 +79,6 @@ recognizer:
   import_preset: default
 key_binder:
   bindings:
+    - { when: always, accept: Control+period, toggle: ascii_punct }
     - { when: has_menu, accept: minus, send: Page_Up }
     - { when: has_menu, accept: equal, send: Page_Down }

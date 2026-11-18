@@ -106,6 +106,57 @@ void PeriodCommitsChinesePunct() {
   RimeView done = session.ProcessKey(0xBE, false);
   CHECK(done.commit == "。");
 }
+
+void ChinesePunctuationCommitsFromTheKeyboard() {
+  RimeSession session;
+  CHECK(session.Start(SharedDataDir(), TempUserDir()));
+  struct Example { int vk; bool shift; const char* text; };
+  const Example keys[] = {
+      {VK_OEM_MINUS,true,"——"}, {'6',true,"……"}, {'4',true,"￥"},
+      {VK_OEM_3,false,"·"}, {VK_OEM_3,true,"～"}, {VK_OEM_5,false,"、"},
+      {VK_OEM_COMMA,false,"，"}, {VK_OEM_PERIOD,false,"。"},
+      {VK_OEM_1,false,"；"}, {VK_OEM_1,true,"："}, {VK_OEM_2,true,"？"}, {'1',true,"！"},
+      {'9',true,"（"}, {'0',true,"）"}, {VK_OEM_4,false,"【"}, {VK_OEM_6,false,"】"},
+      {VK_OEM_COMMA,true,"《"}, {VK_OEM_PERIOD,true,"》"},
+      {VK_OEM_7,true,"“"}, {VK_OEM_7,true,"”"}, {VK_OEM_7,false,"‘"}, {VK_OEM_7,false,"’"},
+      {'2',true,"@"}, {'3',true,"#"}, {'5',true,"%"}, {'7',true,"&"}, {'8',true,"*"},
+      {VK_OEM_PLUS,true,"+"}, {VK_OEM_2,false,"/"}, {VK_OEM_5,true,"|"}
+  };
+  for (const auto& key : keys) {
+    const auto view = session.ProcessKey(key.vk, key.shift);
+    if (view.commit != key.text) std::fprintf(stderr, "vk=%02x shift=%d: expected [%s], got [%s]\n",
+                                              key.vk, key.shift, key.text, view.commit.c_str());
+    CHECK(view.commit == key.text && !view.composing);
+  }
+  TypeNihao(session);
+  CHECK(session.ProcessKey(VK_OEM_MINUS, true).commit == "你好——");
+  CHECK(session.ProcessKey(VK_OEM_MINUS, true).commit == "——");
+  session.ProcessKey('N',false);
+  session.ProcessKey('I',false);
+  const auto first = session.view().page;
+  CHECK(!first.empty());
+  CHECK(session.ProcessKey(VK_OEM_PLUS,false).page != first);
+  CHECK(session.ProcessKey(VK_OEM_MINUS,false).page == first);
+}
+
+void PunctuationChoiceSurvivesLearningChanges() {
+  const auto root = std::filesystem::path(TempUserDir());
+  RimeSession session;
+  CHECK(session.Start(SharedDataDir(), (root / "rime").wstring()));
+  const auto toggle = [&] { return session.ProcessKeyWithModifiers(VK_OEM_PERIOD, false, true, false); };
+  CHECK(toggle().ascii_punctuation);
+  InputPreferences preferences;
+  preferences.learning = false;
+  CHECK(SaveInputPreferences((root / "preferences.ini").wstring(), preferences));
+  TypeNihao(session);
+  CHECK(session.ProcessKey(VK_OEM_MINUS,true).commit == "你好_");
+  CHECK(!toggle().ascii_punctuation);
+  CHECK(session.ProcessKey('6',true).commit == "……");
+  for (int key : {'X','I'}) session.ProcessKey(key,false);
+  session.ProcessKey(VK_OEM_7,false);
+  for (int key : {'A','N'}) session.ProcessKey(key,false);
+  CHECK(session.ProcessKey(VK_RETURN,false).commit == "xi'an");
+}
 void UnknownLettersCommitRawOnEnter() {
   RimeSession session;
   CHECK(session.Start(SharedDataDir(), TempUserDir()));
@@ -234,6 +285,7 @@ void RimeSessionsOnDifferentThreadsRemainIndependent() {
 void ModernInputAndPersonalTermsSurviveLiveSessions() {
   const auto root=std::filesystem::path(VOICEIME_SOURCE_DIR)/"build-professional"/("rime-quality-"+std::to_string(GetCurrentProcessId()));
   const auto user=root/"rime"; std::filesystem::create_directories(user);
+  const auto personal_table=user/"voiceime_personal.txt";
   InputPreferences preferences; CHECK(SaveInputPreferences((root/"preferences.ini").wstring(),preferences));
   Lexicon terms(":memory:"); terms.SaveTerm("轻音个人术语甲","qysyx",std::time(nullptr));
   terms.SaveTerm("#include","qyinclude",std::time(nullptr));
@@ -254,8 +306,14 @@ void ModernInputAndPersonalTermsSurviveLiveSessions() {
     CHECK(contains(first.view(),pair.second));
   }
   type(first,"qysyx"); // Keep this generation alive in a composing session.
+  const auto original_time=std::filesystem::last_write_time(personal_table);
+  const auto original_size=std::filesystem::file_size(personal_table);
   terms.SaveTerm("轻音个人术语乙","qysyx",std::time(nullptr),"轻音个人术语甲");
-  CHECK(terms.ExportTerms((user/"voiceime_personal.txt").wstring()));
+  CHECK(terms.ExportTerms(personal_table.wstring()));
+  // Fast replacement can preserve the observable write timestamp, even for
+  // a rename that leaves the generated table exactly the same size.
+  std::filesystem::last_write_time(personal_table,original_time);
+  CHECK(std::filesystem::file_size(personal_table)==original_size);
   type(second,"qysyx"); CHECK(contains(second.view(),"轻音个人术语乙")); CHECK(!contains(second.view(),"轻音个人术语甲"));
   CHECK(contains(first.view(),"轻音个人术语甲"));
   type(first,"qysyx"); CHECK(contains(first.view(),"轻音个人术语乙"));
@@ -263,7 +321,8 @@ void ModernInputAndPersonalTermsSurviveLiveSessions() {
   CHECK(SaveInputPreferences((root/"preferences.ini").wstring(),preferences));
   type(first,"qysyx"); CHECK(contains(first.view(),"轻音个人术语乙"));
   CHECK(first.ProcessKey(VK_SPACE,false).commit=="轻音个人术语乙");
-  terms.Delete("轻音个人术语乙"); CHECK(terms.ExportTerms((user/"voiceime_personal.txt").wstring()));
+  terms.Delete("轻音个人术语乙"); CHECK(terms.ExportTerms(personal_table.wstring()));
+  std::filesystem::last_write_time(personal_table,original_time);
   type(first,"qysyx"); CHECK(!contains(first.view(),"轻音个人术语乙"));
   first.Clear(); type(first,"nihaoo"); first.ProcessKey(VK_LEFT,false); first.ProcessKey(VK_DELETE,false);
   CHECK(first.ProcessKey(VK_RETURN,false).commit=="nihao");

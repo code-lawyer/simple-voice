@@ -121,6 +121,24 @@ void MoveCaretToEnd(TfEditCookie cookie, ITfContext* context, ITfRange* range) {
   end->Release();
 }
 
+bool CaretFollowsDigit(TfEditCookie cookie, ITfContext* context) {
+  TF_SELECTION selection{};
+  ULONG fetched = 0;
+  if (FAILED(context->GetSelection(cookie, TF_DEFAULT_SELECTION, 1, &selection, &fetched)) ||
+      !fetched || !selection.range) return false;
+  BOOL empty = FALSE;
+  LONG shifted = 0;
+  wchar_t previous = 0;
+  ULONG count = 0;
+  auto* range = selection.range;
+  const bool digit = SUCCEEDED(range->IsEmpty(cookie, &empty)) && empty &&
+      SUCCEEDED(range->ShiftStart(cookie, -1, &shifted, nullptr)) && shifted == -1 &&
+      SUCCEEDED(range->GetText(cookie, 0, &previous, 1, &count)) && count == 1 &&
+      previous >= L'0' && previous <= L'9';
+  range->Release();
+  return digit;
+}
+
 TF_DISPLAYATTRIBUTE SolidInputUnderline() {
   TF_DISPLAYATTRIBUTE attr{};
   attr.crText.type = TF_CT_NONE;
@@ -606,6 +624,7 @@ class VoiceService : public ITfTextInputProcessor {
   std::uint64_t handled_connection_ = ~std::uint64_t{0}, handled_id_ = 0;
   bool handled_success_ = false;
   bool pending_toggle_ = false;
+  bool last_key_was_digit_ = false;
   bool tracking_ = false;
   bool candidate_anchor_known_ = false;
   Rect candidate_anchor_{}, candidate_window_{};
@@ -689,7 +708,7 @@ void VoiceService::SettingsClicked(void* self) {
 
 void VoiceService::UpdateInputIndicator() {
   if(!input_indicator_)return;
-  input_indicator_->SetMode(pinyin_.mode());
+  input_indicator_->SetMode(pinyin_.mode(), pinyin_.view().ascii_punctuation);
   ITfContext* context=FocusContext();
   input_indicator_->SetEnabled(DocumentAcceptsText(context) && !active_);
   if(context)context->Release();
@@ -711,6 +730,7 @@ bool VoiceService::ToggleInputMode(void* self) {
     service->RunComposition(context,CompositionEdit::Cancel,L"");
     service->pinyin_.ToggleMode();
     service->pending_toggle_=false;
+    service->last_key_was_digit_=false;
     service->bar_.Hide();
     service->UpdateInputIndicator();
   }
@@ -1051,6 +1071,7 @@ HRESULT VoiceService::Deactivate() {
   rime_ready_ = false;
   rime_failed_ = false;
   pending_toggle_ = false;
+  last_key_was_digit_ = false;
   stop_reader_ = true;
   if (stop_event_ != nullptr) SetEvent(stop_event_);
   if (write_event_ != nullptr) SetEvent(write_event_);
@@ -1162,6 +1183,7 @@ KeyState VoiceService::MakeKeyState(ITfContext* context, WPARAM vk, LPARAM lpara
   state.voice_active = active_ && !IsInputMethodEditor(GetFocus());
   state.composing = view.composing;
   state.candidate_count = static_cast<int>(view.page.size());
+  state.ascii_punctuation = view.ascii_punctuation;
   auto held = [](int key) {
     return (GetAsyncKeyState(key) & 0x8000) != 0 || (GetKeyState(key) & 0x8000) != 0;
   };
@@ -1216,7 +1238,12 @@ void VoiceService::RunComposition(ITfContext* context, CompositionEdit op, const
 }
 
 void VoiceService::EditComposition(TfEditCookie cookie, ITfContext* context, CompositionEdit op, const std::wstring& text) {
-  if (op == CompositionEdit::Commit) CommitComposition(cookie, context, text);
+  if (op == CompositionEdit::Commit) {
+    if (last_key_was_digit_ && !composition_ && text == L"。" && CaretFollowsDigit(cookie, context))
+      CommitComposition(cookie, context, L".");
+    else
+      CommitComposition(cookie, context, text);
+  }
   else if (op == CompositionEdit::SetPreedit) SetCompositionText(cookie, context, text);
   else CancelComposition(cookie);
 }
@@ -1360,6 +1387,7 @@ void VoiceService::ShowCandidates(ITfContext* context) {
 
 void VoiceService::SyncAfterRime(ITfContext* context) {
   const RimeView& view = pinyin_.view();
+  if (input_indicator_) input_indicator_->SetMode(pinyin_.mode(), view.ascii_punctuation);
   UpdateTracking();
   if (!view.composing) candidate_anchor_known_ = false;
   if (!view.commit.empty()) {
@@ -1395,6 +1423,7 @@ void VoiceService::OnDocumentFocus(ITfDocumentMgr* current, ITfDocumentMgr* prev
   if (current != previous) {
     candidate_anchor_known_ = false;
     last_caret_sent_.clear();
+    last_key_was_digit_ = false;
     CancelFocusComposition();
     rime_.Clear();
     pending_toggle_ = false;
@@ -1425,6 +1454,14 @@ HRESULT VoiceService::OnKey(ITfContext* context, WPARAM vk, LPARAM lparam, WINBO
   const KeyState state = MakeKeyState(context, vk, lparam);
   const Hotkey hotkey = hotkey_cache_.value();
   const KeyAction action = RouteKey(state, hotkey).action;
+  // A passed digit normally receives only OnTestKeyDown. Keep it through both
+  // phases of the following period, then let Backspace + period mean "。".
+  if (action != KeyAction::ToRime || vk != VK_OEM_PERIOD || state.ctrl || state.shift) {
+    const bool digit = (vk >= '0' && vk <= '9') || (vk >= VK_NUMPAD0 && vk <= VK_NUMPAD9);
+    last_key_was_digit_ = digit && action == KeyAction::Pass && state.accepts &&
+        state.mode == InputMode::Chinese && !state.composing && !state.voice_active &&
+        !state.win && !state.ctrl && !state.alt && !state.shift;
+  }
   // Bare Shift is ToggleMode. Apply waits until keyup so Shift+letter stays in this mode.
   if (action == KeyAction::ToggleMode) {
     if (down && !state.repeat) pending_toggle_ = true;
@@ -1474,6 +1511,7 @@ HRESULT VoiceService::OnKey(ITfContext* context, WPARAM vk, LPARAM lparam, WINBO
       break;
     case KeyAction::ToRime:
       SyncAfterRime(context);
+      last_key_was_digit_ = false;
       eaten_vk_ = static_cast<int>(vk);
       if (eaten != nullptr) *eaten = TRUE;
       break;

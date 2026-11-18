@@ -1,5 +1,6 @@
 #include "harness.hpp"
 #include "worker_recognizer.hpp"
+#include "recording.hpp"
 #include <windows.h>
 #include <filesystem>
 #include <fstream>
@@ -7,6 +8,7 @@
 #include <chrono>
 #include <thread>
 #include <cstdio>
+#include <vector>
 namespace fs=std::filesystem;
 namespace {
 std::string root;
@@ -22,6 +24,20 @@ void RealPrivatePipesRoundTrip() {
   r->Reset();const std::int16_t audio[320]={1234};r->AcceptAudio(audio,320);
   CHECK(r->Partial()=="测试草稿");CHECK(r->Finalize()=="测试最终文本");
   CHECK(r->Original()=="测试最终文本");r->Reset();CHECK(r->Partial().empty());
+}
+void LongRecordingBudgetIsEnforcedAcrossWorkerRequests() {
+  auto r=Start("normal");CHECK(r && r->Healthy());if(!r)return;
+  const std::vector<std::int16_t> minute(16000*62,250);
+  r->AcceptAudio(minute.data(),minute.size());CHECK(r->Healthy());
+  CHECK(r->Partial()=="测试草稿");r->Reset();
+  const std::vector<std::int16_t> audio(kRecordingSampleRate,250);
+  for(int second=0;second<kMaxRecordingSeconds && r->Healthy();++second)
+    r->AcceptAudio(audio.data(),audio.size());
+  CHECK(r->Healthy());if(!r->Healthy())return;
+  CHECK(r->Finalize()=="测试最终文本");
+  const std::int16_t extra=250;r->AcceptAudio(&extra,1);
+  CHECK(!r->Healthy());CHECK(!r->TakeWarning().empty());
+  CHECK(Start("normal")!=nullptr);
 }
 void CancelStopsBlockedInferenceAndAllowsAnotherWorker() {
   auto r=Start("final-hang");CHECK(r!=nullptr);if(!r)return;
@@ -89,10 +105,11 @@ int main(int argc,char** argv) {
     const auto path=directory/name;fs::create_directories(path.parent_path());std::ofstream(path).put('x');
   }
   const Test tests[]={{"worker.PrivatePipesRoundTrip",RealPrivatePipesRoundTrip},
+      {"worker.LongRecordingLimit",LongRecordingBudgetIsEnforcedAcrossWorkerRequests},
       {"worker.CancelAndRecover",CancelStopsBlockedInferenceAndAllowsAnotherWorker},
       {"worker.LoadCrashAndTimeout",LoadCrashAndTimeoutDoNotKillTheHost},
       {"worker.AudioCrash",AudioCrashReturnsRecoverableFailure},
       {"worker.LoadErrorAndCancel",LoadErrorReplySurvivesWorkerExitAndLoadIsCancellable},
       {"worker.CachedTextDuringAudio",CachedTextRemainsAvailableDuringBlockedAudio}};
-  const int result=RunTests(argc,argv,tests,6);Fixture(nullptr);return result;
+  const int result=RunTests(argc,argv,tests,sizeof(tests)/sizeof(tests[0]));Fixture(nullptr);return result;
 }

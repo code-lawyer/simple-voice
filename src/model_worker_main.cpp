@@ -1,6 +1,7 @@
 #include "worker_protocol.hpp"
 #include "sherpa_recognizer.hpp"
 #include "model_settings.hpp"
+#include "recording.hpp"
 #include <cstdlib>
 #include <memory>
 #include <stdexcept>
@@ -22,6 +23,14 @@ int main(int argc,char** argv) {
     if(header.magic!=model_worker::kMagic || header.size>model_worker::kLimit)return 3;
     std::string bytes(header.size,'\0');if(!model_worker::Read(input,bytes.data(),bytes.size()))return 3;
     try {
+      // Apply the same wire bounds to production recognizers and fault fixtures.
+      if(header.operation==model_worker::Audio) {
+        if(bytes.size()%2 || !FitsRecording(samples,bytes.size()/2))throw std::runtime_error("音频长度无效。");
+        samples+=bytes.size()/2;
+      } else if(header.operation==model_worker::Reset) {
+        if(!bytes.empty())throw std::runtime_error("无效的重置数据。");
+        samples=0;
+      } else if(header.operation==model_worker::Finalize && !bytes.empty())throw std::runtime_error("无效的定稿数据。");
 #ifdef VOICEIME_WORKER_TESTING
       if(!fixture.empty()) {
         if(header.operation==model_worker::Init) {
@@ -48,15 +57,12 @@ int main(int argc,char** argv) {
         if(!recognizer)throw std::runtime_error(error.empty()?"所选模型无法加载，请重新下载或选择完整文件夹。":error);
       } else if(!recognizer)throw std::runtime_error("模型尚未准备。");
       else if(header.operation==model_worker::Audio) {
-        if(bytes.size()%2 || samples+bytes.size()/2>16000*61)throw std::runtime_error("音频长度无效。");
         std::vector<std::int16_t> wave(bytes.size()/2);
-        std::memcpy(wave.data(),bytes.data(),bytes.size());samples+=wave.size();
+        std::memcpy(wave.data(),bytes.data(),bytes.size());
         recognizer->AcceptAudio(wave.data(),wave.size());
       } else if(header.operation==model_worker::Reset) {
-        if(!bytes.empty())throw std::runtime_error("无效的重置数据。");
-        recognizer->Reset();samples=0;
+        recognizer->Reset();
       } else if(header.operation==model_worker::Finalize) {
-        if(!bytes.empty())throw std::runtime_error("无效的定稿数据。");
         const auto text=recognizer->Finalize();
         if(!model_worker::Packet(output,header.operation,
              model_worker::Fields({text,recognizer->Original(),recognizer->TakeWarning()})))return 0;

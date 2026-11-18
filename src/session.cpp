@@ -6,13 +6,14 @@ Phase Session::phase() const { return phase_; }
 
 bool Session::mic_open() const { return mic_open_; }
 
+bool Session::can_finalize() const { return phase_ == Phase::Listening || phase_ == Phase::Stopped; }
+
 const std::string& Session::box_text() const { return box_; }
 
 void Session::Hotkey() {
   if (phase_ == Phase::Finalizing || phase_ == Phase::Committing) return;
-  if (phase_ == Phase::Listening) {
-    phase_ = Phase::Finalizing;
-    mic_open_ = false;
+  if (can_finalize()) {
+    OnSpeechEnded();
     return;
   }
   phase_ = Phase::Listening;
@@ -28,8 +29,14 @@ void Session::OnDraft(std::string text) {
 }
 
 void Session::OnSpeechEnded() {
-  if (phase_ != Phase::Listening) return;
+  if (!can_finalize()) return;
   phase_ = Phase::Finalizing;
+  mic_open_ = false;
+}
+
+void Session::OnCaptureLimit() {
+  if (phase_ != Phase::Listening) return;
+  phase_ = Phase::Stopped;
   mic_open_ = false;
 }
 
@@ -41,7 +48,7 @@ void Session::OnFinal(std::string punctuated) {
 }
 
 void Session::Enter() {
-  if (phase_ == Phase::Listening) {
+  if (can_finalize()) {
     OnSpeechEnded();
     return;
   }
@@ -70,7 +77,7 @@ void Session::RestorePending(std::string text) {
 }
 
 void Session::Escape() {
-  if (phase_ != Phase::Listening && phase_ != Phase::Finalizing && phase_ != Phase::Pending) return;
+  if (!can_finalize() && phase_ != Phase::Finalizing && phase_ != Phase::Pending) return;
   phase_ = Phase::Idle;
   mic_open_ = false;
   box_.clear();

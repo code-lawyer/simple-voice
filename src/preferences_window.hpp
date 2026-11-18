@@ -3,26 +3,30 @@
 #include "lexicon.hpp"
 #include "ui_theme.hpp"
 #include "model_settings.hpp"
+#include <commctrl.h>
 #include <functional>
+#include <optional>
 #include <vector>
 
-struct AudioDevice { std::wstring id, name; };
+struct AudioDevice { std::wstring id, name; bool available=true; };
 std::vector<AudioDevice> InputDevices();
 bool CopyUserText(HWND owner,const std::wstring& text);
 
 enum class ModelTaskState { Idle, Running, Queued };
+struct ModelActionResult { std::wstring message; bool pending=false; };
 
 struct PreferencesActions {
   std::function<bool(const InputPreferences&)> save;
   std::function<bool(UiSkin)> skin;
   std::function<void()> hotkey;
+  std::function<std::wstring()> hotkey_label;
   std::function<void()> retry_models;
   std::function<std::wstring()> diagnostics;
   std::function<std::string(const std::string&)> input_code;
   std::function<bool()> terms_changed;
   std::function<ModelSettings()> models;
   std::function<std::wstring(SpeechModel)> model_status;
-  std::function<std::wstring(const ModelSettings&)> use_model;
+  std::function<ModelActionResult(const ModelSettings&)> use_model;
   std::function<ModelTaskState()> model_task;
   std::function<void()> cancel_model_operation;
   std::function<std::wstring(const std::wstring&)> backup;
@@ -41,36 +45,62 @@ class PreferencesWindow {
   void ReloadInputs(InputPreferences preferences,UiSkin skin);
   HWND hwnd() const { return hwnd_; }
  private:
-  struct Control { HWND hwnd; int page,x,y,w,h; };
-  HWND hwnd_=nullptr;
-  HFONT font_=nullptr,heading_=nullptr;
-  HBRUSH brush_=nullptr;
+  enum class Face { Body, Detail, Meta, Section, Title };
+  struct FormRow { int page,gap; };
+  struct Control { HWND hwnd; int page,x,row,w,h; Face face; bool combo; };
+  struct ModelFeedback { SpeechModel model; std::wstring completion; };
+  HWND hwnd_=nullptr,pane_=nullptr;
+  HFONT font_=nullptr,heading_=nullptr,section_=nullptr,meta_=nullptr,icons_=nullptr;
+  HICON mark_=nullptr;
+  UiColors colors_{};
   UINT dpi_=96;
   int page_=0,offset_=0;
-  int scroll_=0;
+  int scroll_=0,rail_=0,footer_=0,hover_=-1;
+  bool compact_=false,always_cues_=false;
   UiSkin skin_=UiSkin::Titanium;
   InputPreferences preferences_;
   PreferencesActions actions_;
   Lexicon* lexicon_=nullptr;
   std::vector<Control> controls_;
+  std::vector<FormRow> rows_;
   std::vector<Entry> entries_;
   std::vector<AudioDevice> devices_;
+  std::wstring terms_error_;
   std::string editing_;
   Entry deleted_{};
+  std::optional<ModelFeedback> pending_model_feedback_;
   bool have_undo_=false,changing_=false;
-  HWND Add(const wchar_t* type,const wchar_t* text,int id,int page,int x,int y,int w,int h,DWORD style=0);
+  HWND Add(const wchar_t* type,const wchar_t* text,int id,int page,int x,int row,int w,int h,
+           DWORD style=0,Face face=Face::Body);
+  void BuildForm(const ModelSettings& models);
+  void UpdateAppearance();
+  void FitWindow(const RECT* suggested);
   void Layout();
+  void LayoutForm();
+  void FitOutput(int id);
+  bool ShowAccessKeys() const;
+  void RevealFocus();
+  void PaintFrame(HDC dc);
+  LRESULT DrawItem(const DRAWITEMSTRUCT& item);
+  LRESULT DrawButton(const NMCUSTOMDRAW& item);
   void Scroll(int position);
   void Page(int page);
+  void RefreshPage();
+  const Entry* SelectedTerm() const;
   void Search();
-  void Devices();
+  void RefreshTerms(const wchar_t* success,const wchar_t* export_failure);
+  const AudioDevice* SelectedDevice() const;
+  void Devices(bool preserve_selection=false);
   void Models();
+  void PollModelFeedback();
   ModelSettings SelectedModel() const;
   void Command(int id,int notification);
   void Status(const std::wstring& text);
   std::wstring Text(int id) const;
   void Set(int id,const std::wstring& text);
   static LRESULT CALLBACK Proc(HWND,UINT,WPARAM,LPARAM);
+  static LRESULT CALLBACK PaneProc(HWND,UINT,WPARAM,LPARAM);
+  static LRESULT CALLBACK NavigationProc(HWND,UINT,WPARAM,LPARAM,UINT_PTR,DWORD_PTR);
 };
 
 class PreviewEditor {

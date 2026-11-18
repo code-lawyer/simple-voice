@@ -83,3 +83,22 @@ void EscapeAndRestartDoNotCommit() {
   CHECK(s.phase() == Phase::Listening);
   CHECK(!s.TakeCommit(&committed));
 }
+
+void RecordingLimitRequiresManualCalibrationAndConfirmation() {
+  for(int action=0;action<3;++action) {
+    Session s;s.Hotkey();s.OnDraft("草稿");s.OnCaptureLimit();
+    CHECK(s.phase()==Phase::Stopped && !s.mic_open());
+    s.OnFinal("迟到的结果");s.OnDraft("迟到的草稿");
+    CHECK(s.phase()==Phase::Stopped && s.box_text()=="草稿");
+    std::string text;CHECK(!s.TakeCommit(&text));
+    if(action==2) {
+      s.Escape();CHECK(s.phase()==Phase::Idle);s.Hotkey();
+      CHECK(s.phase()==Phase::Listening && s.mic_open());continue;
+    }
+    if(action==0)s.Enter();else s.Hotkey();
+    CHECK(s.phase()==Phase::Finalizing && !s.mic_open());
+    s.OnCaptureLimit();s.Enter();s.Hotkey();
+    s.OnFinal("最终文本。");CHECK(!s.TakeCommit(&text));
+    s.Enter();CHECK(s.TakeCommit(&text) && text=="最终文本。");
+  }
+}

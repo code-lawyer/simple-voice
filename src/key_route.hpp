@@ -28,6 +28,7 @@ struct KeyState {
   bool repeat;
   int vk;
   bool win = false;
+  bool ascii_punctuation = false;
 };
 
 struct KeyDecision {

@@ -23,7 +23,9 @@ class Lexicon {
 
   void Commit(const std::string& full_text, std::int64_t now_unix);
   std::vector<Entry> Recent(int limit);
-  bool Delete(const std::string& text);
+  bool Delete(const std::string& text, Entry* removed = nullptr);
+  // Undo never overwrites a word recreated after deletion.
+  bool RestoreDeletedTerm(const Entry& removed);
   // Only an explicit user action creates a personal term. Commit only touches
   // existing terms; legacy automatic records never rewrite recognition.
   void SaveTerm(const std::string& text, const std::string& input_code,

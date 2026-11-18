@@ -30,6 +30,10 @@ void PhaseAndInsertResultRoundTrip() {
   CHECK(out.type == MsgType::Phase);
   CHECK(out.text == "1");
   CHECK(out.state_id == 123);
+  phase.text="5";
+  auto stopped=Encode(phase);CHECK(Decode(stopped,&out,&used));CHECK(out.text=="5");
+  phase.text="6";CHECK(Encode(phase).empty());
+  stopped.back()='6';CHECK(DecodeFrame(stopped,&out,&used)==DecodeStatus::Invalid);
 
   Message ack;
   ack.type = MsgType::InsertResult;

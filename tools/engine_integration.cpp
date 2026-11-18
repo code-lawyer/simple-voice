@@ -2,6 +2,7 @@
 #include "pipe_io.hpp"
 #include "ipc_security.hpp"
 #include "settings.hpp"
+#include "preferences_controls.hpp"
 #include "model_settings.hpp"
 #include "sqlite3.h"
 #include "lexicon.hpp"
@@ -28,6 +29,21 @@ void Require(bool ok, const char* name) {
   if (!ok) throw std::runtime_error(name);
   ++checks;
   std::printf("PASS %s\n", name);
+}
+void ShowModelPage(HWND settings) {
+  const bool compact=IsWindowVisible(preference::Field(settings,preference::CompactNavigation));
+  const int id=compact?preference::CompactNavigation:preference::Navigation;
+  const auto navigation=preference::Field(settings,id);
+  const auto selection=SendMessageW(navigation,compact?CB_SETCURSEL:LB_SETCURSEL,4,0);
+  SendMessageW(settings,WM_COMMAND,MAKEWPARAM(id,compact?CBN_SELCHANGE:LBN_SELCHANGE),reinterpret_cast<LPARAM>(navigation));
+  const auto model=preference::Field(settings,preference::ModelChoice);
+  if(!IsWindowVisible(model)) {
+    std::fprintf(stderr,"Model page visibility: frame=%d pane=%d nav=%d selection=%lld choice=%d own-style=%lx\n",
+                 IsWindowVisible(settings),IsWindowVisible(preference::Field(settings,preference::Content)),
+                 IsWindowVisible(navigation),static_cast<long long>(selection),IsWindowVisible(model),
+                 static_cast<unsigned long>(GetWindowLongPtrW(model,GWL_STYLE)));
+  }
+  Require(IsWindowVisible(model),"model actions run on the visible model page");
 }
 struct Timer {
   HANDLE value = CreateWaitableTimerW(nullptr, TRUE, nullptr);
@@ -117,6 +133,12 @@ class Client {
       DecodeAvailable();
       if (result.status != PipeReadStatus::Data) return !HasCommit();
     }
+  }
+  bool StaysListening(int ms) {
+    Quiet(ms);
+    return !HasCommit() && std::none_of(messages_.begin(),messages_.end(),[](const Message& message) {
+      return message.type==MsgType::Phase && message.text!="1";
+    });
   }
   void Raw(const std::string& bytes) {
     Timer timeout; Require(WritePipeBytes(pipe_, bytes, timeout.value), "raw frame sent to isolated engine");
@@ -300,6 +322,59 @@ int main(int argc, char** argv) {
     GetModuleFileNameW(nullptr, own, MAX_PATH);
     const auto host = std::filesystem::path(own).parent_path() / "voiceime_engine_testhost.exe";
     const auto output = std::filesystem::absolute(argc > 1 ? argv[1] : "build/engine-integration");
+    if(argc<3 || std::string(argv[2])=="--manual-stop-only") {
+      for(const auto* fixture:{L"speech-end",L"soft-speech",L"long-speech",L"silence"}) {
+        const auto data=output/fixture;
+        std::filesystem::create_directories(data);
+        InputPreferences old;old.pause_ms=500;
+        Require(SaveInputPreferences((data/"preferences.ini").wstring(),old),"legacy pause setting is retained for compatibility");
+        Host engine(host,data,fixture);Client client(engine.Pipe());client.Phase("0");
+        client.Send(MsgType::StartListen);client.Phase("1");
+        const int wait=std::wstring(fixture)==L"speech-end" || std::wstring(fixture)==L"soft-speech"?1250:350;
+        Require(client.StaysListening(wait),"silence, quiet speech and more than 60 seconds never finalize before manual stop");
+        client.Send(MsgType::Enter);client.Phase("2");client.Phase("3");
+        Require(client.Quiet(80),"manual stop only prepares a preview; it never inserts text");
+        wchar_t preview[2048]{};GetWindowTextW(engine.Window(),preview,2048);
+        client.Send(MsgType::Enter);const auto final=client.Wait(MsgType::InsertText).text;
+        Require(std::wstring(preview).find(Utf8ToWide(final))!=std::wstring::npos,"second confirmation inserts exactly the calibrated preview");
+        client.Phase("4");client.Send(MsgType::InsertResult,"ok");client.Phase("0");engine.Stop();
+      }
+      {
+        Host engine(host,output/"recording-limit",L"recording-limit");
+        Client client(engine.Pipe());client.Phase("0");client.Send(MsgType::StartListen);client.Phase("1");
+        const auto listening=client.State();client.Phase("5");
+        Require(client.Quiet(150),"10-minute limit stops capture without calibration or insertion");
+        wchar_t stopped[2048]{};GetWindowTextW(engine.Window(),stopped,2048);
+        Require(std::wstring(stopped).find(L"10 分钟上限")!=std::wstring::npos &&
+                std::wstring(stopped).find(L"9600000假字")!=std::wstring::npos,
+                "limit notice preserves the entire bounded recording and the draft");
+        client.SendAt(MsgType::Enter,listening);client.Phase("2");client.Phase("3");
+        Require(client.Quiet(80),"a stop racing with the limit calibrates but cannot insert");
+        client.SendAt(MsgType::Enter,listening);client.Phase("3");
+        Require(client.Quiet(80),"a stale stop cannot confirm a completed preview");
+        client.Send(MsgType::Cancel);client.Phase("0");
+        client.Send(MsgType::StartListen);client.Phase("5");
+        client.Send(MsgType::StartListen);client.Phase("2");client.Phase("3");
+        Require(client.Quiet(80),"the voice hotkey also calibrates a stopped recording without starting over");
+        client.Send(MsgType::Cancel);client.Phase("0");
+        client.Send(MsgType::StartListen);client.Phase("5");
+        client.Send(MsgType::Cancel);client.Phase("0");
+        Require(client.Quiet(80),"a recording stopped at the limit can be discarded without calibration");
+        engine.Stop();
+      }
+      {
+        Host engine(host,output/"practice-limit",L"recording-limit");
+        Client client(engine.Pipe());client.Phase("0");
+        SendMessageW(engine.Window(),WM_COMMAND,3,0);const auto settings=engine.Window(L"SimpleVoicePreferences");
+        Require(preference::Field(settings,52)==nullptr,"obsolete automatic-pause selector is removed");
+        SendMessageW(settings,WM_COMMAND,72,0);client.Phase("5");
+        Require(client.Quiet(80),"practice at the limit waits for an explicit calibration request");
+        SendMessageW(settings,WM_COMMAND,72,0);client.Phase("2");client.Phase("3");
+        Require(client.Quiet(80),"practice calibration never writes into the current application");
+        SendMessageW(settings,WM_COMMAND,73,0);client.Phase("0");engine.Stop();
+      }
+      if(argc>=3) {std::printf("%d manual-stop checks passed\n",checks);return 0;}
+    }
     if(argc<3 || (std::string(argv[2])!="--practice-only" && std::string(argv[2])!="--review-only")) {
     {
       Host engine(host,output/"authorization",L"manual");
@@ -604,30 +679,6 @@ int main(int argc, char** argv) {
       engine.Stop();
     }
     {
-      Host engine(host, output / "silence", L"silence");
-      Client client(engine.Pipe());
-      client.Phase("0");
-      client.Send(MsgType::StartListen);
-      client.Phase("3");
-      Require(client.Quiet(100), "60 seconds of initial silence reaches pending without committing");
-      client.Send(MsgType::Cancel);
-      client.Phase("0");
-      engine.Stop();
-    }
-    {
-      Host engine(host, output / "automatic-preview", L"speech-end");
-      Client client(engine.Pipe()); client.Phase("0");
-      client.Send(MsgType::StartListen); client.Phase("3");
-      Require(client.Quiet(120),"speech followed by 500ms silence automatically previews without an Enter or insert");
-      wchar_t preview[2048]{}; GetWindowTextW(engine.Window(),preview,2048);
-      Require(std::wstring(preview).find(L"假字。")!=std::wstring::npos,"automatic endpoint displays the calibrated final in the popup");
-      client.Send(MsgType::Enter); const auto final=client.Wait(MsgType::InsertText).text;
-      const int count=MultiByteToWideChar(CP_UTF8,0,final.data(),static_cast<int>(final.size()),nullptr,0);
-      std::wstring final_wide(count,L'\0'); MultiByteToWideChar(CP_UTF8,0,final.data(),static_cast<int>(final.size()),final_wide.data(),count);
-      Require(std::wstring(preview).find(final_wide)!=std::wstring::npos,"document receives the same final text that was previewed");
-      client.Phase("4"); client.Send(MsgType::InsertResult,"ok"); client.Phase("0"); engine.Stop();
-    }
-    {
       Host engine(host, output / "slow-preview", L"slow-final");
       Client client(engine.Pipe()); client.Phase("0");
       client.Send(MsgType::StartListen); client.Phase("1");
@@ -668,7 +719,8 @@ int main(int argc, char** argv) {
       client.Send(MsgType::StartListen); client.Phase("1");
       SendMessageW(engine.Window(),WM_COMMAND,3,0);
       const auto settings=engine.Window(L"SimpleVoicePreferences"); Require(settings!=nullptr,"native preferences open during recording");
-      SendDlgItemMessageW(settings,60,CB_SETCURSEL,1,0); SendMessageW(settings,WM_COMMAND,63,0);
+      ShowModelPage(settings);
+      SendMessageW(preference::Field(settings,60),CB_SETCURSEL,1,0); SendMessageW(settings,WM_COMMAND,63,0);
       Require(LoadModelSettings((data/"speech-models.ini").wstring()).model==SpeechModel::Qwen3,"recording keeps the old model until the replacement is validated");
       client.Send(MsgType::StartListen); client.Phase("2"); client.Phase("3");
       wchar_t text[2048]{}; GetWindowTextW(engine.Window(),text,2048);
@@ -718,7 +770,8 @@ int main(int argc, char** argv) {
       Require(editor!=nullptr,"previous utterance has an editable preview");
       SendMessageW(engine.Window(),WM_COMMAND,3,0);
       const auto settings=engine.Window(L"SimpleVoicePreferences");
-      SendDlgItemMessageW(settings,60,CB_SETCURSEL,1,0); SendMessageW(settings,WM_COMMAND,63,0);
+      ShowModelPage(settings);
+      SendMessageW(preference::Field(settings,60),CB_SETCURSEL,1,0); SendMessageW(settings,WM_COMMAND,63,0);
       client.Send(MsgType::StartListen); client.Phase("3");
       Require(!IsWindow(editor),"accepting a queued recording closes the previous utterance editor");
       SendMessageW(engine.Window(),WM_COMMAND,5,0);
@@ -754,18 +807,19 @@ int main(int argc, char** argv) {
       Host engine(host,data,L"normal",nullptr,program.c_str());Client client(engine.Pipe());client.Phase("0");
       SendMessageW(engine.Window(),WM_COMMAND,3,0);const auto settings=engine.Window(L"SimpleVoicePreferences");
       Require(settings!=nullptr,"download request opens the real preferences flow");
-      SendDlgItemMessageW(settings,68,BM_SETCHECK,BST_UNCHECKED,0);
-      Require(SendMessageW(GetDlgItem(settings,69),WM_SETTEXT,0,reinterpret_cast<LPARAM>(L"审查专名"))!=0,"download request accepts explicit name hints");
-      wchar_t hints[128]{};SendMessageW(GetDlgItem(settings,69),WM_GETTEXT,128,reinterpret_cast<LPARAM>(hints));
+      ShowModelPage(settings);
+      SendMessageW(preference::Field(settings,68),BM_SETCHECK,BST_UNCHECKED,0);
+      Require(SendMessageW(preference::Field(settings,69),WM_SETTEXT,0,reinterpret_cast<LPARAM>(L"审查专名"))!=0,"download request accepts explicit name hints");
+      wchar_t hints[128]{};SendMessageW(preference::Field(settings,69),WM_GETTEXT,128,reinterpret_cast<LPARAM>(hints));
       Require(std::wstring(hints)==L"审查专名","download fixture reads back the actual edit control contents");
       SendMessageW(settings,WM_COMMAND,63,0);
-      Require(!IsWindowEnabled(GetDlgItem(settings,63)),"model activation is disabled while its request is in flight");
+      Require(!IsWindowEnabled(preference::Field(settings,63)),"model activation is disabled while its request is in flight");
       // Synthetic WM_COMMAND intentionally bypasses disabled controls to verify
       // the engine independently rejects competing activation requests.
-      SendDlgItemMessageW(settings,60,CB_SETCURSEL,1,0);SendMessageW(settings,WM_COMMAND,63,0);
+      SendMessageW(preference::Field(settings,60),CB_SETCURSEL,1,0);SendMessageW(settings,WM_COMMAND,63,0);
       const auto deadline=GetTickCount64()+8000;
-      while(!IsWindowEnabled(GetDlgItem(settings,63)) && GetTickCount64()<deadline) {Sleep(20);SendMessageW(settings,WM_TIMER,1,0);}
-      Require(IsWindowEnabled(GetDlgItem(settings,63)),"download validation completes without leaving a busy settings page");
+      while(!IsWindowEnabled(preference::Field(settings,63)) && GetTickCount64()<deadline) {Sleep(20);SendMessageW(settings,WM_TIMER,1,0);}
+      Require(IsWindowEnabled(preference::Field(settings,63)),"download validation completes without leaving a busy settings page");
       const auto selected=LoadModelSettings((data/"speech-models.ini").wstring());
       if(complete) {
         Require(selected.model==SpeechModel::Qwen3 && selected.idle_minutes==0 && selected.hotwords=="审查专名",
@@ -801,11 +855,11 @@ int main(int argc, char** argv) {
       const auto settings=engine.Window(L"SimpleVoicePreferences");Require(settings!=nullptr,"first-use practice is available in native preferences");
       SendMessageW(settings,WM_COMMAND,72,0);client.Phase("1");Sleep(45);
       SendMessageW(settings,WM_COMMAND,72,0);client.Phase("2");client.Phase("3");
-      SendMessageW(settings,WM_TIMER,1,0);wchar_t preview[2048]{};SendMessageW(GetDlgItem(settings,75),WM_GETTEXT,2048,reinterpret_cast<LPARAM>(preview));
+      SendMessageW(settings,WM_TIMER,1,0);wchar_t preview[2048]{};SendMessageW(preference::Field(settings,75),WM_GETTEXT,2048,reinterpret_cast<LPARAM>(preview));
       Require(std::wstring(preview).find(L"假字。")!=std::wstring::npos,"practice displays calibrated text from the production capture path");
       SendMessageW(settings,WM_COMMAND,73,0);client.Phase("0");
       Require(client.Quiet(80),"practice confirmation never inserts into the external client");
-      SendMessageW(GetDlgItem(settings,75),WM_GETTEXT,2048,reinterpret_cast<LPARAM>(preview));Require(std::wstring(preview).find(L"已确认")!=std::wstring::npos,"practice retains its own confirmed result");
+      SendMessageW(preference::Field(settings,75),WM_GETTEXT,2048,reinterpret_cast<LPARAM>(preview));Require(std::wstring(preview).find(L"已确认")!=std::wstring::npos,"practice retains its own confirmed result");
       SendMessageW(settings,WM_COMMAND,72,0);client.Phase("1");
       SendMessageW(settings,WM_CLOSE,0,0);client.Phase("0");
       Require(client.Quiet(80),"closing first-use practice cancels capture without inserting");engine.Stop();
@@ -815,7 +869,7 @@ int main(int argc, char** argv) {
       Host engine(host,data,L"normal");Client client(engine.Pipe());client.Phase("0");
       SendMessageW(engine.Window(),WM_COMMAND,3,0);const auto settings=engine.Window(L"SimpleVoicePreferences");
       SendMessageW(settings,WM_COMMAND,72,0);client.Phase("1");Sleep(40);
-      SendDlgItemMessageW(settings,60,CB_SETCURSEL,1,0);SendMessageW(settings,WM_COMMAND,63,0);
+      SendMessageW(preference::Field(settings,60),CB_SETCURSEL,1,0);SendMessageW(settings,WM_COMMAND,63,0);
       SendMessageW(settings,WM_COMMAND,72,0);client.Phase("2");client.Phase("3");
       SendMessageW(settings,WM_COMMAND,73,0);client.Phase("0");
       SendMessageW(settings,WM_COMMAND,72,0);
@@ -831,7 +885,7 @@ int main(int argc, char** argv) {
       SendMessageW(settings,WM_COMMAND,72,0);client.Phase("1");Sleep(40);
       SendMessageW(settings,WM_COMMAND,72,0);client.Phase("2");client.Phase("3");
       SendMessageW(settings,WM_COMMAND,73,0);SendMessageW(settings,WM_TIMER,1,0);
-      wchar_t text[2048]{};SendMessageW(GetDlgItem(settings,75),WM_GETTEXT,2048,reinterpret_cast<LPARAM>(text));
+      wchar_t text[2048]{};SendMessageW(preference::Field(settings,75),WM_GETTEXT,2048,reinterpret_cast<LPARAM>(text));
       Require(std::wstring(text).find(L"已确认")==std::wstring::npos && std::wstring(text).find(L"<unk>")!=std::wstring::npos,
           "practice does not acknowledge unknown speech as a successful final preview");
       SendMessageW(settings,WM_COMMAND,74,0);client.Phase("0");engine.Stop();

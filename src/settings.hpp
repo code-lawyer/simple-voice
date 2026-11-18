@@ -34,7 +34,7 @@ class HotkeyCache {
 
 struct InputPreferences {
   bool learning = true;
-  int pause_ms = 800;
+  int pause_ms = 800; // Legacy backup/settings field; manual recording ignores it.
   std::wstring microphone; // Empty follows the system default.
   bool guide_dismissed = false;
   bool chinese_only = false;

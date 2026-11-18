@@ -11,7 +11,9 @@
 #include "settings.hpp"
 #include "product.hpp"
 
+#include <cctype>
 #include <filesystem>
+#include <memory>
 #include <mutex>
 #include <fstream>
 #include <sstream>
@@ -30,7 +32,7 @@ struct RimeRuntime {
   std::string shared_utf8;
   std::string user_utf8;
   std::string personal_generation;
-  std::uint64_t personal_stamp=0;
+  BY_HANDLE_FILE_INFORMATION personal_file{};
 };
 
 RimeRuntime& Runtime() {
@@ -38,16 +40,28 @@ RimeRuntime& Runtime() {
   return runtime;
 }
 
-void ConfigurePersonal(RimeApi* api,RimeRuntime& runtime) {
+void ConfigurePersonal(RimeRuntime& runtime) {
   const auto path=std::filesystem::path(runtime.user_path)/"voiceime_personal.txt";
-  WIN32_FILE_ATTRIBUTE_DATA attributes{};
-  if(!GetFileAttributesExW(path.c_str(),GetFileExInfoStandard,&attributes)) return;
-  const auto stamp=(std::uint64_t(attributes.ftLastWriteTime.dwHighDateTime)<<32)|attributes.ftLastWriteTime.dwLowDateTime;
-  if(stamp==runtime.personal_stamp && !runtime.personal_generation.empty()) return;
-  if(attributes.nFileSizeHigh || attributes.nFileSizeLow>8*1024*1024) return;
-  std::ifstream input(path,std::ios::binary);
-  if(!input) return;
-  std::string content((std::istreambuf_iterator<char>(input)),{});
+  const HANDLE file=CreateFileW(path.c_str(),GENERIC_READ,FILE_SHARE_READ|FILE_SHARE_DELETE,nullptr,
+                                OPEN_EXISTING,FILE_FLAG_SEQUENTIAL_SCAN,nullptr);
+  if(file==INVALID_HANDLE_VALUE) return;
+  const std::unique_ptr<void,decltype(&CloseHandle)> input(file,CloseHandle);
+  BY_HANDLE_FILE_INFORMATION current{};
+  if(!GetFileInformationByHandle(input.get(),&current) ||
+     current.nFileSizeHigh || current.nFileSizeLow>8*1024*1024) return;
+  // The engine replaces this table atomically. A different file can have
+  // the same timestamp and size, so compare its identity before reusing it.
+  const auto& previous=runtime.personal_file;
+  const bool same_file=(current.nFileIndexHigh || current.nFileIndexLow) &&
+      current.dwVolumeSerialNumber==previous.dwVolumeSerialNumber &&
+      current.nFileIndexHigh==previous.nFileIndexHigh && current.nFileIndexLow==previous.nFileIndexLow;
+  if(same_file && current.nFileSizeLow==previous.nFileSizeLow &&
+     CompareFileTime(&current.ftLastWriteTime,&previous.ftLastWriteTime)==0 &&
+     !runtime.personal_generation.empty()) return;
+  std::string content(current.nFileSizeLow,'\0');
+  DWORD read=0;
+  if(!content.empty() && (!ReadFile(input.get(),content.data(),current.nFileSizeLow,&read,nullptr) ||
+                          read!=current.nFileSizeLow)) return;
   std::uint64_t hash=14695981039346656037ULL;
   for(unsigned char c:content) { hash^=c; hash*=1099511628211ULL; }
   std::ostringstream id; id<<"voiceime_personal_g"<<std::hex<<std::setw(16)<<std::setfill('0')<<hash;
@@ -61,7 +75,7 @@ void ConfigurePersonal(RimeApi* api,RimeRuntime& runtime) {
       output.write(content.data(),content.size()); output.flush(); if(!output) return; }
     if(!MoveFileExW(temporary.c_str(),target.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH)) { DeleteFileW(temporary.c_str()); return; }
   }
-  runtime.personal_generation=generation; runtime.personal_stamp=stamp;
+  runtime.personal_generation=generation; runtime.personal_file=current;
   // These files are generated snapshots, never the authoritative user terms.
   // Loaded stabledb objects keep their data in memory after the file closes.
   std::error_code error;
@@ -262,7 +276,7 @@ bool RimeSession::Start(const std::wstring& shared_dir, const std::wstring& user
     }
   }
 
-  ConfigurePersonal(api,runtime);
+  ConfigurePersonal(runtime);
   learning_=LoadInputPreferences((std::filesystem::path(user_path).parent_path()/"preferences.ini").wstring()).learning;
   personal_generation_=runtime.personal_generation;
   const uintptr_t session=CreateConfiguredSession(api,learning_,runtime.personal_generation);
@@ -294,7 +308,7 @@ void RimeSession::Shutdown() {
     runtime.user_path.clear();
     runtime.shared_utf8.clear();
     runtime.user_utf8.clear();
-    runtime.personal_generation.clear(); runtime.personal_stamp=0;
+    runtime.personal_generation.clear(); runtime.personal_file={};
   }
   api_ = nullptr;
   ready_ = false;
@@ -308,6 +322,7 @@ RimeView RimeSession::ProcessKey(int vk, bool shift) {
 RimeView RimeSession::ProcessKeyWithModifiers(int vk, bool shift, bool ctrl, bool alt) {
   std::lock_guard<std::mutex> lock(Runtime().mutex);
   if(ready_ && !view_.composing) RefreshResources();
+  char literal_punctuation = 0;
   if (ready_ && api_ != nullptr && session_ != 0) {
     auto* api = static_cast<RimeApi*>(api_);
     if (vk == VK_RETURN && !ctrl && !alt && view_.composing) {
@@ -326,10 +341,16 @@ RimeView RimeSession::ProcessKeyWithModifiers(int vk, bool shift, bool ctrl, boo
     if(ctrl) mask |= 4;
     if(alt) mask |= 8;
     if (keycode != 0) {
-      static_cast<RimeApi*>(api_)->process_key(session_, keycode, mask);
+      const bool handled = api->process_key(session_, keycode, mask);
+      // With ascii_punct, express_editor commits pending pinyin and leaves
+      // the printable key to the caller. TSF has already accepted this key.
+      if (!handled && view_.ascii_punctuation && !ctrl && !alt &&
+          keycode < 0x7f && std::ispunct(keycode))
+        literal_punctuation = static_cast<char>(keycode);
     }
   }
   Refresh();
+  if (literal_punctuation) view_.commit.push_back(literal_punctuation);
   return view_;
 }
 
@@ -338,19 +359,21 @@ bool RimeSession::SetLearning(bool enabled) {
   if(!ready_ || !api_) return false;
   auto* api=static_cast<RimeApi*>(api_);
   const bool ok=api->select_schema(session_,enabled?"voiceime":"voiceime_private")!=0;
-  if(ok) { learning_=enabled; Refresh(); }
+  if(ok) {
+    api->set_option(session_, "ascii_punct", view_.ascii_punctuation);
+    learning_=enabled; Refresh();
+  }
   return ok;
 }
 
 void RimeSession::RefreshResources() {
   auto& runtime=Runtime(); auto* api=static_cast<RimeApi*>(api_);
-  ConfigurePersonal(api,runtime);
+  ConfigurePersonal(runtime);
   const auto next=LoadInputPreferences((std::filesystem::path(runtime.user_path).parent_path()/"preferences.ini").wstring()).learning;
   if(learning_==next && personal_generation_==runtime.personal_generation) return;
   const auto replacement=CreateConfiguredSession(api,next,runtime.personal_generation);
-  if(!replacement) {
-    if(replacement) api->destroy_session(replacement); return;
-  }
+  if (!replacement) return;
+  api->set_option(replacement, "ascii_punct", view_.ascii_punctuation);
   api->destroy_session(session_); session_=replacement;
   personal_generation_=runtime.personal_generation; learning_=next; Refresh();
 }
@@ -404,6 +427,7 @@ void RimeSession::Refresh() {
   RIME_STRUCT(RimeStatus, status);
   if (api->get_status != nullptr && api->get_status(session_, &status)) {
     view_.composing = status.is_composing != 0;
+    view_.ascii_punctuation = status.is_ascii_punct != 0;
     if (api->free_status != nullptr) api->free_status(&status);
   } else {
     view_.composing = !view_.preedit.empty() || !view_.page.empty();

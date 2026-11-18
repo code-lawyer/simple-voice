@@ -30,7 +30,8 @@ class UiDpiScope {
   HANDLE old_ = nullptr;
 };
 inline HFONT UiFont(int dip, UINT dpi, bool bold = false) {
-  return CreateFontW(-UiPx(dip, dpi), 0, 0, 0, bold ? FW_SEMIBOLD : FW_NORMAL,
+  // Microsoft YaHei UI has a real Bold face. A 600 request can embolden Regular in GDI.
+  return CreateFontW(-UiPx(dip, dpi), 0, 0, 0, bold ? FW_BOLD : FW_NORMAL,
       FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
       CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Microsoft YaHei UI");
 }

@@ -173,6 +173,14 @@ class TextStore final : public ITextStoreACP, public ITfContextOwnerCompositionS
   HRESULT STDMETHODCALLTYPE OnStartComposition(ITfCompositionView*,BOOL* ok) override { *ok=TRUE;return S_OK; }
   HRESULT STDMETHODCALLTYPE OnUpdateComposition(ITfCompositionView*,ITfRange*) override { return S_OK; }
   HRESULT STDMETHODCALLTYPE OnEndComposition(ITfCompositionView*) override { return S_OK; }
+  void EditFromHost(LONG erase_before, const std::wstring& inserted) {
+    const LONG start=std::max(0L,selection_.acpStart-erase_before);
+    const LONG end=selection_.acpEnd;
+    text.replace(start,end-start,inserted);
+    TS_TEXTCHANGE change{start,end,start+static_cast<LONG>(inserted.size())};
+    selection_={change.acpNewEnd,change.acpNewEnd,{TS_AE_END,FALSE}};
+    if (sink_) { sink_->OnTextChange(0,&change); sink_->OnSelectionChange(); }
+  }
   std::wstring text;
   int layout_x=120,layout_y=120;
   bool layout_unavailable=false;
@@ -210,8 +218,62 @@ bool Key(VoiceService& service,ITfContext* context,int vk) {
   service.OnKeyUp(context,vk,&eaten,true);
   return handled;
 }
+bool ModifiedKey(VoiceService& service,ITfContext* context,int modifier,int vk) {
+  BYTE original[256]{}, pressed[256]{};
+  GetKeyboardState(original);
+  std::copy_n(original,256,pressed);
+  pressed[modifier] |= 0x80;
+  SetKeyboardState(pressed);
+  BOOL eaten=FALSE;
+  service.OnKey(context,modifier,0,&eaten,false);
+  if(eaten) service.OnKey(context,modifier,0,&eaten,true);
+  const bool handled=Key(service,context,vk);
+  SetKeyboardState(original);
+  service.OnKeyUp(context,modifier,&eaten,false);
+  if(eaten) service.OnKeyUp(context,modifier,&eaten,true);
+  return handled;
+}
 void Type(VoiceService& service,ITfContext* context,const char* letters) {
   for (const char* p=letters;*p;++p)Check(Key(service,context,*p-'a'+'A'),"pinyin key handled by TSF");
+}
+
+void CheckPunctuation(ITfThreadMgr* thread,TfClientId id) {
+  Document doc(thread,id);
+  Hr(thread->SetFocus(doc.manager),"focus punctuation fixture");
+  VoiceService service;
+  Hr(service.Activate(thread,id),"activate punctuation fixture");
+  auto chord=[&](int modifier,int vk){ return ModifiedKey(service,doc.context,modifier,vk); };
+  auto key=[&](int vk){ return Key(service,doc.context,vk); };
+  Check(chord(VK_SHIFT,VK_OEM_MINUS) && doc.store->text==L"——","Shift+minus inserts a Chinese dash");
+  Check(chord(VK_SHIFT,'6') && doc.store->text==L"——……","Shift chords keep Chinese mode active");
+  key(VK_SHIFT);
+  Check(!chord(VK_SHIFT,VK_OEM_MINUS) && !chord(VK_SHIFT,'6') && !key(VK_OEM_PERIOD),
+        "English leaves underscore, caret and period to the application");
+  Check(!chord(VK_CONTROL,VK_OEM_PERIOD),"English leaves Ctrl+period to the application");
+  key(VK_SHIFT);
+  Type(service,doc.context,"nihao");
+  Check(chord(VK_CONTROL,VK_OEM_PERIOD),"Ctrl+period switches punctuation during pinyin composition");
+  Check(chord(VK_SHIFT,VK_OEM_MINUS) && doc.store->text==L"——……你好_",
+        "ASCII punctuation commits the candidate and one literal underscore");
+  Check(!key(VK_OEM_PERIOD),"idle ASCII punctuation passes to the application");
+  key(VK_SHIFT);
+  key(VK_SHIFT);
+  Check(!key(VK_OEM_COMMA),"returning to Chinese remembers the punctuation choice");
+  Check(chord(VK_CONTROL,VK_OEM_PERIOD) && key(VK_OEM_PERIOD) && doc.store->text==L"——……你好_。",
+        "Ctrl+period restores Chinese punctuation");
+  Check(!key('3'),"a digit without candidates belongs to the application");
+  doc.store->EditFromHost(0,L"3");
+  Check(key(VK_OEM_PERIOD) && doc.store->text==L"——……你好_。3.","a period after a typed digit is a decimal point");
+  for (int digit : {'1','4'}) {
+    Check(!key(digit),"fractional digits belong to the application");
+    doc.store->EditFromHost(0,std::wstring(1,static_cast<wchar_t>(digit)));
+  }
+  Check(doc.store->text==L"——……你好_。3.14","typing a fractional number preserves its ASCII decimal point");
+  key(VK_OEM_PERIOD);
+  Check(!key(VK_BACK),"Backspace belongs to the application after a decimal point");
+  doc.store->EditFromHost(1,L"");
+  Check(key(VK_OEM_PERIOD) && doc.store->text==L"——……你好_。3.14。","deleting a decimal and retyping gives a Chinese full stop");
+  service.Deactivate();
 }
 void Pump(DWORD milliseconds) {
   const auto end=GetTickCount64()+milliseconds;
@@ -292,6 +354,31 @@ class PipeServer {
     Message message; message.type=MsgType::Phase; message.text=value; message.state_id=++state_id_; Raw(Encode(message));
   }
   void QueryCaret() { Message message; message.type=MsgType::QueryCaret; Raw(Encode(message)); }
+  Message Control() {
+    Deadline timeout;
+    for(;;) {
+      Message message;std::size_t used=0;
+      while(Decode(buffer_,&message,&used)) {
+        buffer_.erase(0,used);
+        if(IsVoiceControl(message.type))return message;
+      }
+      const auto read=ReadPipeChunk(pipe_,nullptr,timeout.event,20);buffer_+=read.bytes;
+      if(read.status!=PipeReadStatus::Data)throw std::runtime_error("voice key control timeout");
+    }
+  }
+  bool NoControl(DWORD milliseconds) {
+    const auto deadline=GetTickCount64()+milliseconds;
+    do {
+      Pump(5);DWORD available=0;
+      if(!PeekNamedPipe(pipe_,nullptr,0,nullptr,&available,nullptr))return false;
+      if(available){Deadline timeout;buffer_+=ReadPipeChunk(pipe_,nullptr,timeout.event,20).bytes;}
+      Message message;std::size_t used=0;
+      while(Decode(buffer_,&message,&used)) {
+        buffer_.erase(0,used);if(IsVoiceControl(message.type))return false;
+      }
+    }while(GetTickCount64()<deadline);
+    return true;
+  }
   Message Caret(int expected_y) {
     const auto deadline=GetTickCount64()+1500;
     do {
@@ -386,6 +473,7 @@ int main(int argc,char** argv) {
     Hr(thread->ActivateEx(&id,TF_TMAE_NOACTIVATETIP | TF_TMAE_NOACTIVATEKEYBOARDLAYOUT | TF_TMAE_SECUREMODE),"activate hidden TSF manager");
     BYTE keyboard[256]{},clear[256]{};
     GetKeyboardState(keyboard);SetKeyboardState(clear);
+    CheckPunctuation(thread,id);
     for(bool remove:{false,true}) {
       Document edited(thread,id);
       Hr(thread->SetFocus(edited.manager),"focus composition editing fixture");
@@ -430,6 +518,12 @@ int main(int argc,char** argv) {
       Check(mode_icon!=nullptr,"input indicator returns a real owned icon");DestroyIcon(mode_icon);
       BSTR tooltip=nullptr;Hr(mode_button->GetTooltipString(&tooltip),"read accessible input indicator tooltip");
       Check(std::wstring(tooltip).find(L"轻音输入法 · Simple Voice")!=std::wstring::npos,"indicator tooltip identifies the product in Chinese and English");SysFreeString(tooltip);
+      ModifiedKey(service,doc.context,VK_CONTROL,VK_OEM_PERIOD);
+      Hr(mode_button->GetTooltipString(&tooltip),"read actual punctuation setting from the taskbar");
+      Check(IndicatorText(mode_button)==L"中" && std::wstring(tooltip).find(L"英文标点")!=std::wstring::npos,
+            "punctuation switch updates the tooltip while the language indicator stays Chinese");
+      SysFreeString(tooltip);
+      ModifiedKey(service,doc.context,VK_CONTROL,VK_OEM_PERIOD);
       Hr(mode_button->OnClick(TF_LBI_CLK_LEFT,{},nullptr),"click system mode button");
       Check(IndicatorText(mode_button)==L"A" && !Key(service,doc.context,'A'),"system mode click changes actual typing behavior to English");
       Hr(mode_button->OnClick(TF_LBI_CLK_LEFT,{},nullptr),"switch back through system mode button");
@@ -561,6 +655,27 @@ int main(int argc,char** argv) {
         mode_button->GetStatus(&mode_status);
         Check(mode_status==0 && (mode_sink.flags&TF_LBI_STATUS)!=0,"voice returning idle notifies Windows to re-enable the mode button without a focus change");
         Check(server.NoCaret(200),"idle voice does not keep polling or publishing caret moves");
+      }
+      {
+        Hr(thread->SetFocus(doc.manager),"focus document for two-step voice confirmation");
+        PipeServer server;
+        for(const auto* phase:{"1","5"}) {
+          server.Phase(phase);Pump(80);
+          Check(Key(service,doc.context,VK_RETURN),"Enter handles listening and limit-stopped recordings");
+          const auto stop=server.Control();Check(stop.type==MsgType::Enter,"first Enter sends one explicit calibration request");
+          server.Phase("2");Pump(80);
+          for(const auto* next:{"2","3"}) {
+            server.Phase(next);Pump(80);BOOL eaten=FALSE;
+            const LPARAM repeat=static_cast<LPARAM>(1)<<30;
+            service.OnKey(doc.context,VK_RETURN,repeat,&eaten,false);Check(eaten,"held Enter is consumed in key preflight");
+            service.OnKey(doc.context,VK_RETURN,repeat,&eaten,true);Check(eaten,"held Enter remains consumed after phase changes");
+            Check(server.NoControl(80),"held Enter never queues or confirms an insertion after calibration");
+          }
+          Check(Key(service,doc.context,VK_RETURN),"a fresh Enter is handled after the preview appears");
+          const auto confirm=server.Control();
+          Check(confirm.type==MsgType::Enter && confirm.state_id>stop.state_id,"fresh confirmation is bound to the new preview state");
+          server.Phase("0");Pump(80);
+        }
       }
       const auto start=GetTickCount64();
       service.Deactivate();

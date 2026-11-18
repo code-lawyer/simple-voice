@@ -41,7 +41,6 @@ add_library(voiceime_core STATIC
   src/worker_recognizer.cpp
   src/model_download.cpp
   src/data_backup.cpp
-  src/vad.cpp
   src/resample.cpp
   src/session.cpp
   third_party/sqlite/sqlite3.c)
@@ -57,7 +56,7 @@ else()
   set_source_files_properties(third_party/sqlite/sqlite3.c PROPERTIES COMPILE_OPTIONS -w)
 endif()
 
-add_executable(voiceime_tests tests/main.cpp tests/utf8_test.cpp tests/lexicon_test.cpp tests/segmenter_test.cpp tests/vad_test.cpp tests/session_test.cpp tests/place_test.cpp tests/ipc_test.cpp tests/tsf_load_test.cpp tests/settings_test.cpp tests/key_route_test.cpp tests/pinyin_controller_test.cpp tests/rime_session_test.cpp tests/candidate_test.cpp)
+add_executable(voiceime_tests tests/main.cpp tests/utf8_test.cpp tests/lexicon_test.cpp tests/segmenter_test.cpp tests/recording_test.cpp tests/session_test.cpp tests/place_test.cpp tests/ipc_test.cpp tests/tsf_load_test.cpp tests/settings_test.cpp tests/key_route_test.cpp tests/pinyin_controller_test.cpp tests/rime_session_test.cpp tests/candidate_test.cpp)
 target_link_libraries(voiceime_tests PRIVATE voiceime_core)
 target_sources(voiceime_tests PRIVATE tests/pipe_io_test.cpp tests/ipc_security_test.cpp tests/concurrency_test.cpp tests/hardening_test.cpp tests/text_safety_test.cpp)
 target_sources(voiceime_tests PRIVATE tests/model_settings_test.cpp)
@@ -208,8 +207,12 @@ add_dependencies(voiceime_model_worker_integration voiceime_model_worker_testhos
 add_test(NAME voiceime.model_worker COMMAND voiceime_model_worker_integration)
 set_tests_properties(voiceime.model_worker PROPERTIES TIMEOUT 30)
 
-foreach(target voiceime_engine voiceime_tsf voiceime_register voiceime_engine_testhost voiceime_tsf_integration)
+foreach(target voiceime_engine voiceime_tsf voiceime_register voiceime_engine_testhost voiceime_tsf_integration voiceime_ui_check)
   target_sources(${target} PRIVATE src/brand.rc)
+endforeach()
+foreach(target voiceime_engine voiceime_engine_testhost voiceime_ui_check)
+  target_sources(${target} PRIVATE src/preferences_view.cpp)
+  target_link_libraries(${target} PRIVATE uxtheme)
 endforeach()
 set_source_files_properties(src/brand.rc PROPERTIES OBJECT_DEPENDS
   "${CMAKE_SOURCE_DIR}/assets/brand/simple-voice.ico;${CMAKE_SOURCE_DIR}/assets/brand/sound-core-white.ico;${CMAKE_SOURCE_DIR}/assets/brand/sound-core-black.ico;${CMAKE_SOURCE_DIR}/assets/brand/mode-chinese.ico;${CMAKE_SOURCE_DIR}/assets/brand/mode-english.ico;${CMAKE_SOURCE_DIR}/assets/brand/mode-chinese-white.ico;${CMAKE_SOURCE_DIR}/assets/brand/mode-english-white.ico")

@@ -67,7 +67,7 @@ std::string Encode(const Message& message) {
   if (!ValidSize(message.type, body.size())) return {};
   if (message.type == MsgType::InsertResult &&
       message.text != "ok" && message.text != "fail") return {};
-  if (message.type == MsgType::Phase && (message.text[0] < '0' || message.text[0] > '4')) return {};
+  if (message.type == MsgType::Phase && (message.text[0] < '0' || message.text[0] > '5')) return {};
   const auto length = static_cast<std::uint32_t>(1 + body.size());
   std::string out(4 + length, '\0');
   WriteLe32(out, 0, length);
@@ -106,7 +106,7 @@ DecodeStatus DecodeFrame(std::string_view bytes, Message* out, std::size_t* cons
   }
   if (message.type == MsgType::InsertResult &&
       message.text != "ok" && message.text != "fail") return DecodeStatus::Invalid;
-  if (message.type == MsgType::Phase && (message.text[0] < '0' || message.text[0] > '4')) return DecodeStatus::Invalid;
+  if (message.type == MsgType::Phase && (message.text[0] < '0' || message.text[0] > '5')) return DecodeStatus::Invalid;
   if (out != nullptr) *out = std::move(message);
   if (consumed != nullptr) *consumed = 4 + static_cast<std::size_t>(length);
   return DecodeStatus::Complete;

@@ -1,6 +1,8 @@
 #include "confirm_box.hpp"
 #include "ui_theme.hpp"
+#include "recording.hpp"
 #include <algorithm>
+#include <cwchar>
 #include <windowsx.h>
 
 namespace {
@@ -75,7 +77,8 @@ void ConfirmBox::Layout() {
   line_height_ = std::max(1L,metrics.tmHeight);
   RECT measure{0, 0, std::max(1, width - pad * 2), 0};
   const std::wstring display = text_.empty() ?
-      (phase_ == Phase::Listening ? L"请开始说话" : phase_ == Phase::Finalizing ? L"正在处理这段语音…" : L"没有识别到语音") : text_;
+      (phase_ == Phase::Listening ? L"请开始说话" : phase_ == Phase::Finalizing ? L"正在处理这段语音…" :
+       phase_ == Phase::Stopped ? L"按 Enter 开始校准本次录音" : L"没有识别到语音") : text_;
   DrawTextW(dc, display.c_str(), static_cast<int>(display.size()), &measure, DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX);
   SelectObject(dc, old); DeleteObject(font); ReleaseDC(hwnd_, dc);
   content_height_ = std::max(UiPx(25, dpi_), static_cast<int>(measure.bottom));
@@ -133,7 +136,14 @@ std::wstring ConfirmBox::StatusText() const {
   if (error_) return L"语音暂不可用";
   if (uncertain_) return L"写入结果待核实";
   if (phase_ == Phase::Committing) return L"正在写入正文";
-  if (phase_ == Phase::Listening) return L"正在听";
+  if (phase_ == Phase::Listening) {
+    wchar_t elapsed[64]{};
+    swprintf(elapsed,64,L"%ls · %02d:%02d / %02d:00",
+        recording_seconds_>=kMaxRecordingSeconds-30?L"即将到时":L"正在听",
+        recording_seconds_/60,recording_seconds_%60,kMaxRecordingSeconds/60);
+    return elapsed;
+  }
+  if (phase_ == Phase::Stopped) return L"已到 10 分钟上限 · 收音已停止";
   if (phase_ == Phase::Finalizing) return L"正在校准文字";
   return text_.empty() ? L"录音已结束" : L"待确认";
 }
@@ -141,10 +151,20 @@ std::wstring ConfirmBox::HintText() const {
   if (error_) return L"右键查看设置 / 编辑预览 · Esc 关闭";
   if (uncertain_) return L"请先核对正文 · 确认未写入后 Enter 重试 · Esc 关闭";
   if (phase_ == Phase::Committing) return L"正在等待应用确认，请稍候";
-  if (phase_ == Phase::Listening) return L"停顿后自动校准 · Enter 停录预览 · Esc 取消";
+  if (phase_ == Phase::Listening) return quiet_capture_ ?
+      L"暂未检测到声音，仍在收音 · Enter 停录并校准 · Esc 取消" :
+      L"Enter 停录并校准 · 停顿不会结束 · Esc 取消";
+  if (phase_ == Phase::Stopped) return L"草稿已保留 · Enter 开始校准 · Esc 取消";
   if (phase_ == Phase::Finalizing) return L"校准后可预览并确认 · Esc 取消";
   if (text_.empty()) return L"按语音快捷键重新开始 · Esc 关闭";
-  return L"Enter 写入 · 右键编辑 / 复制 · Esc 取消";
+  return L"再次按 Enter 确认写入 · 右键编辑 / 复制 · Esc 取消";
+}
+
+void ConfirmBox::SetRecordingProgress(int seconds,bool quiet) {
+  seconds=std::clamp(seconds,0,kMaxRecordingSeconds);
+  if(recording_seconds_==seconds && quiet_capture_==quiet)return;
+  recording_seconds_=seconds;quiet_capture_=quiet;
+  if(hwnd_ && phase_==Phase::Listening && IsWindowVisible(hwnd_))Layout();
 }
 
 void ConfirmBox::SetActivity(std::wstring activity) {
@@ -213,7 +233,8 @@ void ConfirmBox::Paint() {
   SelectObject(dc, font);
   SetTextColor(dc, colors.text);
   const std::wstring display = text_.empty() ?
-      (phase_ == Phase::Listening ? L"请开始说话" : phase_ == Phase::Finalizing ? L"正在处理这段语音…" : L"没有识别到语音") : text_;
+      (phase_ == Phase::Listening ? L"请开始说话" : phase_ == Phase::Finalizing ? L"正在处理这段语音…" :
+       phase_ == Phase::Stopped ? L"按 Enter 开始校准本次录音" : L"没有识别到语音") : text_;
   DrawTextW(dc, display.c_str(), static_cast<int>(display.size()), &body, DT_WORDBREAK | DT_NOPREFIX);
   RestoreDC(dc, saved); DeleteObject(font);
 

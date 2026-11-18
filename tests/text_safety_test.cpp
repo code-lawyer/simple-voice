@@ -26,9 +26,13 @@ void RecognitionFormattingPreservesInformation() {
 void AudioReadinessAndChunkingProtectBoundaries() {
   CaptureHealth no_frames(100); CHECK(!no_frames.received()); CHECK(no_frames.Error(5099)==nullptr); CHECK(no_frames.Error(5100)!=nullptr);
   CaptureHealth silent(0); std::vector<std::int16_t> samples(16000*8,0);
-  silent.Push(samples.data(),samples.size(),8000); CHECK(silent.received()); CHECK(silent.level()==0); CHECK(silent.Error(8000)!=nullptr);
+  silent.Push(samples.data(),samples.size(),8000); CHECK(silent.received()); CHECK(silent.level()==0);
+  CHECK(silent.Error(8000)==nullptr); CHECK(silent.quiet()); CHECK(silent.Error(13000)!=nullptr);
+  CaptureHealth quiet(0);samples.assign(16000*12,20);
+  quiet.Push(samples.data(),samples.size(),12000);CHECK(quiet.Error(12000)==nullptr);CHECK(quiet.quiet());
   CaptureHealth signal(0); std::vector<std::int16_t> voice(320,1500); signal.Push(voice.data(),voice.size(),20);
   CHECK(signal.received()); CHECK(signal.level()>0); CHECK(signal.Error(20)==nullptr); CHECK(signal.Error(5020)!=nullptr);
+  quiet.Push(voice.data(),voice.size(),12020);CHECK(!quiet.quiet());
   samples.assign(16000*60,2000);
   for(int second:{12,24,36,48}) std::fill(samples.begin()+second*16000,samples.begin()+second*16000+1600,0);
   const auto parts=SegmentAudio(samples); std::size_t covered=0;
@@ -52,9 +56,14 @@ void PersonalTermsAreExplicitSearchableAndReversible() {
   lex.SaveTerm("轻音输入法","qingyin",now);
   CHECK(lex.Search("VOICE").size()==1); CHECK(lex.Search("qingyin").size()==1);
   CHECK(lex.Search("%_").empty());
+  lex.Commit("轻音输入法",now+1);
   const auto before=lex.Search("轻音").at(0);
-  CHECK(lex.Delete(before.text)); lex.Commit(before.text,now+1); CHECK(lex.Search("轻音").empty());
-  lex.SaveTerm(before.text,before.pinyin,before.last_commit_unix);
+  Entry removed;
+  CHECK(lex.Delete(before.text,&removed)); lex.Commit(before.text,now+2); CHECK(lex.Search("轻音").empty());
+  CHECK(lex.RestoreDeletedTerm(removed));
+  const auto restored=lex.Search("轻音").at(0);
+  CHECK(restored.pinyin==before.pinyin && restored.count==before.count && before.count==1);
+  CHECK(restored.last_commit_unix==before.last_commit_unix && restored.kind==before.kind);
   CHECK(lex.Count()==2);
   lex.SaveTerm("轻音","qy",now+1,before.text); CHECK(lex.Search("qingyin").empty());
   CHECK(lex.Search("qy").at(0).text=="轻音");

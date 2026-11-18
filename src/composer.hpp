@@ -12,6 +12,7 @@ struct RimeView {
   int highlight = 0;
   std::string commit;
   int caret = 0;  // UTF-8 byte offset into preedit, as supplied by librime.
+  bool ascii_punctuation = false;
 };
 
 class Composer {
@@ -47,6 +48,7 @@ inline KeyDecision PinyinController::Apply(KeyState state, Hotkey hotkey) {
   state.mode = mode();
   state.composing = current.composing;
   state.candidate_count = static_cast<int>(current.page.size());
+  state.ascii_punctuation = current.ascii_punctuation;
   const KeyDecision decision = RouteKey(state, hotkey);
   switch (decision.action) {
     case KeyAction::ToggleMode:

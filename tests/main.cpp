@@ -28,8 +28,9 @@ void FirstSentenceAndSingleCountDoNotReplace();
 void PersonalHomophonesNeverRewriteSpeech();
 void ExpiredEntriesDropOut();
 void CutsANameIntoTokensWithPinyin();
-void SilenceAfterSpeechEndpointsAt500ms();
-void SixtySecondsForcesEndpoint();
+void LongRecordingStopsOnlyAtTheSharedLimit();
+void RecordingLimitClipsPacketsAndRejectsOverflow();
+void RecordingLimitRequiresManualCalibrationAndConfirmation();
 void Resample48kTo16kKeepsDuration();
 void SessionKeepsDraftUntilFinalThenEnterCommitsFinal();
 void EscapeAndRestartDoNotCommit();
@@ -70,6 +71,8 @@ void LetterIsSentToTheComposer();
 void NihaoCommitsTheWeightedWord();
 void LongPinyinProducesHanzi();
 void PeriodCommitsChinesePunct();
+void ChinesePunctuationCommitsFromTheKeyboard();
+void PunctuationChoiceSurvivesLearningChanges();
 void UnknownLettersCommitRawOnEnter();
 void NumpadSelectsThePageEntry();
 void ShiftOneCommitsFullwidthExclamation();
@@ -79,8 +82,6 @@ void EnterPreservesRawPinyin();
 void SelectingACandidateCreatesAUserDb();
 void ClampPullsTheRectInsideTheWorkArea();
 void SettingsHitIsTheRightStrip();
-void InitialSilenceAlsoStopsAtSixtySeconds();
-void InitialSilenceCountsTowardSpeechLimitAndResetClearsIt();
 void ConcurrentLexiconReadsWritesAndDeletesAreSerialized();
 void RimeSessionsSurviveAnotherSessionShuttingDown();
 void RimeRejectsReconfigurationWhileAnotherSessionIsLive();
@@ -116,8 +117,9 @@ int main(int argc, char** argv) {
       {"keyroute.WindowsChordsPassWithoutStartingCompositionOrVoice", WindowsChordsPassWithoutStartingCompositionOrVoice},
       {"settings.FailedReplacePreservesPreviousFile", FailedSettingsReplacePreservesPreviousFile},
       {"settings.SaveReportsMissingDirectory", SettingsSaveReportsMissingDirectory},
-      {"vad.InitialSilenceAlsoStopsAtSixtySeconds", InitialSilenceAlsoStopsAtSixtySeconds},
-      {"vad.InitialSilenceCountsTowardSpeechLimitAndResetClearsIt", InitialSilenceCountsTowardSpeechLimitAndResetClearsIt},
+      {"recording.LongRecordingStopsOnlyAtTheSharedLimit", LongRecordingStopsOnlyAtTheSharedLimit},
+      {"recording.LimitClipsPacketsAndRejectsOverflow", RecordingLimitClipsPacketsAndRejectsOverflow},
+      {"session.RecordingLimitRequiresManualCalibrationAndConfirmation", RecordingLimitRequiresManualCalibrationAndConfirmation},
       {"lexicon.ConcurrentReadsWritesAndDeletesAreSerialized", ConcurrentLexiconReadsWritesAndDeletesAreSerialized},
       {"models.ChoicesPersistAndRejectInvalidSettings", ModelChoicesPersistAndRejectInvalidSettings},
       {"models.SaveFailureKeepsWorkingChoice", ModelSettingsSaveFailureKeepsWorkingChoice},
@@ -144,9 +146,7 @@ int main(int argc, char** argv) {
       {"lexicon.PersonalHomophonesNeverRewriteSpeech", PersonalHomophonesNeverRewriteSpeech},
       {"lexicon.ExpiredEntriesDropOut", ExpiredEntriesDropOut},
       {"segmenter.CutsANameIntoTokensWithPinyin", CutsANameIntoTokensWithPinyin},
-      {"vad.SilenceAfterSpeechEndpointsAt500ms", SilenceAfterSpeechEndpointsAt500ms},
-      {"vad.SixtySecondsForcesEndpoint", SixtySecondsForcesEndpoint},
-      {"vad.Resample48kTo16kKeepsDuration", Resample48kTo16kKeepsDuration},
+      {"audio.Resample48kTo16kKeepsDuration", Resample48kTo16kKeepsDuration},
       {"session.SessionKeepsDraftUntilFinalThenEnterCommitsFinal", SessionKeepsDraftUntilFinalThenEnterCommitsFinal},
       {"session.EscapeAndRestartDoNotCommit", EscapeAndRestartDoNotCommit},
       {"place.MissingCaretGoesToBottomRight", MissingCaretGoesToBottomRight},
@@ -184,6 +184,8 @@ int main(int argc, char** argv) {
       {"rime.NihaoCommitsTheWeightedWord", NihaoCommitsTheWeightedWord},
       {"rime.LongPinyinProducesHanzi", LongPinyinProducesHanzi},
       {"rime.PeriodCommitsChinesePunct", PeriodCommitsChinesePunct},
+      {"rime.ChinesePunctuationCommitsFromTheKeyboard", ChinesePunctuationCommitsFromTheKeyboard},
+      {"rime.PunctuationChoiceSurvivesLearningChanges", PunctuationChoiceSurvivesLearningChanges},
       {"rime.UnknownLettersCommitRawOnEnter", UnknownLettersCommitRawOnEnter},
       {"rime.NumpadSelectsThePageEntry", NumpadSelectsThePageEntry},
       {"rime.ShiftOneCommitsFullwidthExclamation", ShiftOneCommitsFullwidthExclamation},

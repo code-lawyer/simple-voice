@@ -1,4 +1,5 @@
 #include "sherpa_recognizer.hpp"
+#include "recording.hpp"
 
 #include "recognition_text.hpp"
 #include "audio_segments.hpp"
@@ -236,7 +237,7 @@ class SherpaRecognizer : public Recognizer {
   void AcceptAudio(const std::int16_t* samples, std::size_t count) override {
     std::lock_guard<std::mutex> lock(mu_);
     if (!ready_ || finalizing_ || samples == nullptr || count == 0) return;
-    if(count>16000*61 || received_+count>16000*61)throw std::runtime_error("录音已达到长度上限。");
+    if(!FitsRecording(received_,count))throw std::runtime_error("录音已达到 10 分钟上限。");
     received_+=count;
     samples_.insert(samples_.end(), samples, samples + count);
     const std::vector<float> wave = ToFloat(samples, count);

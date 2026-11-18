@@ -10,10 +10,11 @@ int PressedModifiers(const KeyState& state) {
   return modifiers;
 }
 
-// Minus and equals are inside 0xBA-0xC0, but they only page while composing.
-bool IsPunctuation(int vk) {
-  if (vk == 0xBB || vk == 0xBD) return false;
-  return (vk >= 0xBA && vk <= 0xC0) || (vk >= 0xDB && vk <= 0xDF);
+bool IsPunctuation(int vk, bool shift) {
+  // Unshifted minus and equals page a candidate menu and pass through when idle.
+  if (vk == 0xBB || vk == 0xBD) return shift;
+  return (vk >= 0xBA && vk <= 0xC0) || (vk >= 0xDB && vk <= 0xDE) ||
+         (shift && vk >= 0x30 && vk <= 0x39);
 }
 
 }  // namespace
@@ -39,6 +40,9 @@ KeyDecision RouteKey(const KeyState& state, Hotkey hotkey) {
   const bool letter = state.vk >= 0x41 && state.vk <= 0x5A;
   if (state.mode == InputMode::English) return KeyDecision{KeyAction::Pass};
 
+  if (state.ctrl && !state.alt && !state.shift && state.vk == 0xBE)
+    return KeyDecision{state.repeat ? KeyAction::Consume : KeyAction::ToRime};
+
   if (state.composing && state.ctrl && !state.alt && !state.shift && state.vk == 0x2E)
     return KeyDecision{KeyAction::ToRime};
 
@@ -60,8 +64,8 @@ KeyDecision RouteKey(const KeyState& state, Hotkey hotkey) {
         return KeyDecision{index <= state.candidate_count ? KeyAction::ToRime : KeyAction::Pass};
       }
     }
-    if (IsPunctuation(state.vk)) return KeyDecision{KeyAction::ToRime};
-    if (state.shift && state.vk >= 0x30 && state.vk <= 0x39) return KeyDecision{KeyAction::ToRime};
+    if ((state.composing || !state.ascii_punctuation) && IsPunctuation(state.vk, state.shift))
+      return KeyDecision{KeyAction::ToRime};
   }
 
   return KeyDecision{KeyAction::Pass};
