@@ -247,13 +247,90 @@ class Host {
   std::wstring id_;
 };
 
+void ModelIdlePreference(const std::filesystem::path& host,const std::filesystem::path& output) {
+  const auto data=output/("model-idle-"+std::to_string(GetTickCount64()));
+  const auto file=(data/"speech-models.ini").wstring();
+  constexpr WPARAM idle_timeout=5*60*1000;
+  auto open_model_page=[](const Host& engine) {
+    SendMessageW(engine.Window(),WM_COMMAND,3,0);
+    const auto settings=engine.Window(L"SimpleVoicePreferences");
+    Require(settings!=nullptr,"native preferences open for the idle-release test");
+    ShowModelPage(settings);
+    return settings;
+  };
+  {
+    Host engine(host,data,L"normal"); Client client(engine.Pipe()); client.Phase("0");
+    auto settings=open_model_page(engine);
+    const auto idle=preference::Field(settings,preference::ModelIdle);
+    Require(SendMessageW(idle,BM_GETCHECK,0,0)==BST_CHECKED,"idle release starts enabled by default");
+    const auto choice=preference::Field(settings,preference::ModelChoice);
+    SendMessageW(choice,CB_SETCURSEL,static_cast<int>(SpeechModel::SenseVoice),0);
+    SendMessageW(idle,BM_CLICK,0,0);
+    Require(SendMessageW(idle,BM_GETCHECK,0,0)==BST_UNCHECKED,"clicking the native idle checkbox turns it off");
+    SendMessageW(settings,WM_CLOSE,0,0);
+    settings=open_model_page(engine);
+    Require(SendMessageW(preference::Field(settings,preference::ModelIdle),BM_GETCHECK,0,0)==BST_UNCHECKED,
+            "idle release stays off after closing and reopening preferences without activating a model");
+    const auto saved=LoadModelSettings(file);
+    Require(saved.idle_minutes==0 && saved.model==SpeechModel::Qwen3,
+            "turning off idle release saves the preference without applying the browsed model");
+    SendMessageW(engine.Window(),WM_APP+102,idle_timeout,0);
+    client.Send(MsgType::StartListen);
+    Require(client.Wait(MsgType::Phase).text=="1","with idle release off, recording starts without preparing the model again");
+    client.Send(MsgType::Cancel);client.Phase("0");engine.Stop();
+  }
+  {
+    Host engine(host,data,L"normal"); Client client(engine.Pipe()); client.Phase("0");
+    const auto settings=open_model_page(engine);
+    const auto idle=preference::Field(settings,preference::ModelIdle);
+    Require(SendMessageW(idle,BM_GETCHECK,0,0)==BST_UNCHECKED,"idle release stays off after restarting the engine");
+    HANDLE held=CreateFileW(file.c_str(),GENERIC_READ,FILE_SHARE_READ,nullptr,OPEN_EXISTING,0,nullptr);
+    Require(held!=INVALID_HANDLE_VALUE,"fixture prevents replacement of the saved model settings");
+    SendMessageW(idle,BM_CLICK,0,0);
+    CloseHandle(held);
+    wchar_t feedback[128]{};
+    SendMessageW(preference::Field(settings,preference::StatusLine),WM_GETTEXT,128,reinterpret_cast<LPARAM>(feedback));
+    Require(SendMessageW(idle,BM_GETCHECK,0,0)==BST_UNCHECKED && LoadModelSettings(file).idle_minutes==0 &&
+            std::wstring(feedback).find(L"保存失败")!=std::wstring::npos,
+            "a failed save restores the checkbox and reports the failure");
+    SendMessageW(idle,BM_CLICK,0,0);
+    Require(LoadModelSettings(file).idle_minutes==5,"re-enabling idle release restores the five-minute timeout");
+    SendMessageW(engine.Window(),WM_APP+102,idle_timeout,0);
+    client.Send(MsgType::StartListen);
+    Require(client.Wait(MsgType::Phase).text=="3","with idle release on, five idle minutes trigger preparation on the next recording");
+    client.Phase("1");client.Send(MsgType::Cancel);client.Phase("0");engine.Stop();
+  }
+  {
+    Host engine(host,data,L"normal"); Client client(engine.Pipe()); client.Phase("0");
+    client.Send(MsgType::StartListen);client.Phase("1");
+    const auto settings=open_model_page(engine);
+    SendMessageW(preference::Field(settings,preference::ModelChoice),CB_SETCURSEL,static_cast<int>(SpeechModel::SenseVoice),0);
+    SendMessageW(preference::Field(settings,preference::ModelUse),BM_CLICK,0,0);
+    Require(IsWindowEnabled(preference::Field(settings,preference::ModelCancel)),"model change is queued during recording");
+    SendMessageW(preference::Field(settings,preference::ModelIdle),BM_CLICK,0,0);
+    const auto saved=LoadModelSettings(file);
+    Require(saved.model==SpeechModel::Qwen3 && saved.idle_minutes==0,"idle release can be saved independently of a queued model change");
+    client.Send(MsgType::Cancel);client.Phase("0");
+    client.Send(MsgType::StartListen);client.Phase("1");
+    const auto activated=LoadModelSettings(file);
+    Require(activated.model==SpeechModel::SenseVoice && activated.idle_minutes==0,
+            "completing the queued model change retains the last saved idle preference");
+    client.Send(MsgType::Cancel);client.Phase("0");engine.Stop();
+  }
+}
+
 void DownloadFixture(const std::filesystem::path& program,bool complete) {
   std::filesystem::create_directories(program/"tools");
   std::ofstream script(program/"tools/download_models.ps1");
   script<<R"PS(param([string]$Root,[string]$OnlyModel,[string]$StatusFile)
 $ErrorActionPreference='Stop'
 [IO.File]::AppendAllText((Join-Path $Root 'download-count.txt'),'1')
-Start-Sleep -Milliseconds 250
+$gate=Join-Path $Root 'allow-download-completion'
+$wait=[Diagnostics.Stopwatch]::StartNew()
+while(!(Test-Path -LiteralPath $gate)) {
+  if($wait.ElapsedMilliseconds -ge 8000) { throw 'Timed out waiting for the test to release the download.' }
+  Start-Sleep -Milliseconds 20
+}
 )PS";
   if(complete)script<<R"PS($files=@('streaming-bilingual/encoder-epoch-99-avg-1.int8.onnx',
 'streaming-bilingual/decoder-epoch-99-avg-1.onnx','streaming-bilingual/joiner-epoch-99-avg-1.int8.onnx',
@@ -322,6 +399,10 @@ int main(int argc, char** argv) {
     GetModuleFileNameW(nullptr, own, MAX_PATH);
     const auto host = std::filesystem::path(own).parent_path() / "voiceime_engine_testhost.exe";
     const auto output = std::filesystem::absolute(argc > 1 ? argv[1] : "build/engine-integration");
+    if(argc<3 || std::string(argv[2])=="--model-idle-only") {
+      ModelIdlePreference(host,output);
+      if(argc>=3) {std::printf("%d idle-release checks passed\n",checks);return 0;}
+    }
     if(argc<3 || std::string(argv[2])=="--manual-stop-only") {
       for(const auto* fixture:{L"speech-end",L"soft-speech",L"long-speech",L"silence"}) {
         const auto data=output/fixture;
@@ -808,22 +889,29 @@ int main(int argc, char** argv) {
       SendMessageW(engine.Window(),WM_COMMAND,3,0);const auto settings=engine.Window(L"SimpleVoicePreferences");
       Require(settings!=nullptr,"download request opens the real preferences flow");
       ShowModelPage(settings);
-      SendMessageW(preference::Field(settings,68),BM_SETCHECK,BST_UNCHECKED,0);
       Require(SendMessageW(preference::Field(settings,69),WM_SETTEXT,0,reinterpret_cast<LPARAM>(L"审查专名"))!=0,"download request accepts explicit name hints");
       wchar_t hints[128]{};SendMessageW(preference::Field(settings,69),WM_GETTEXT,128,reinterpret_cast<LPARAM>(hints));
       Require(std::wstring(hints)==L"审查专名","download fixture reads back the actual edit control contents");
       SendMessageW(settings,WM_COMMAND,63,0);
       Require(!IsWindowEnabled(preference::Field(settings,63)),"model activation is disabled while its request is in flight");
+      const auto model_settings=(data/"speech-models.ini").wstring();
+      if(complete) {
+        SendMessageW(preference::Field(settings,preference::ModelIdle),BM_CLICK,0,0);
+        Require(LoadModelSettings(model_settings).idle_minutes==0,"idle preference reaches disk while download is still in flight");
+      }
       // Synthetic WM_COMMAND intentionally bypasses disabled controls to verify
       // the engine independently rejects competing activation requests.
       SendMessageW(preference::Field(settings,60),CB_SETCURSEL,1,0);SendMessageW(settings,WM_COMMAND,63,0);
+      std::ofstream gate(data/"allow-download-completion");
+      Require(gate.is_open(),"fixture releases the download after the competing request");
+      gate.close();
       const auto deadline=GetTickCount64()+8000;
       while(!IsWindowEnabled(preference::Field(settings,63)) && GetTickCount64()<deadline) {Sleep(20);SendMessageW(settings,WM_TIMER,1,0);}
       Require(IsWindowEnabled(preference::Field(settings,63)),"download validation completes without leaving a busy settings page");
-      const auto selected=LoadModelSettings((data/"speech-models.ini").wstring());
+      const auto selected=LoadModelSettings(model_settings);
       if(complete) {
         Require(selected.model==SpeechModel::Qwen3 && selected.idle_minutes==0 && selected.hotwords=="审查专名",
-            "automatic download retains the full requested settings and rejects a competing activation");
+            "automatic download keeps the latest idle preference and requested hints, and rejects a competing activation");
         Require(!selected.directories[0].empty(),"downloaded preset resolves from the isolated data directory");
       } else {
         Sleep(700);std::ifstream count(data/"download-count.txt");std::string starts;std::getline(count,starts);

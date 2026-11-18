@@ -360,6 +360,7 @@ int main(int argc, char** argv) {
     std::wstring model_result;
     const std::wstring failure=L"未能启用，请检查目录并重试。\r\n"+std::wstring(600,L'长');
     actions.models=[&]{return selected;};
+    actions.save_model_idle_release=[&](bool enabled){selected.idle_minutes=enabled?ModelSettings::kDefaultIdleMinutes:0;return true;};
     actions.model_status=[&](SpeechModel model)->std::wstring {
       ++model_polls;
       if(model==last_requested.model && !model_result.empty()) return model_result;

@@ -25,6 +25,7 @@ struct PreferencesActions {
   std::function<std::string(const std::string&)> input_code;
   std::function<bool()> terms_changed;
   std::function<ModelSettings()> models;
+  std::function<bool(bool)> save_model_idle_release;
   std::function<std::wstring(SpeechModel)> model_status;
   std::function<ModelActionResult(const ModelSettings&)> use_model;
   std::function<ModelTaskState()> model_task;

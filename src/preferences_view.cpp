@@ -267,7 +267,8 @@ void PreferencesWindow::BuildForm(const ModelSettings& models) {
   next(10); edit(ModelState,0,0,61,true);
   next(10); button(ModelUse,L"启用所选模型(&A)",0,149,BS_DEFPUSHBUTTON); button(ModelCancel,L"取消任务",159,91);
   divider(0);
-  next(12); auto idle=button(ModelIdle,L"闲置 5 分钟后释放模型",0,0,BS_AUTOCHECKBOX);
+  const auto idle_label=L"闲置 "+std::to_wstring(ModelSettings::kDefaultIdleMinutes)+L" 分钟后释放模型";
+  next(12); auto idle=button(ModelIdle,idle_label.c_str(),0,0,BS_AUTOCHECKBOX);
   SendMessageW(idle,BM_SETCHECK,models.idle_minutes?BST_CHECKED:BST_UNCHECKED,0);
   next(12); label(113,L"常用专名(&H)");
   next(6); auto hints=edit(ModelHints,0,0,28); SetWindowTextW(hints,Utf8ToWide(models.hotwords).c_str());

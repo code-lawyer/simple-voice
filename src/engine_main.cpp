@@ -289,6 +289,7 @@ class Engine {
   void ShowMenu(HWND hwnd);
   void OpenPreferences(int page=0);
   void BeginPrepare(const ModelSettings* requested=nullptr,bool activate=false);
+  void ReleaseIdleModel(ULONGLONG now);
   std::string ModelRoot(const ModelSettings& settings) const;
   ModelSettings ModelChoice(ModelSettings settings) const;
   ModelActionResult UseModel(const ModelSettings& settings,bool allow_download=true);
@@ -819,6 +820,13 @@ void Engine::OpenPreferences(int page) {
   actions.hotkey_label=[this]{return HotkeyLabel(settings_.hotkey);};
   actions.retry_models=[this]{BeginPrepare();};
   actions.models=[this]{return models_;};
+  actions.save_model_idle_release=[this](bool enabled) {
+    auto next=models_;
+    next.idle_minutes=enabled?ModelSettings::kDefaultIdleMinutes:0;
+    if(!SaveModelSettings(model_settings_path_,next))return false;
+    models_.idle_minutes=next.idle_minutes;
+    return true;
+  };
   actions.model_status=[this](SpeechModel model){return ModelStatus(model);};
   actions.model_task=[this]{return preparing_ || downloading_?ModelTaskState::Running:
       deferred_models_?ModelTaskState::Queued:ModelTaskState::Idle;};
@@ -933,7 +941,9 @@ std::wstring Engine::PracticeStatus() const {
 }
 ModelActionResult Engine::UseModel(const ModelSettings& choice,bool allow_download) {
   if(preparing_ || downloading_)return {L"已有模型任务正在进行，请等待或取消任务。"};
-  const auto next=ModelChoice(choice);ModelFiles files;std::string error;
+  auto next=ModelChoice(choice);
+  next.idle_minutes=models_.idle_minutes;
+  ModelFiles files;std::string error;
   bool require_files=!fake_;
 #ifdef VOICEIME_TESTING
   require_files|=!TestEnvironment(L"VOICEIME_TEST_DOWNLOAD_PROGRAM").empty();
@@ -1013,6 +1023,13 @@ void Engine::BeginPrepare(const ModelSettings* requested,bool activate) {
     catch(...) { prepared_.reset(); }
     PostMessageW(box_.hwnd(),kPreparedMessage,0,0);
   });
+}
+void Engine::ReleaseIdleModel(ULONGLONG now) {
+  if(models_.idle_minutes>0 && recognizer_ && !preparing_ &&
+     !capture_thread_.joinable() && !finalize_thread_.joinable() && session_.phase()==Phase::Idle &&
+     now-model_last_used_>=static_cast<ULONGLONG>(models_.idle_minutes)*60000) {
+    recognizer_.reset();model_notice_=L"闲置模型已释放；下次录音会重新准备。";
+  }
 }
 bool Engine::ForegroundClientAllowed(ClientId sender) const {
   DWORD foreground = ForegroundProcessId();
@@ -1182,6 +1199,7 @@ LRESULT Engine::OnMessage(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
 #ifdef VOICEIME_TESTING
   if (message == WM_APP + 100) { test_foreground_ = static_cast<DWORD>(wparam); return 0; }
   if (message == WM_APP + 101) return RestoreBackup(data_path_+L"\\restore-fixture").find(L"词语与设置已恢复")==0;
+  if (message == WM_APP + 102) { ReleaseIdleModel(model_last_used_+wparam); return 0; }
 #endif
   static const UINT taskbar_created=RegisterWindowMessageW(L"TaskbarCreated");
   if(taskbar_created && message==taskbar_created) { tray_added_=false;AddTray();return 0; }
@@ -1198,11 +1216,7 @@ LRESULT Engine::OnMessage(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
   if (message == WM_TIMER && wparam == kInsertTimer) { LoseInsertConfirmation(); return 0; }
   if (message == WM_TIMER && wparam == kAnchorTimer) { UpdateBox(); return 0; }
   if(message==WM_TIMER && wparam==kModelIdleTimer) {
-    if(!fake_ && models_.idle_minutes>0 && recognizer_ && !preparing_ &&
-       !capture_thread_.joinable() && !finalize_thread_.joinable() && session_.phase()==Phase::Idle &&
-       GetTickCount64()-model_last_used_>=static_cast<ULONGLONG>(models_.idle_minutes)*60000) {
-      recognizer_.reset();model_notice_=L"闲置模型已释放；下次录音会重新准备。";
-    }
+    if(!fake_) ReleaseIdleModel(GetTickCount64());
     return 0;
   }
   if (message == kPipeMessage) {
@@ -1238,6 +1252,8 @@ LRESULT Engine::OnMessage(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
     preparing_=false;
     last_load_ms_=GetTickCount64()-prepare_started_;
     if(prepare_cancel_) {prepared_.reset();prepared_error_="模型准备已取消，原方案保留。";}
+    // Model preparation can finish after the idle preference has changed.
+    loading_models_.idle_minutes=models_.idle_minutes;
     if(prepared_ && activating_model_ && !SaveModelSettings(model_settings_path_,loading_models_)) {
       prepared_.reset();prepared_error_="模型已验证，但设置保存失败。原方案保留，请检查数据目录后重试。";
     }

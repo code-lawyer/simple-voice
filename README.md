@@ -12,8 +12,8 @@ Windows 本地拼音与中英语音输入法。干净的界面，明确的确认
 
 </div>
 
-**v0.2.0-rc.8** 是 **Windows Intel/AMD x64** 发布候选。
-[本轮变化](docs/releases/v0.2.0-rc.8.md) · [验证记录](docs/releases/v0.2.0-rc.8-validation.md)。
+**v0.2.0-rc.9** 是 **Windows Intel/AMD x64** 发布候选，修复了模型闲置释放开关的保存问题。
+[本轮变化](docs/releases/v0.2.0-rc.9.md) · [验证记录](docs/releases/v0.2.0-rc.9-validation.md)。
 
 切换到轻音输入法后，Windows 任务栏会显示「声核」标识，旁边的「中」或「A」表示当前输入模式。点击模式图标可以切换中英文。[任务栏实拍](docs/design/brand/windows-taskbar.png)
 

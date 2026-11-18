@@ -9,9 +9,10 @@ const wchar_t* SpeechModelLabel(SpeechModel model);
 const wchar_t* SpeechModelDescription(SpeechModel model);
 const char* SpeechModelFolder(SpeechModel model);
 struct ModelSettings {
+  static constexpr int kDefaultIdleMinutes = 5;
   SpeechModel model = SpeechModel::Qwen3;
   std::array<std::wstring,4> directories{};
-  int idle_minutes = 5; // 0 keeps the model warm.
+  int idle_minutes = kDefaultIdleMinutes; // 0 keeps the model warm.
   std::string hotwords; // Explicit hints; only Qwen supports them here.
 };
 bool ParseModelSettings(const std::string& text, ModelSettings& result);

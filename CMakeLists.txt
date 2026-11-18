@@ -160,7 +160,7 @@ target_link_libraries(voiceime_engine_integration PRIVATE voiceime_core)
 voiceime_copy_runtime(voiceime_engine_integration)
 add_dependencies(voiceime_engine_integration voiceime_engine_testhost)
 add_test(NAME voiceime.engine COMMAND voiceime_engine_integration "${CMAKE_BINARY_DIR}/engine-integration")
-set_tests_properties(voiceime.engine PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" TIMEOUT 60)
+set_tests_properties(voiceime.engine PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" TIMEOUT 90)
 
 add_executable(voiceime_tsf_integration tools/tsf_integration.cpp src/rime_session.cpp src/candidate_bar.cpp)
 target_sources(voiceime_tsf_integration PRIVATE src/input_indicator.cpp)

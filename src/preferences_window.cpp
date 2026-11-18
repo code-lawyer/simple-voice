@@ -108,7 +108,6 @@ ModelSettings PreferencesWindow::SelectedModel() const {
   // selection must not poison a later activation from this still-open window.
   auto next=actions_.models?actions_.models():ModelSettings{};
   next.model=static_cast<SpeechModel>(std::clamp<int>(static_cast<int>(SendMessageW(Field(hwnd_,ModelChoice),CB_GETCURSEL,0,0)),0,3));
-  next.idle_minutes=SendMessageW(Field(hwnd_,ModelIdle),BM_GETCHECK,0,0)==BST_CHECKED?5:0;
   next.hotwords=WideToUtf8(Text(ModelHints));return next;
 }
 void PreferencesWindow::Models() {
@@ -117,7 +116,7 @@ void PreferencesWindow::Models() {
   const bool busy=task==ModelTaskState::Running;
   const auto focus=GetFocus();
   Set(ModelDescription,SpeechModelDescription(selected.model));
-  for(int id:{ModelChoice,ModelUse,ModelLocal,ModelDefault,ModelIdle})EnableWindow(Field(hwnd_,id),!busy);
+  for(int id:{ModelChoice,ModelUse,ModelLocal,ModelDefault})EnableWindow(Field(hwnd_,id),!busy);
   EnableWindow(Field(hwnd_,ModelCancel),task!=ModelTaskState::Idle);
   EnableWindow(Field(hwnd_,ModelHints),!busy && selected.model==SpeechModel::Qwen3);
   if(page_==4 && focus && IsChild(hwnd_,focus) && !IsWindowEnabled(focus))
@@ -240,6 +239,18 @@ void PreferencesWindow::Command(int id,int notification) {
     if(actions_.practice_status)Set(PracticeText,actions_.practice_status());return;
   }
   if(id==ModelChoice && notification==CBN_SELCHANGE) {Models();return;}
+  if(id==ModelIdle && notification==BN_CLICKED) {
+    const auto checkbox=Field(hwnd_,ModelIdle);
+    const bool enabled=SendMessageW(checkbox,BM_GETCHECK,0,0)==BST_CHECKED;
+    if(actions_.save_model_idle_release && actions_.save_model_idle_release(enabled)) {
+      Status(enabled?L"已开启模型闲置释放。":L"已关闭模型闲置释放。");
+    } else {
+      const auto saved=actions_.models?actions_.models():ModelSettings{};
+      SendMessageW(checkbox,BM_SETCHECK,saved.idle_minutes>0?BST_CHECKED:BST_UNCHECKED,0);
+      Status(L"闲置释放设置保存失败。请检查本地数据目录后重试。");
+    }
+    return;
+  }
   if(id==ModelCancel) {
     pending_model_feedback_.reset();
     if(actions_.cancel_model_operation) actions_.cancel_model_operation();
