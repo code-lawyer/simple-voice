@@ -12,10 +12,12 @@ Windows 本地拼音与中英语音输入法。干净的界面，明确的确认
 
 </div>
 
-**v0.2.0-rc.9** 是 **Windows Intel/AMD x64** 发布候选，修复了模型闲置释放开关的保存问题。
-[本轮变化](docs/releases/v0.2.0-rc.9.md) · [验证记录](docs/releases/v0.2.0-rc.9-validation.md)。
+**v0.2.0-rc.11** 是 **Windows Intel/AMD x64** 本机试用版。切入轻音后可后台准备模型。连续口述时会提前显示句中草稿，出现自然停顿时 Qwen3-ASR 会提前校准，停录后在浮层给出定稿。
+[本轮变化](docs/releases/v0.2.0-rc.11.md) · [本机实测](docs/releases/v0.2.0-rc.11-validation.md)。
 
 切换到轻音输入法后，Windows 任务栏会显示「声核」标识，旁边的「中」或「A」表示当前输入模式。点击模式图标可以切换中英文。[任务栏实拍](docs/design/brand/windows-taskbar.png)
+
+「设置 → 本地模型」可调整切入时预加载及闲置释放。模型准备期间按语音键也会立即开始收音。[开发进度与施工方案](docs/plans/voice-input-optimization.md)
 
 ## 能做什么
 
@@ -100,6 +102,7 @@ CPU 即可运行。中英模型在本机集成样本测试中峰值工作集约 
 | `appearance.json` | 浮层皮肤 |
 | `preferences.ini` | 学习开关、设备与引导状态；兼容保留旧版停顿及模型迁移字段，停顿字段不再控制收音 |
 | `speech-models.ini` | 当前语音型号、已有模型目录、闲置释放时间与显式专名提示 |
+| `speech-startup.ini` | 切换到轻音时预加载语音模型的开关（开发版），默认开启 |
 | `models\` | 从设置页下载的本地模型；安装目录中已有的模型也会复用 |
 | `backups\` | 恢复前自动保存的个人词语与输入设置备份 |
 | `lexicon.sqlite` | 显式个人词语及兼容保留的旧记录 |

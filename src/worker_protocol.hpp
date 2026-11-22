@@ -8,12 +8,19 @@
 
 namespace model_worker {
 constexpr std::uint32_t kMagic=0x31564d53, kLimit=2*1024*1024;
-enum Operation : std::uint32_t { Init=1, Audio=2, Reset=3, Finalize=4, Error=0xffffffffu };
+enum Operation : std::uint32_t { Init=1, Audio=2, Reset=3, Finalize=4, InitDraft=5, Error=0xffffffffu };
 struct Header { std::uint32_t magic=kMagic, operation=0, size=0; };
-inline bool Write(HANDLE pipe,const void* bytes,size_t size) {
+inline bool Write(HANDLE pipe,const void* bytes,size_t size,HANDLE readable=nullptr) {
   const auto* p=static_cast<const char*>(bytes);
-  while(size) { DWORD sent=0; if(!WriteFile(pipe,p,static_cast<DWORD>((std::min)(size,size_t(65536))),&sent,nullptr)||!sent)return false;
-    p+=sent; size-=sent; }
+  while (size) {
+    // Smaller than either pipe buffer, including when a header is still pending.
+    const auto chunk = static_cast<DWORD>((std::min)(size, size_t(32768)));
+    DWORD sent = 0;
+    if (!WriteFile(pipe, p, chunk, &sent, nullptr) || !sent) return false;
+    if (readable && !SetEvent(readable)) return false;
+    p += sent;
+    size -= sent;
+  }
   return true;
 }
 inline bool Read(HANDLE pipe,void* bytes,size_t size) {
@@ -21,10 +28,10 @@ inline bool Read(HANDLE pipe,void* bytes,size_t size) {
   while(size) { DWORD got=0; if(!ReadFile(pipe,p,static_cast<DWORD>(size),&got,nullptr)||!got)return false; p+=got;size-=got; }
   return true;
 }
-inline bool Packet(HANDLE pipe,std::uint32_t operation,const std::string& bytes) {
+inline bool Packet(HANDLE pipe,std::uint32_t operation,const std::string& bytes,HANDLE readable=nullptr) {
   if(bytes.size()>kLimit)return false;
   Header header{kMagic,operation,static_cast<std::uint32_t>(bytes.size())};
-  return Write(pipe,&header,sizeof(header)) && Write(pipe,bytes.data(),bytes.size());
+  return Write(pipe,&header,sizeof(header),readable) && Write(pipe,bytes.data(),bytes.size(),readable);
 }
 inline std::string Fields(const std::vector<std::string>& fields) {
   std::string bytes;

@@ -267,8 +267,10 @@ void PreferencesWindow::BuildForm(const ModelSettings& models) {
   next(10); edit(ModelState,0,0,61,true);
   next(10); button(ModelUse,L"启用所选模型(&A)",0,149,BS_DEFPUSHBUTTON); button(ModelCancel,L"取消任务",159,91);
   divider(0);
+  next(12); auto preload=button(ModelPreload,L"切换到轻音时预加载语音模型",0,0,BS_AUTOCHECKBOX);
+  SendMessageW(preload,BM_SETCHECK,actions_.preload_on_activate?BST_CHECKED:BST_UNCHECKED,0);
   const auto idle_label=L"闲置 "+std::to_wstring(ModelSettings::kDefaultIdleMinutes)+L" 分钟后释放模型";
-  next(12); auto idle=button(ModelIdle,idle_label.c_str(),0,0,BS_AUTOCHECKBOX);
+  next(4); auto idle=button(ModelIdle,idle_label.c_str(),0,0,BS_AUTOCHECKBOX);
   SendMessageW(idle,BM_SETCHECK,models.idle_minutes?BST_CHECKED:BST_UNCHECKED,0);
   next(12); label(113,L"常用专名(&H)");
   next(6); auto hints=edit(ModelHints,0,0,28); SetWindowTextW(hints,Utf8ToWide(models.hotwords).c_str());
@@ -824,7 +826,10 @@ LRESULT CALLBACK PreferencesWindow::Proc(HWND hwnd,UINT message,WPARAM wp,LPARAM
     }
     case WM_ERASEBKGND: self->PaintFrame(reinterpret_cast<HDC>(wp)); return 1;
     case WM_CLOSE: self->Close(); return 0;
-    case WM_NCDESTROY: self->hwnd_=nullptr; break;
+    case WM_NCDESTROY:
+      self->actions_.input_code = {};
+      self->hwnd_=nullptr;
+      break;
   }
   return DefWindowProcW(hwnd,message,wp,lp);
 }

@@ -14,16 +14,21 @@ class WorkerRecognizer final:public Recognizer {
  public:
   ~WorkerRecognizer() override {
     Cancel(); if(process_) WaitForSingleObject(process_,3000);
-    Close(input_);Close(output_);Close(process_);Close(job_);
+    Close(input_);Close(output_);Close(reply_readable_);Close(final_ready_);Close(process_);Close(job_);
   }
   bool Start(const std::wstring& executable,const std::string& root,const ModelSettings& settings,
-             unsigned timeout,std::string& error,const std::atomic<bool>* cancel_loading) {
+             unsigned timeout,std::string& error,const std::atomic<bool>* cancel_loading,ModelStartup startup_mode) {
     cancel_loading_=cancel_loading;
     SECURITY_ATTRIBUTES security{sizeof(security),nullptr,TRUE};
-    HANDLE child_in=nullptr,child_out=nullptr,discard=nullptr,thread=nullptr;
+    HANDLE child_in=nullptr,child_out=nullptr,child_signal=nullptr,child_final=nullptr,discard=nullptr,thread=nullptr;
     std::vector<unsigned char> attributes;
-    auto cleanup=[&] { Close(child_in);Close(child_out);Close(discard);Close(thread); };
-    if(!CreatePipe(&child_in,&input_,&security,65536) || !CreatePipe(&output_,&child_out,&security,65536)) {
+    auto cleanup=[&] { Close(child_in);Close(child_out);Close(child_signal);Close(child_final);Close(discard);Close(thread); };
+    reply_readable_ = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    final_ready_=CreateEventW(nullptr,TRUE,FALSE,nullptr);
+    if (!final_ready_ || !DuplicateHandle(GetCurrentProcess(),final_ready_,GetCurrentProcess(),&child_final,
+        EVENT_MODIFY_STATE,TRUE,0) || !reply_readable_ || !DuplicateHandle(GetCurrentProcess(), reply_readable_, GetCurrentProcess(),
+        &child_signal, EVENT_MODIFY_STATE, TRUE, 0) ||
+        !CreatePipe(&child_in,&input_,&security,65536) || !CreatePipe(&output_,&child_out,&security,65536)) {
       cleanup();error="无法建立模型进程通信。";return false;
     }
     SetHandleInformation(input_,HANDLE_FLAG_INHERIT,0);SetHandleInformation(output_,HANDLE_FLAG_INHERIT,0);
@@ -36,13 +41,15 @@ class WorkerRecognizer final:public Recognizer {
     SIZE_T bytes=0;InitializeProcThreadAttributeList(nullptr,1,0,&bytes);attributes.resize(bytes);
     auto* list=reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(attributes.data());
     if(!InitializeProcThreadAttributeList(list,1,0,&bytes)) {cleanup();error="无法准备模型进程。";return false;}
-    HANDLE handles[]={child_in,child_out,discard};
+    HANDLE handles[]={child_in,child_out,discard,child_signal,child_final};
     bool ok=UpdateProcThreadAttribute(list,0,PROC_THREAD_ATTRIBUTE_HANDLE_LIST,handles,sizeof(handles),nullptr,nullptr)!=FALSE;
     STARTUPINFOEXW startup{};startup.StartupInfo.cb=sizeof(startup);startup.lpAttributeList=list;
     startup.StartupInfo.dwFlags=STARTF_USESTDHANDLES;startup.StartupInfo.hStdInput=discard;
     startup.StartupInfo.hStdOutput=discard;startup.StartupInfo.hStdError=discard;
     std::wstring command=L"\""+executable+L"\" "+std::to_wstring(reinterpret_cast<std::uintptr_t>(child_in))+
-      L" "+std::to_wstring(reinterpret_cast<std::uintptr_t>(child_out));
+      L" "+std::to_wstring(reinterpret_cast<std::uintptr_t>(child_out))+
+      L" "+std::to_wstring(reinterpret_cast<std::uintptr_t>(child_signal))+
+      L" "+std::to_wstring(reinterpret_cast<std::uintptr_t>(child_final));
     const auto directory=std::filesystem::path(executable).parent_path().wstring();
     PROCESS_INFORMATION process{};
     if(ok)ok=CreateProcessW(executable.c_str(),command.data(),nullptr,nullptr,TRUE,
@@ -55,7 +62,8 @@ class WorkerRecognizer final:public Recognizer {
     }
     ResumeThread(thread);cleanup();
     try {
-      Request(model_worker::Init,model_worker::Fields({root,SerializeModelSettings(settings)}),timeout);
+      const auto operation=startup_mode==ModelStartup::DraftFirst?model_worker::InitDraft:model_worker::Init;
+      Request(operation,model_worker::Fields({root,SerializeModelSettings(settings)}),timeout);
       cancel_loading_=nullptr;ready_=true;return true;
     } catch(const std::exception& e) {error=e.what();return false;}
   }
@@ -63,12 +71,14 @@ class WorkerRecognizer final:public Recognizer {
   bool Healthy() const override {
     return ready_ && !cancelled_ && process_ && WaitForSingleObject(process_,0)==WAIT_TIMEOUT;
   }
+  bool FinalReady() const override {return Healthy() && WaitForSingleObject(final_ready_,0)==WAIT_OBJECT_0;}
   std::size_t PeakMemoryBytes() const override {
     PROCESS_MEMORY_COUNTERS memory{};
     return process_ && GetProcessMemoryInfo(process_,&memory,sizeof(memory))?memory.PeakWorkingSetSize:0;
   }
-  void AcceptAudio(const std::int16_t* samples,std::size_t count) override {
-    if(!samples || !count)return;
+  bool AcceptAudio(const std::int16_t* samples,std::size_t count) override {
+    if(!samples || !count)return false;
+    bool changed=false;
     try {
       std::lock_guard<std::mutex> rpc_lock(rpc_mutex_);
       if(count>model_worker::kLimit/sizeof(*samples))throw std::runtime_error("音频片段过大。请重新录音。");
@@ -77,12 +87,16 @@ class WorkerRecognizer final:public Recognizer {
       while(count) {
         const auto chunk=(std::min)(count,size_t(16000));
         const auto response=Request(model_worker::Audio,std::string(reinterpret_cast<const char*>(samples),chunk*sizeof(*samples)),15000);
-        {std::lock_guard<std::mutex> cache_lock(cache_mutex_);partial_=response[0];}
+        {
+          std::lock_guard<std::mutex> cache_lock(cache_mutex_);
+          if(!response[0].empty() && partial_!=response[0]) {partial_=response[0];changed=true;}
+        }
         samples+=chunk;count-=chunk;
       }
     } catch(const std::exception& e) {
       Cancel();std::lock_guard<std::mutex> cache_lock(cache_mutex_);warning_=e.what();
     }
+    return changed;
   }
   std::string Partial() const override {std::lock_guard<std::mutex> lock(cache_mutex_);return partial_;}
   std::string Finalize() override {
@@ -110,8 +124,16 @@ class WorkerRecognizer final:public Recognizer {
         if(!ReadFile(output_,to,static_cast<DWORD>((std::min)(count,size_t(available))),&got,nullptr)||!got)return false;
         count-=got;to+=got;continue;
       }
-      if(GetTickCount64()>=deadline)return false;
-      if(WaitForSingleObject(process_,2)!=WAIT_TIMEOUT) {
+      const auto now = GetTickCount64();
+      if (now >= deadline) return false;
+      auto wait = static_cast<DWORD>(deadline - now);
+      // Only startup cancellation uses an external flag. Inference cancellation
+      // terminates the worker, which wakes the process handle immediately.
+      if (cancel_loading_) wait = (std::min)(wait, DWORD(25));
+      const HANDLE signals[] = {reply_readable_, process_};
+      const auto result = WaitForMultipleObjects(2, signals, FALSE, wait);
+      if (result == WAIT_FAILED) return false;
+      if (result == WAIT_OBJECT_0 + 1) {
         // A worker may write its error reply immediately before exiting.
         // Drain that reply instead of replacing it with a generic crash error.
         if(!PeekNamedPipe(output_,nullptr,0,nullptr,&available,nullptr) || !available)return false;
@@ -137,6 +159,7 @@ class WorkerRecognizer final:public Recognizer {
     return result;
   }
   HANDLE process_=nullptr,job_=nullptr,input_=nullptr,output_=nullptr;
+  HANDLE reply_readable_=nullptr,final_ready_=nullptr;
   std::atomic<bool> cancelled_{false};
   const std::atomic<bool>* cancel_loading_=nullptr;
   bool ready_=false;
@@ -147,7 +170,7 @@ class WorkerRecognizer final:public Recognizer {
 };
 }
 std::unique_ptr<Recognizer> MakeWorkerRecognizer(const std::string& root,const ModelSettings& settings,
-    std::string* error,const std::wstring& executable,unsigned timeout,const std::atomic<bool>* cancel_loading) {
+    std::string* error,const std::wstring& executable,unsigned timeout,const std::atomic<bool>* cancel_loading,ModelStartup startup_mode) {
   ModelFiles files;std::string message;
   std::error_code path_error;
   const auto absolute_root=std::filesystem::absolute(std::filesystem::path(Utf8ToWide(root)),path_error);
@@ -166,6 +189,6 @@ std::unique_ptr<Recognizer> MakeWorkerRecognizer(const std::string& root,const M
     path=(std::filesystem::path(std::wstring(own,count)).parent_path()/L"voiceime_model_worker.exe").wstring();
   }
   auto worker=std::make_unique<WorkerRecognizer>();
-  if(!worker->Start(path,absolute_utf8,normalized,timeout,message,cancel_loading)) {if(error)*error=message;return nullptr;}
+  if(!worker->Start(path,absolute_utf8,normalized,timeout,message,cancel_loading,startup_mode)) {if(error)*error=message;return nullptr;}
   if(error)error->clear();return worker;
 }

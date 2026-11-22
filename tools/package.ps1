@@ -51,7 +51,9 @@ foreach ($file in @('README.md','LICENSE','NOTICE','THIRD_PARTY_NOTICES.md',"doc
 }
 Copy-PackageFile (Join-Path $source 'docs/research/runtime-model-regression-2026-11-16.json') 'docs/research/runtime-model-regression-2026-11-16.json'
 Copy-PackageFile (Join-Path $source 'docs/research/code-review-2026-11-16.md') 'docs/research/code-review-2026-11-16.md'
-foreach ($file in @('install.cmd','uninstall.cmd','check.cmd','START-HERE.txt')) {
+Copy-PackageFile (Join-Path $source 'docs/plans/voice-input-optimization.md') 'docs/plans/voice-input-optimization.md'
+Copy-PackageFile (Join-Path $source 'docs/research/voice-runtime-2026-11-21.md') 'docs/research/voice-runtime-2026-11-21.md'
+foreach ($file in @('install.cmd','uninstall.cmd','check.cmd','START-HERE.txt','qwen-cpu.conf')) {
   Copy-PackageFile (Join-Path $source "packaging/$file") $file
 }
 foreach ($file in @('setup.ps1','download_models.ps1','dependencies.json','verify_package.ps1','upgrade_status.ps1')) {

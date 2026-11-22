@@ -397,20 +397,20 @@ class PipeServer {
     }while(GetTickCount64()<deadline);
     throw std::runtime_error("FAIL voice caret did not follow a layout/selection move without another key");
   }
-  bool NoCaret(DWORD milliseconds) {
+  bool Receives(MsgType type, DWORD milliseconds) {
     const auto deadline=GetTickCount64()+milliseconds;
     do {
       Pump(5);
       DWORD available=0;
-      if(!PeekNamedPipe(pipe_,nullptr,0,nullptr,&available,nullptr)) return false;
+      if(!PeekNamedPipe(pipe_,nullptr,0,nullptr,&available,nullptr)) throw std::runtime_error("TSF test pipe closed");
       if(available){ Deadline timeout; buffer_+=ReadPipeChunk(pipe_,nullptr,timeout.event,20).bytes; }
       Message message; std::size_t used=0;
       while(DecodeFrame(buffer_,&message,&used)==DecodeStatus::Complete) {
         buffer_.erase(0,used);
-        if(message.type==MsgType::Caret) return false;
+        if(message.type==type) return true;
       }
     }while(GetTickCount64()<deadline);
-    return true;
+    return false;
   }
   void Result(std::uint64_t id,const char* expected) {
     Deadline timeout;
@@ -580,6 +580,21 @@ int main(int argc,char** argv) {
       MSG stale{};
       {
         PipeServer server;
+        Check(server.Receives(MsgType::PreloadModel,1500),"active TSF prepares the model on connection before a voice key");
+        service.OnForeground(true);
+        Check(!server.Receives(MsgType::PreloadModel,75),"duplicate focus leaves the existing preload alone");
+        service.OnForeground(false);
+        Check(!server.Receives(MsgType::PreloadModel,75),"losing keyboard focus does not request a preload");
+        service.OnForeground(true);
+        Check(server.Receives(MsgType::PreloadModel,1000),"re-entering the IME requests a fresh preload");
+        service.OnProfileActivation(CLSID_VoiceIme,GUID_VoiceImeProfile,FALSE);
+        service.OnForeground(true);
+        const GUID other_profile{};
+        service.OnProfileActivation(CLSID_VoiceIme,other_profile,TRUE);
+        service.OnProfileActivation(other_profile,GUID_VoiceImeProfile,TRUE);
+        Check(!server.Receives(MsgType::PreloadModel,75),"other profiles and focus changes while deselected do not preload");
+        service.OnProfileActivation(CLSID_VoiceIme,GUID_VoiceImeProfile,TRUE);
+        Check(server.Receives(MsgType::PreloadModel,1000),"reselecting the active language profile preloads without reconnecting");
         Message insert; insert.type=MsgType::InsertText; insert.request_id=10; insert.text="管道写入。";
         const auto bytes=Encode(insert);
         server.Raw(bytes.substr(0,2)); Sleep(20); server.Raw(bytes.substr(2));
@@ -641,10 +656,10 @@ int main(int argc,char** argv) {
         Check(server.Caret(120).caret_h==24,"voice starts at the actual TSF caret");
         doc.store->layout_x=360; doc.store->layout_y=280;
         Check(server.Caret(280).caret_x>=360,"voice follows moved caret without another input key or server query");
-        Check(server.NoCaret(200),"stationary voice caret does not generate duplicate IPC updates");
+        Check(!server.Receives(MsgType::Caret,200),"stationary voice caret does not generate duplicate IPC updates");
         doc.store->layout_unavailable=true;
         doc.store->layout_y=400; server.QueryCaret();
-        Check(server.NoCaret(200),"unavailable browser-style layout does not publish a zero or fallback caret");
+        Check(!server.Receives(MsgType::Caret,200),"unavailable browser-style layout does not publish a zero or fallback caret");
         doc.store->layout_unavailable=false;
         Check(server.Caret(400).caret_h==24,"voice resumes following when layout becomes available");
         mode_button->GetStatus(&mode_status);
@@ -654,7 +669,7 @@ int main(int argc,char** argv) {
         Pump(80); doc.store->layout_y=450;
         mode_button->GetStatus(&mode_status);
         Check(mode_status==0 && (mode_sink.flags&TF_LBI_STATUS)!=0,"voice returning idle notifies Windows to re-enable the mode button without a focus change");
-        Check(server.NoCaret(200),"idle voice does not keep polling or publishing caret moves");
+        Check(!server.Receives(MsgType::Caret,200),"idle voice does not keep polling or publishing caret moves");
       }
       {
         Hr(thread->SetFocus(doc.manager),"focus document for two-step voice confirmation");

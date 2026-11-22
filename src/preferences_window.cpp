@@ -239,6 +239,18 @@ void PreferencesWindow::Command(int id,int notification) {
     if(actions_.practice_status)Set(PracticeText,actions_.practice_status());return;
   }
   if(id==ModelChoice && notification==CBN_SELCHANGE) {Models();return;}
+  if(id==ModelPreload && notification==BN_CLICKED) {
+    const auto checkbox=Field(hwnd_,ModelPreload);
+    const bool enabled=SendMessageW(checkbox,BM_GETCHECK,0,0)==BST_CHECKED;
+    if(actions_.save_preload_on_activate && actions_.save_preload_on_activate(enabled)) {
+      actions_.preload_on_activate=enabled;
+      Status(enabled?L"下次切换到轻音时会预加载语音模型。":L"已关闭切换预加载。已加载的模型按闲置设置管理。");
+    } else {
+      SendMessageW(checkbox,BM_SETCHECK,actions_.preload_on_activate?BST_CHECKED:BST_UNCHECKED,0);
+      Status(L"预加载设置保存失败。请检查本地数据目录后重试。");
+    }
+    return;
+  }
   if(id==ModelIdle && notification==BN_CLICKED) {
     const auto checkbox=Field(hwnd_,ModelIdle);
     const bool enabled=SendMessageW(checkbox,BM_GETCHECK,0,0)==BST_CHECKED;

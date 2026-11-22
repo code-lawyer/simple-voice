@@ -44,8 +44,8 @@ const wchar_t* SpeechModelLabel(SpeechModel m) {
 }
 const wchar_t* SpeechModelDescription(SpeechModel m) {
   switch(m) {
-    case SpeechModel::Qwen3:return L"适合中文和中英混说。使用已验证的 0.6B 量化版本。";
-    case SpeechModel::SenseVoice:return L"较轻量的备选，支持中文、英语、日语、韩语和粤语。";
+    case SpeechModel::Qwen3:return L"适合中英混说和英文术语。CPU 定稿较慢，占用内存较多。";
+    case SpeechModel::SenseVoice:return L"适合日常普通话短句，定稿较快、内存占用较低。也支持英语、粤语、日语和韩语。";
     case SpeechModel::Whisper:return L"多语言备选。不同语言的速度和准确度取决于本机表现。";
     case SpeechModel::ChineseLegacy:return L"保留旧版中文优先方案，不适合英语或中英混说。";
   }

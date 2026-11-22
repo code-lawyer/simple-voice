@@ -22,6 +22,7 @@ enum class MsgType : std::uint8_t {
   PersonalTermUsed = 18,
   ClientHello = 19,
   ServerReady = 20,
+  PreloadModel = 21,
 };
 
 struct Message {

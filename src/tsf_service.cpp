@@ -49,6 +49,7 @@ namespace {
 constexpr UINT kCommitMessage = WM_APP + 1;
 constexpr UINT kCaretMessage = WM_APP + 2;
 constexpr UINT kTrackingMessage = WM_APP + 3;
+constexpr UINT kEngineConnectedMessage = WM_APP + 4;
 constexpr UINT_PTR kTrackingTimer = 1;
 struct IncomingCommit {
   std::wstring text;
@@ -332,10 +333,20 @@ class VoiceService : public ITfTextInputProcessor {
   Hotkey CachedHotkeyForTest() const { return hotkey_cache_.value(); }
 #endif
   HRESULT OnKeyUp(ITfContext* context, WPARAM vk, WINBOOL* eaten, bool down);
+  void OnProfileActivation(REFCLSID clsid, REFGUID profile, BOOL activated) {
+    if (!IsEqualGUID(clsid, CLSID_VoiceIme) || !IsEqualGUID(profile, GUID_VoiceImeProfile)) return;
+    profile_selected_ = activated != FALSE;
+    if (profile_selected_) RequestModelPreload();
+    else preload_connection_ = 0;
+  }
   void OnForeground(bool foreground) {
     foreground_ = foreground;
     last_caret_sent_.clear();
-    if (!foreground) bar_.Hide();
+    if (foreground) RequestModelPreload();
+    else {
+      preload_connection_ = 0;
+      bar_.Hide();
+    }
     UpdateTracking();
   }
 
@@ -383,13 +394,18 @@ class VoiceService : public ITfTextInputProcessor {
     VoiceService* owner_;
   };
 
-  class ThreadSink : public ITfThreadMgrEventSink {
+  class ThreadSink : public ITfThreadMgrEventSink, public ITfActiveLanguageProfileNotifySink {
    public:
     explicit ThreadSink(VoiceService* owner) : owner_(owner) {}
     HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, void** out) override {
       if (out == nullptr) return E_POINTER;
       if (IsEqualGUID(iid, IID_IUnknown) || IsEqualGUID(iid, IID_ITfThreadMgrEventSink)) {
         *out = static_cast<ITfThreadMgrEventSink*>(this);
+        AddRef();
+        return S_OK;
+      }
+      if (IsEqualGUID(iid, IID_ITfActiveLanguageProfileNotifySink)) {
+        *out = static_cast<ITfActiveLanguageProfileNotifySink*>(this);
         AddRef();
         return S_OK;
       }
@@ -405,6 +421,10 @@ class VoiceService : public ITfTextInputProcessor {
     }
     HRESULT STDMETHODCALLTYPE OnPushContext(ITfContext*) override { return S_OK; }
     HRESULT STDMETHODCALLTYPE OnPopContext(ITfContext*) override { return S_OK; }
+    HRESULT STDMETHODCALLTYPE OnActivated(REFCLSID clsid, REFGUID profile, BOOL activated) override {
+      owner_->OnProfileActivation(clsid,profile,activated);
+      return S_OK;
+    }
 
    private:
     VoiceService* owner_;
@@ -567,6 +587,7 @@ class VoiceService : public ITfTextInputProcessor {
 
   bool DocumentAcceptsText(ITfContext* context) const;
   bool WriteClient(const Message& message, std::uint64_t connection = 0);
+  void RequestModelPreload();
   void RequestSettings();
   void UpdateInputIndicator();
   static bool CanToggleInputMode(void* self);
@@ -614,9 +635,11 @@ class VoiceService : public ITfTextInputProcessor {
   LONG refs_ = 1;
   ITfThreadMgr* thread_mgr_ = nullptr;
   TfClientId client_id_ = 0;
-  DWORD thread_cookie_ = 0;
+  DWORD thread_cookie_ = TF_INVALID_COOKIE, profile_cookie_ = TF_INVALID_COOKIE;
   bool advised_keys_ = false;
   std::atomic<bool> foreground_{true};
+  bool profile_selected_ = true;
+  std::uint64_t preload_connection_ = 0;  // Last notified during this keyboard focus.
   std::atomic<bool> active_{false};
   std::atomic<std::uint64_t> state_id_{0};
   HotkeyCache hotkey_cache_;
@@ -673,6 +696,14 @@ bool VoiceService::WriteClient(const Message& message, std::uint64_t connection)
   outgoing_.push_back(std::move(bytes));
   SetEvent(write_event_);
   return true;
+}
+
+void VoiceService::RequestModelPreload() {
+  const auto connection = connection_generation_.load();
+  if (!profile_selected_ || !connection || preload_connection_ == connection || !OwnsForeground()) return;
+  Message request;
+  request.type = MsgType::PreloadModel;
+  if (WriteClient(request, connection)) preload_connection_ = connection;
 }
 
 // The TSF target is Windows 7. That header set does not declare this Vista pipe query.
@@ -813,6 +844,10 @@ LRESULT CALLBACK VoiceService::WindowProc(HWND hwnd, UINT message, WPARAM wparam
   }
   if (message == kCaretMessage) {
     self->HandleCaret(true);
+    return 0;
+  }
+  if (message == kEngineConnectedMessage) {
+    self->RequestModelPreload();
     return 0;
   }
   if (message == kTrackingMessage) {
@@ -983,6 +1018,7 @@ void VoiceService::ReadLoop() {
       active_ = initial.text != "0";
       pipe_ = pipe;
     }
+    if (host_) PostMessageW(host_, kEngineConnectedMessage, 0, 0);
     if (host_) PostMessageW(host_, kTrackingMessage, 0, 0);
     bool failed = !deliver(buffer);
     while (!failed && WaitForSingleObject(stop_event_, 0) != WAIT_OBJECT_0) {
@@ -1028,6 +1064,9 @@ HRESULT VoiceService::Activate(ITfThreadMgr* manager, TfClientId client_id) {
   if (manager == nullptr) return E_INVALIDARG;
   if (thread_mgr_ != nullptr) return E_UNEXPECTED;
   if (!CanUseDesktopRuntime()) return E_ACCESSDENIED;
+  foreground_ = true;
+  profile_selected_ = true;
+  preload_connection_ = 0;
   hotkey_cache_.Load(ConfiguredHotkeyPath());
   thread_mgr_ = manager;
   thread_mgr_->AddRef();
@@ -1045,7 +1084,8 @@ HRESULT VoiceService::Activate(ITfThreadMgr* manager, TfClientId client_id) {
   }
   ITfSource* source = nullptr;
   if (SUCCEEDED(manager->QueryInterface(IID_ITfSource, reinterpret_cast<void**>(&source))) && source != nullptr) {
-    source->AdviseSink(IID_ITfThreadMgrEventSink, static_cast<IUnknown*>(&thread_sink_), &thread_cookie_);
+    source->AdviseSink(IID_ITfThreadMgrEventSink, static_cast<ITfThreadMgrEventSink*>(&thread_sink_), &thread_cookie_);
+    source->AdviseSink(IID_ITfActiveLanguageProfileNotifySink, static_cast<ITfActiveLanguageProfileNotifySink*>(&thread_sink_), &profile_cookie_);
     source->Release();
   }
   stop_reader_ = false;
@@ -1119,13 +1159,14 @@ HRESULT VoiceService::Deactivate() {
     }
     advised_keys_ = false;
   }
-  if (thread_mgr_ != nullptr && thread_cookie_ != 0) {
+  if (thread_mgr_ != nullptr && (thread_cookie_ != TF_INVALID_COOKIE || profile_cookie_ != TF_INVALID_COOKIE)) {
     ITfSource* source = nullptr;
     if (SUCCEEDED(thread_mgr_->QueryInterface(IID_ITfSource, reinterpret_cast<void**>(&source))) && source != nullptr) {
-      source->UnadviseSink(thread_cookie_);
+      if (thread_cookie_ != TF_INVALID_COOKIE) source->UnadviseSink(thread_cookie_);
+      if (profile_cookie_ != TF_INVALID_COOKIE) source->UnadviseSink(profile_cookie_);
       source->Release();
     }
-    thread_cookie_ = 0;
+    thread_cookie_ = profile_cookie_ = TF_INVALID_COOKIE;
   }
   if (host_ != nullptr) {
     MSG pending{};
@@ -1420,6 +1461,7 @@ void VoiceService::CancelFocusComposition() {
 }
 
 void VoiceService::OnDocumentFocus(ITfDocumentMgr* current, ITfDocumentMgr* previous) {
+  if (current) RequestModelPreload();
   if (current != previous) {
     candidate_anchor_known_ = false;
     last_caret_sent_.clear();

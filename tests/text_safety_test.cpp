@@ -39,6 +39,20 @@ void AudioReadinessAndChunkingProtectBoundaries() {
   for(const auto& part:parts) { CHECK(part.offset==covered); CHECK(part.count>0 && part.count<=15*16000); covered+=part.count; }
   CHECK(covered==samples.size()); CHECK(parts.size()>=3); CHECK(!parts.front().forced);
   CHECK(SegmentAudio({}).empty());
+  SpeechPause pause;
+  std::vector<std::int16_t> speech(7*SpeechPause::rate,1500);
+  CHECK(!pause.Scan(speech,0) && !pause.PreviewEnd());
+  speech.insert(speech.end(),SpeechPause::rate/5,0);
+  CHECK(!pause.Scan(speech,0) && pause.PreviewEnd()==speech.size());
+  speech.push_back(900);CHECK(!pause.QuietRemainder(speech));
+  speech.resize(speech.size()+SpeechPause::frame-1,900);
+  CHECK(!pause.Scan(speech,0) && !pause.PreviewEnd());
+  const auto last_sound=speech.size();
+  speech.insert(speech.end(),SpeechPause::rate*13/20,0);
+  CHECK(!pause.Scan(speech,0) && pause.PreviewEnd()==last_sound+SpeechPause::tail);
+  speech.insert(speech.end(),SpeechPause::frame,700);
+  CHECK(!pause.Scan(speech,last_sound) && pause.PendingCut() && !pause.PreviewEnd());
+  CHECK(pause.Scan(speech,speech.size()-SpeechPause::frame)==last_sound+SpeechPause::tail);
   InputPreferences preferences; preferences.learning=false; preferences.chinese_only=true; preferences.pause_ms=1200;
   preferences.microphone=L"{0.0.1.test}.测试设备";
   const std::wstring file=L"build/personal-terms-test/preferences.ini";

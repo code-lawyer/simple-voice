@@ -13,6 +13,7 @@
 #include <cstdio>
 #include <vector>
 #include <sstream>
+#include <thread>
 #include "recognition_text.hpp"
 
 static unsigned U16(const std::vector<unsigned char>& b, std::size_t p) {
@@ -47,6 +48,7 @@ static std::vector<std::int16_t> ReadWave(const char* file) {
 static std::string Fold(std::string text) { for(char& c:text) if(c>='A'&&c<='Z') c+=32; return text; }
 static ModelSettings selected;
 static bool isolated=false;
+static bool realtime=false;
 static std::unique_ptr<Recognizer> MakeTestRecognizer(bool chinese=false) {
   if(!isolated)return MakeSherpaRecognizer("models",chinese);
   std::string error;auto result=MakeWorkerRecognizer("models",selected,&error);
@@ -54,16 +56,31 @@ static std::unique_ptr<Recognizer> MakeTestRecognizer(bool chinese=false) {
 }
 static int Corpus(const char* path,bool chinese) {
   using Clock=std::chrono::steady_clock;
+  const auto load_start = Clock::now();
   auto recognizer=MakeTestRecognizer(chinese);
   if(!recognizer) return 2;
+  std::printf("model_load_ms=%lld\n", static_cast<long long>(
+      std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - load_start).count()));
   std::ifstream list(path); std::string line; int passed=0,failed=0;
   while(std::getline(list,line)) {
     if(!line.empty()&&line.back()=='\r')line.pop_back(); if(line.empty()||line.front()=='#')continue;
     std::istringstream row(line); std::string id,file,expected; std::getline(row,id,'\t'); std::getline(row,file,'\t'); std::getline(row,expected,'\t');
     const auto samples=ReadWave(file.c_str()); if(samples.empty()) {std::fprintf(stderr,"Unreadable corpus fixture %s\n",id.c_str());return 2;}
     recognizer->Reset();
-    for(std::size_t offset=0;offset<samples.size();offset+=320) recognizer->AcceptAudio(samples.data()+offset,std::min<std::size_t>(320,samples.size()-offset));
+    const auto capture_start = Clock::now();
+    long long first_draft_ms = -1;
+    for (std::size_t offset = 0; offset < samples.size(); offset += 320) {
+      const auto count = std::min<std::size_t>(320, samples.size() - offset);
+      if (realtime) {
+        const auto packet_end = std::chrono::microseconds((offset + count) * 1000000ULL / 16000);
+        std::this_thread::sleep_until(capture_start + packet_end);
+      }
+      recognizer->AcceptAudio(samples.data() + offset, count);
+      if (realtime && first_draft_ms < 0 && !recognizer->Partial().empty())
+        first_draft_ms = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - capture_start).count();
+    }
     const auto start=Clock::now(); const auto final=recognizer->Finalize(); const auto raw=recognizer->Original();
+    const auto complete = Clock::now();
     bool ok=!HasUnknownSpeech(final) && PreserveRecognizedContent(raw,final)==final;
     if(expected=="<empty>") ok=ok&&final.empty();
     else if(expected!="<observe>") {
@@ -78,7 +95,14 @@ static int Corpus(const char* path,bool chinese) {
     if(!final.empty()) { Session preview; preview.Hotkey(); preview.Enter(); preview.OnFinal(final); std::string commit;
       ok=ok&&preview.phase()==Phase::Pending&&!preview.TakeCommit(&commit)&&preview.box_text()==final; preview.Enter(); ok=ok&&preview.TakeCommit(&commit)&&commit==final; }
     std::printf("%s %s duration=%.2fs final_ms=%lld\nraw=%s\nfinal=%s\nwarning=%s\n",ok?"PASS":"FAIL",id.c_str(),samples.size()/16000.0,
-      static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now()-start).count()),raw.c_str(),final.c_str(),recognizer->TakeWarning().c_str()); std::fflush(stdout);
+        static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(complete-start).count()),raw.c_str(),final.c_str(),recognizer->TakeWarning().c_str());
+    if (realtime) {
+      const auto audio_end = capture_start + std::chrono::microseconds(samples.size() * 1000000ULL / 16000);
+      const auto stop_to_text = std::chrono::duration_cast<std::chrono::milliseconds>(complete - audio_end).count();
+      std::printf("realtime %s first_draft_ms=%lld audio_end_to_text_ms=%lld\n",
+                  id.c_str(), first_draft_ms, static_cast<long long>(stop_to_text));
+    }
+    std::fflush(stdout);
     if(ok)++passed;else ++failed;
   }
   PROCESS_MEMORY_COUNTERS memory{};GetProcessMemoryInfo(GetCurrentProcess(),&memory,sizeof(memory));
@@ -86,6 +110,10 @@ static int Corpus(const char* path,bool chinese) {
   return passed>0&&failed==0?0:1;
 }
 int main(int argc,char** argv) {
+  if (argc > 1 && std::string(argv[argc - 1]) == "--realtime") {
+    realtime = true;
+    --argc;
+  }
   if(argc>=3 && std::string(argv[1])=="--model") {
     bool found=false;
     for(auto m:{SpeechModel::Qwen3,SpeechModel::SenseVoice,SpeechModel::Whisper,SpeechModel::ChineseLegacy})

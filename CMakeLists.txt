@@ -76,6 +76,7 @@ target_link_libraries(voiceime_engine PRIVATE voiceime_core ole32 uuid user32 gd
 target_compile_definitions(voiceime_engine PRIVATE _WIN32_WINNT=0x0601)
 include(cmake/sherpa.cmake)
 
+configure_file(packaging/qwen-cpu.conf qwen-cpu.conf COPYONLY)
 add_executable(voiceime_model_worker src/model_worker_main.cpp src/sherpa_recognizer.cpp src/version.rc)
 target_link_libraries(voiceime_model_worker PRIVATE voiceime_core)
 target_compile_definitions(voiceime_model_worker PRIVATE _WIN32_WINNT=0x0601)

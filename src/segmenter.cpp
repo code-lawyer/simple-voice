@@ -1,6 +1,6 @@
 #include "segmenter.hpp"
 
-#include "cppjieba/Jieba.hpp"
+#include "cppjieba/MixSegment.hpp"
 #include "utf8.hpp"
 
 #include <cstdlib>
@@ -219,13 +219,12 @@ std::string PinyinOf(const std::string& word, const std::unordered_map<char32_t,
 
 struct Segmenter::Impl {
   std::mutex mutex;
-  cppjieba::Jieba jieba;
+  cppjieba::MixSegment jieba;
   std::unordered_map<char32_t, std::string> pinyin;
 
   explicit Impl(const std::string& dict_dir)
       : jieba(JoinPath(dict_dir, "jieba.dict.utf8"), JoinPath(dict_dir, "hmm_model.utf8"),
-              JoinPath(dict_dir, "user.dict.utf8"), JoinPath(dict_dir, "idf.utf8"),
-              JoinPath(dict_dir, "stop_words.utf8")) {
+              JoinPath(dict_dir, "user.dict.utf8")) {
     LoadPinyin(JoinPath(dict_dir, "pinyin.txt"), pinyin);
   }
 };

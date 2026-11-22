@@ -16,6 +16,7 @@
 #include "data_backup.hpp"
 #include "recording.hpp"
 #include "capture_health.hpp"
+#include "capture_buffer.hpp"
 
 #include "ipc.hpp"
 #include "pipe_io.hpp"
@@ -46,6 +47,9 @@
 #include <vector>
 #include <filesystem>
 #include <optional>
+#ifdef VOICEIME_TESTING
+#include <fstream>
+#endif
 
 namespace {
 
@@ -59,6 +63,7 @@ constexpr UINT kClientGoneMessage = WM_APP + 8;
 constexpr UINT kPreparedMessage = WM_APP + 9;
 constexpr UINT kCaptureReadyMessage = WM_APP + 10;
 constexpr UINT kDownloadedMessage = WM_APP + 11;
+constexpr UINT kDeviceErrorMessage = WM_APP + 12;
 constexpr UINT_PTR kInsertTimer = 1;
 constexpr UINT_PTR kAnchorTimer = 2;
 constexpr UINT_PTR kModelIdleTimer = 3;
@@ -212,13 +217,14 @@ int CheckInstallation(bool chinese_only=false) {
 
 class FakeRecognizer : public Recognizer {
  public:
-  void AcceptAudio(const std::int16_t*, std::size_t count) override {
+  bool AcceptAudio(const std::int16_t*, std::size_t count) override {
 #ifdef VOICEIME_TESTING
     if(TestEnvironment(L"VOICEIME_TEST_CAPTURE")==L"audio-hang" && audio_calls_++>0)
       while(!cancelled_)Sleep(5);
 #endif
     std::lock_guard<std::mutex> lock(mu_);
     samples_ += count;
+    return count!=0;
   }
   std::string Partial() const override {
     std::lock_guard<std::mutex> lock(mu_);
@@ -288,7 +294,8 @@ class Engine {
   Message StateMessage();
   void ShowMenu(HWND hwnd);
   void OpenPreferences(int page=0);
-  void BeginPrepare(const ModelSettings* requested=nullptr,bool activate=false);
+  void BeginPrepare(const ModelSettings* requested=nullptr,bool activate=false,bool for_capture=false);
+  void PreloadModelIfIdle();
   void ReleaseIdleModel(ULONGLONG now);
   std::string ModelRoot(const ModelSettings& settings) const;
   ModelSettings ModelChoice(ModelSettings settings) const;
@@ -303,12 +310,17 @@ class Engine {
   void EditPreview();
   void OnPartial();
   void OnCaptureLimit();
-  void StartCapture();
+  void StartRecording(ClientId origin);
+  void StartBufferedDecode();
+  bool ResetDecoder(int generation);
+  bool FeedDecoder(const std::int16_t* samples,std::size_t count,int generation);
+  void DiscardCapture();
+  void CancelRecording();
   void StopCapture();
   void UpdateBox();
-  void CaptureMain(int generation,std::wstring microphone,HANDLE wake);
+  void CaptureMain(int generation,std::wstring microphone,HANDLE wake,CaptureBuffer& buffer);
   bool AcceptCaptureAudio(const std::int16_t* samples,std::size_t count,int generation,
-                          CaptureHealth& health,RecordingBudget& budget);
+                          CaptureHealth& health,RecordingBudget& budget,CaptureBuffer& buffer,bool tail=false);
   void PipeMain();
   void ClientLoop(ClientId id, HANDLE pipe, std::shared_ptr<IpcPeer> peer);
   void ReapClients();
@@ -327,14 +339,20 @@ class Engine {
   void PublishCommit();
   void StoreLexicon();
   void BeginFinalize();
+  void StartFinalizer();
   void PublishFinal(const std::string& final_text);
 
   ConfirmBox box_;
   Session session_;
   std::unique_ptr<Recognizer> recognizer_;
   std::unique_ptr<Lexicon> lexicon_;
-  std::unique_ptr<Segmenter> segmenter_;
   std::thread capture_thread_;
+  std::thread buffered_decode_thread_;
+  std::shared_ptr<CaptureBuffer> buffered_audio_;
+  bool waiting_for_model_=false, retry_cancelled_load_=false;
+  std::optional<ModelSettings> requested_capture_model_;
+  ClientId buffering_client_=0;
+  std::wstring stopped_notice_;
   std::thread pipe_thread_;
   std::thread finalize_thread_;
   std::thread prepare_thread_;
@@ -342,6 +360,7 @@ class Engine {
   std::unique_ptr<Recognizer> prepared_;
   std::string final_result_, final_error_, original_text_;
   bool preparing_=false, fake_=false;
+  bool preload_on_activate_=true, preloading_=false;
   bool activating_model_=false,downloading_=false,download_ok_=false;
   ModelSettings models_,active_models_,loading_models_,downloading_models_;
   std::optional<ModelSettings> deferred_models_;
@@ -362,7 +381,7 @@ class Engine {
   std::atomic<bool> quiet_capture_{false};
   InputPreferences preferences_;
   std::wstring data_path_, preferences_path_;
-  std::wstring model_settings_path_;
+  std::wstring model_settings_path_, speech_startup_path_;
   PreferencesWindow preferences_window_;
   PreviewEditor preview_editor_;
   int finalize_generation_ = 0;
@@ -381,6 +400,7 @@ class Engine {
   std::string published_preview_;
   std::string lexicon_warning_;
   std::atomic<bool> stop_capture_{false};
+  std::atomic<bool> finish_capture_{false};
   std::atomic<bool> stop_pipe_{false};
   HANDLE wake_ = nullptr;
   HANDLE listen_pipe_ = INVALID_HANDLE_VALUE;
@@ -454,13 +474,14 @@ int Engine::Run(bool fake) {
   preferences_=LoadInputPreferences(preferences_path_);
   model_settings_path_=data+L"\\speech-models.ini";
   models_=LoadModelSettings(model_settings_path_,preferences_.chinese_only);
+  // The existing model file is also the strict worker wire format used by rc.9.
+  speech_startup_path_=data+L"\\speech-startup.ini";
+  preload_on_activate_=GetPrivateProfileIntW(L"speech",L"preload_on_activate",1,speech_startup_path_.c_str())!=0;
   ExportTerms();
   config_path_ = WideToUtf8(data + L"\\config.json");
   settings_ = LoadSettings(config_path_);
   skin_path_ = data + L"\\appearance.json";
   box_.SetSkin(LoadSkin(skin_path_));
-  const std::string dict = DictDir();
-  if (!dict.empty()) segmenter_ = std::make_unique<Segmenter>(dict);
   fake_=fake;
   if(fake) recognizer_=std::make_unique<FakeRecognizer>();
 #ifdef VOICEIME_TESTING
@@ -496,7 +517,7 @@ int Engine::Run(bool fake) {
     for (const auto& client : clients_) CancelIoEx(client.pipe, nullptr);
   }
   preferences_window_.Close();
-  StopCapture();
+  DiscardCapture();
   if (finalize_thread_.joinable()) finalize_thread_.join();
   if (prepare_thread_.joinable()) prepare_thread_.join();
   if (download_thread_.joinable()) download_thread_.join();
@@ -572,11 +593,19 @@ void Engine::UpdateBox() {
   if (caret_known_ && caret_process_!=0 && caret_process_!=foreground_process) { box_.Hide(); return; }
   if (!caret_known_ && GetTickCount64()-listening_started_<180) return;
 #endif
-  box_.SetActivity(preparing_?L"正在准备语音模型":queued_start_?L"正在结束上一段识别":
-      session_.phase()==Phase::Listening && !capture_ready_?L"正在连接麦克风":L"");
+  std::wstring activity;
+  if (queued_start_) activity=L"正在结束上一段识别";
+  else if (session_.phase()==Phase::Stopped) activity=stopped_notice_;
+  else if (session_.phase()==Phase::Listening && !capture_ready_) activity=L"正在连接麦克风";
+  else if (waiting_for_model_) activity=session_.phase()==Phase::Finalizing?
+      L"已停录 · 等待语音模型":L"正在收音 · 模型准备中";
+  box_.SetActivity(std::move(activity));
   box_.SetRecordingProgress(static_cast<int>(recorded_samples_/kRecordingSampleRate),quiet_capture_);
-  const std::string text = mic_error_.empty() ?
-      (session_.phase()==Phase::Listening && !capture_ready_?"收到采样后即可开始说话":session_.box_text()) : mic_error_;
+  std::string text=mic_error_.empty()?session_.box_text():mic_error_;
+  if (text.empty() && session_.phase()==Phase::Listening) {
+    if (!capture_ready_) text="收到采样后即可开始说话";
+    else if (waiting_for_model_) text="可以继续说话，模型就绪后会识别已收到的语音。";
+  }
   Rect caret{0, 0, 0, 0};
   Rect window = ForegroundClient();
   if (caret_known_) {
@@ -692,20 +721,31 @@ void Engine::LoseInsertConfirmation() {
 void Engine::BeginFinalize() {
   if(session_.can_finalize()) session_.OnSpeechEnded();
   if(session_.phase()!=Phase::Finalizing || finalize_thread_.joinable()) return;
+  buffering_client_=0; // An explicitly stopped recording may be confirmed from another app.
+  finish_capture_=true;
   stop_capture_=true;
   capture_ready_=false;input_level_=0;
   if(wake_)SetEvent(wake_);
+  final_started_=GetTickCount64();
+  PublishPhase();
+  // Capture exits and seals the FIFO even when the model is still loading.
+  // The prepare completion resumes this finalization without reopening the mic.
+  if(!waiting_for_model_) StartFinalizer();
+}
+
+void Engine::StartFinalizer() {
   // The finalizer owns the capture join and wake handle. A slow model request
   // must not prevent the UI thread from receiving Esc and terminating it.
   auto capture=std::move(capture_thread_);const auto wake=wake_;wake_=nullptr;
-  const int generation=++finalize_generation_; PublishPhase();
-  final_started_=GetTickCount64();
+  const int generation=++finalize_generation_;
   final_result_.clear(); final_error_.clear();
-  finalize_thread_=std::thread([this,generation,wake,capture=std::move(capture)]() mutable {
+  finalize_thread_=std::thread([this,generation,wake,buffer=buffered_audio_,capture=std::move(capture),
+                                decoder=std::move(buffered_decode_thread_)]() mutable {
     if(capture.joinable())capture.join();
     if(wake)CloseHandle(wake);
+    if(decoder.joinable())decoder.join();
     capture_ready_=false;input_level_=0;
-    try { final_result_=recognizer_?recognizer_->Finalize():std::string(); }
+    try { if(recognizer_ && (!buffer || !buffer->discarded())) final_result_=recognizer_->Finalize(); }
     catch(...) { final_error_="语音校准失败。可编辑已有草稿，或取消后重新录音。"; }
     PostMessageW(box_.hwnd(),kFinalMessage,static_cast<WPARAM>(generation),0);
   });
@@ -721,18 +761,78 @@ void Engine::PublishFinal(const std::string& final_text) {
   if(session_.phase()!=Phase::Idle) RequestCaret(); UpdateBox(); PublishPhase();
 }
 
-void Engine::StartCapture() {
+void Engine::StartRecording(ClientId origin) {
   StopCapture();
+  const bool need_model=preparing_ || deferred_models_ || !recognizer_ || !recognizer_->Healthy() ||
+      !SameModelRuntime(active_models_,models_);
+  requested_capture_model_=deferred_models_;
+  waiting_for_model_=need_model;
+  retry_cancelled_load_=preparing_ && prepare_cancel_;
+  buffering_client_=need_model?origin:0;
+  buffered_audio_=std::make_shared<CaptureBuffer>();
+  stopped_notice_.clear();
+  model_last_used_=listening_started_=GetTickCount64();
+  caret_known_=false;caret_process_=0;insert_uncertain_=false;
+  session_.Hotkey();
   mic_error_.clear();
   recorded_samples_=0; quiet_capture_=false;
   capture_ready_=false; input_level_=0;
   partial_posted_ = false;
+  finish_capture_=false;
   stop_capture_ = false;
   wake_ = CreateEventW(nullptr, FALSE, FALSE, nullptr);
   const int generation = ++capture_generation_;
   const auto device=preferences_.microphone;
   const auto wake=wake_;
-  capture_thread_ = std::thread([this, generation,device,wake] { CaptureMain(generation,device,wake); });
+  capture_thread_ = std::thread([this,generation,device,wake,buffer=buffered_audio_] {
+    CaptureMain(generation,device,wake,*buffer);
+    buffer->Close();
+  });
+  if(!need_model) {
+    StartBufferedDecode();
+  } else if(!preparing_) {
+    const auto requested=std::move(requested_capture_model_);
+    requested_capture_model_.reset();
+    BeginPrepare(requested?&*requested:nullptr,requested.has_value(),true);
+  }
+}
+
+void Engine::StartBufferedDecode() {
+  waiting_for_model_=false;
+  buffering_client_=0;
+  buffered_decode_thread_=std::thread([this,generation=capture_generation_,buffer=buffered_audio_] {
+    if(!ResetDecoder(generation)) {buffer->Discard(); return;}
+    std::vector<std::int16_t> block;
+    while(buffer->Read(block)) {
+      if(!FeedDecoder(block.data(),block.size(),generation)) {buffer->Discard();return;}
+    }
+    if(!buffer->discarded()) PostMessageW(box_.hwnd(),kPartialMessage,generation,1);
+  });
+  if(session_.phase()==Phase::Finalizing) StartFinalizer();
+}
+
+void Engine::DiscardCapture() {
+  finish_capture_=false;
+  if(buffered_audio_) buffered_audio_->Discard();
+  if(!waiting_for_model_ && recognizer_ && (session_.can_finalize() || session_.phase()==Phase::Finalizing))
+    recognizer_->Cancel();
+  StopCapture();
+  if(buffered_decode_thread_.joinable()) buffered_decode_thread_.join();
+  buffered_audio_.reset();
+  requested_capture_model_.reset();
+  buffering_client_=0;
+  waiting_for_model_=retry_cancelled_load_=false;
+}
+
+void Engine::CancelRecording() {
+  ++capture_generation_; ++finalize_generation_; ++utterance_generation_;
+  if(waiting_for_model_ && !preloading_ && !activating_model_) prepare_cancel_=true;
+  DiscardCapture();
+  queued_start_=0; preview_editor_.Close();
+  session_.Escape();
+  pending_insert_.clear();insert_id_=0;insert_uncertain_=false;
+  mic_error_.clear();caret_known_=false;
+  UpdateBox();PublishPhase();
 }
 
 void Engine::StopCapture() {
@@ -748,7 +848,7 @@ void Engine::StopCapture() {
 
 void Engine::OnPartial() {
   partial_posted_ = false;
-  if (session_.phase() != Phase::Listening) return;
+  if (waiting_for_model_ || session_.phase()!=Phase::Listening || !recognizer_) return;
   session_.OnDraft(recognizer_->Partial());
   UpdateBox();
 }
@@ -756,7 +856,7 @@ void Engine::OnPartial() {
 void Engine::OnCaptureLimit() {
   if (session_.phase() != Phase::Listening) return;
   StopCapture();
-  if(recognizer_) session_.OnDraft(recognizer_->Partial());
+  if(!waiting_for_model_ && recognizer_) session_.OnDraft(recognizer_->Partial());
   session_.OnCaptureLimit();
   UpdateBox(); PublishPhase();
 }
@@ -787,11 +887,13 @@ bool Engine::ExportTerms() {
 }
 std::wstring Engine::Diagnostics() const {
   return L"Simple Voice "+Utf8ToWide(SIMPLE_VOICE_VERSION)+L" · Windows x64\r\n"+
-    (preparing_?L"语音模型：正在准备":recognizer_?L"语音模型：就绪":L"语音模型：未就绪，请重试或修复安装")+
+    (preloading_?L"语音模型：正在后台预加载":preparing_?L"语音模型：正在准备":
+     recognizer_ && recognizer_->FinalReady()?L"语音模型：草稿和定稿就绪":
+     recognizer_ && recognizer_->Healthy()?L"语音模型：草稿就绪，正在准备定稿":L"语音模型：尚未就绪")+
     L" · "+SpeechModelLabel(models_.model)+
     L"\r\n麦克风："+(capture_ready_?L"已收到采样":L"未录音 / 等待采样")+
     L"  输入电平："+std::to_wstring(input_level_.load())+L"%\r\n拼音学习："+(preferences_.learning?L"开启":L"暂停")+
-    L"\r\n上次模型准备："+std::to_wstring(last_load_ms_)+L" ms；停录后校准："+std::to_wstring(last_final_ms_)+L" ms"+
+    L"\r\n上次模型可用耗时："+std::to_wstring(last_load_ms_)+L" ms；停录后校准："+std::to_wstring(last_final_ms_)+L" ms"+
     L"\r\n"+model_notice_+
     L"\r\n音频只在内存中处理；诊断不包含输入正文或提示词。";
 }
@@ -820,6 +922,12 @@ void Engine::OpenPreferences(int page) {
   actions.hotkey_label=[this]{return HotkeyLabel(settings_.hotkey);};
   actions.retry_models=[this]{BeginPrepare();};
   actions.models=[this]{return models_;};
+  actions.preload_on_activate=preload_on_activate_;
+  actions.save_preload_on_activate=[this](bool enabled) {
+    if(!WritePrivateProfileStringW(L"speech",L"preload_on_activate",enabled?L"1":L"0",speech_startup_path_.c_str())) return false;
+    preload_on_activate_=enabled;
+    return true;
+  };
   actions.save_model_idle_release=[this](bool enabled) {
     auto next=models_;
     next.idle_minutes=enabled?ModelSettings::kDefaultIdleMinutes:0;
@@ -833,7 +941,10 @@ void Engine::OpenPreferences(int page) {
   actions.use_model=[this](const ModelSettings& settings){return UseModel(settings);};
   actions.cancel_model_operation=[this]{
     prepare_cancel_=true;download_cancel_=true;deferred_models_.reset();
-    if(queued_start_) {queued_start_=0;session_.Escape();mic_error_.clear();UpdateBox();PublishPhase();}
+    if(waiting_for_model_ || queued_start_) {
+      if(practice_) Practice(2);
+      else CancelRecording();
+    }
     model_notice_=L"已取消模型操作，原方案保留。";
   };
   actions.diagnostics=[this]{return Diagnostics();};
@@ -846,9 +957,14 @@ void Engine::OpenPreferences(int page) {
   };
   actions.restore=[this](const std::wstring& folder){return RestoreBackup(folder);};
   actions.terms_changed=[this]{return ExportTerms();};
-  actions.input_code=[this](const std::string& text) {
+  // Reuse Jieba while editing terms. The settings window owns this callback.
+  actions.input_code=[segmenter=std::shared_ptr<Segmenter>{}](const std::string& text) mutable {
+    if (!segmenter && !text.empty()) {
+      const auto dict = DictDir();
+      if (!dict.empty()) segmenter = std::make_shared<Segmenter>(dict);
+    }
     std::string code;
-    if(segmenter_) for(const auto& token:segmenter_->Cut(text)) code+=token.pinyin;
+    if(segmenter) for(const auto& token:segmenter->Cut(text)) code+=token.pinyin;
     if(code.empty()) code=text;
     std::string clean;
     for(unsigned char c:code) if(c>='A'&&c<='Z') clean+=char(c+32); else if(c>='a'&&c<='z') clean+=char(c);
@@ -907,11 +1023,8 @@ ModelSettings Engine::ModelChoice(ModelSettings settings) const {
 std::wstring Engine::Practice(int action) {
   if(action==2) {
     if(!practice_)return L"试用已结束。";
-    ++capture_generation_;++finalize_generation_;
-    if(recognizer_ && (session_.can_finalize() || session_.phase()==Phase::Finalizing))recognizer_->Cancel();
-    StopCapture();session_.Escape();practice_=false;mic_error_.clear();practice_result_=L"已取消；没有保存录音或写入其他应用。";
-    ++utterance_generation_;preview_editor_.Close();
-    UpdateBox();PublishPhase();return practice_result_;
+    practice_=false;practice_result_=L"已取消试用。";
+    CancelRecording();return practice_result_;
   }
   if(action==1) {
     if(!practice_ || session_.phase()!=Phase::Pending || session_.box_text().empty())return L"请等待最终预览后再确认。";
@@ -923,20 +1036,18 @@ std::wstring Engine::Practice(int action) {
     UpdateBox();PublishPhase();return L"试用完成。日常输入时，确认文字会写入当前应用。";
   }
   if(practice_ && session_.can_finalize()) {BeginFinalize();UpdateBox();return L"正在校准，请等待最终预览。";}
-  if(session_.phase()!=Phase::Idle || finalize_thread_.joinable() || preparing_)return L"请先完成或取消当前语音，等待模型准备结束。";
-  if(deferred_models_) {const auto next=*deferred_models_;BeginPrepare(&next,true);return L"正在验证所选模型。完成后点击“开始试用”。";}
-  if(!recognizer_ || !recognizer_->Healthy() || !SameModelRuntime(active_models_,models_)) {BeginPrepare();return L"正在准备模型。准备完成后点击“开始试用”。";}
-  practice_=true;practice_result_.clear();mic_error_.clear();caret_known_=false;
-  ++utterance_generation_;listening_started_=GetTickCount64();session_.Hotkey();
-  StartCapture();UpdateBox();PublishPhase();return L"收到麦克风采样后开始说话。再次点击可停录预览。";
+  if(session_.phase()!=Phase::Idle || finalize_thread_.joinable())return L"请先完成或取消当前语音。";
+  practice_=true;practice_result_.clear();++utterance_generation_;
+  StartRecording(0);UpdateBox();PublishPhase();return L"收到麦克风采样后开始说话。再次点击可停录预览。";
 }
 std::wstring Engine::PracticeStatus() const {
   if(!practice_)return practice_result_.empty()?L"点击开始后才会打开麦克风；试用结果仅显示在本页。":practice_result_;
   const auto text=Utf8ToWide(session_.box_text());
   if(!mic_error_.empty())return Utf8ToWide(mic_error_)+L"\r\n"+text;
-  if(session_.phase()==Phase::Listening)return (capture_ready_?L"正在听…\r\n":L"正在连接麦克风…\r\n")+text;
-  if(session_.phase()==Phase::Finalizing)return L"正在校准，请稍候…\r\n"+text;
-  if(session_.phase()==Phase::Stopped)return L"已达到 10 分钟上限，收音已停止。点击“开始 / 停止试用”后校准。\r\n"+text;
+  if(session_.phase()==Phase::Listening) return (!capture_ready_?L"正在连接麦克风…\r\n":
+      waiting_for_model_?L"正在收音 · 模型准备中\r\n":L"正在听…\r\n")+text;
+  if(session_.phase()==Phase::Finalizing)return (waiting_for_model_?L"已停录 · 等待语音模型\r\n":L"正在校准，请稍候…\r\n")+text;
+  if(session_.phase()==Phase::Stopped)return (stopped_notice_.empty()?L"已达到 10 分钟上限":stopped_notice_)+L"。点击“开始 / 停止试用”后校准。\r\n"+text;
   return L"最终预览；确认后只显示在本页：\r\n"+text;
 }
 ModelActionResult Engine::UseModel(const ModelSettings& choice,bool allow_download) {
@@ -964,6 +1075,7 @@ ModelActionResult Engine::UseModel(const ModelSettings& choice,bool allow_downlo
     return {model_notice_,true};
   }
   if(recognizer_ && recognizer_->Healthy() && SameModelRuntime(active_models_,next)) {
+    if(!recognizer_->FinalReady())return {L"草稿已就绪，正在准备定稿模型。"};
     if(!SaveModelSettings(model_settings_path_,next))return {L"设置保存失败，原方案保留。"};
     models_=next;deferred_models_.reset();return {L"已保存，此模型已准备。"};
   }
@@ -974,10 +1086,12 @@ ModelActionResult Engine::UseModel(const ModelSettings& choice,bool allow_downlo
 std::wstring Engine::ModelStatus(SpeechModel model) const {
   if(deferred_models_ && deferred_models_->model==model)return L"已选择 · 下一次录音前验证并切换。";
   if(downloading_ && downloading_models_.model==model)return L"下载中\r\n"+ModelDownloadStatus(data_path_);
-  if(preparing_ && loading_models_.model==model)return L"正在验证模型，请稍候。原有方案保留。";
+  if(preparing_ && loading_models_.model==model)return preloading_?L"正在后台预加载语音模型。":L"正在验证模型，请稍候。原有方案保留。";
   const std::wstring notice=model==notice_model_ && !model_notice_.empty()?L"\r\n"+model_notice_:L"";
   if(model==models_.model) {
-    return std::wstring(L"使用中 · ")+(recognizer_ && recognizer_->Healthy()?L"已准备":L"下次录音时准备")+
+    return std::wstring(L"使用中 · ")+(recognizer_ && recognizer_->FinalReady()?L"已准备":
+        recognizer_ && recognizer_->Healthy()?L"草稿就绪，正在准备定稿模型":
+        preload_on_activate_?L"切入轻音或录音时准备":L"下次录音时准备")+
         notice;
   }
   auto candidate=models_;candidate.model=model;candidate=ModelChoice(candidate);
@@ -1001,25 +1115,46 @@ std::wstring Engine::DownloadChoice(const ModelSettings& settings) {
   });
   return L"下载已开始。已有模型仍可使用。";
 }
-void Engine::BeginPrepare(const ModelSettings* requested,bool activate) {
-  if(preparing_ || capture_thread_.joinable() || finalize_thread_.joinable() || session_.can_finalize() || session_.phase()==Phase::Finalizing || session_.phase()==Phase::Committing) return;
+void Engine::PreloadModelIfIdle() {
+  if (!preload_on_activate_ || preparing_ || downloading_ || deferred_models_ ||
+      session_.phase()!=Phase::Idle || (recognizer_ && recognizer_->Healthy())) return;
+  // Switching hosts repeatedly should not continually retry a missing model.
+  // An explicit voice hotkey can always retry immediately.
+  if (!model_error_.empty() && GetTickCount64()-prepare_started_<30000) return;
+  BeginPrepare();
+  preloading_=preparing_;
+}
+
+void Engine::BeginPrepare(const ModelSettings* requested,bool activate,bool for_capture) {
+  if(preparing_ || finalize_thread_.joinable() || session_.phase()==Phase::Committing) return;
+  if(!for_capture && (capture_thread_.joinable() || session_.can_finalize() || session_.phase()==Phase::Finalizing)) return;
   if(prepare_thread_.joinable()) prepare_thread_.join();
   preparing_=true; model_error_.clear();prepared_error_.clear();prepare_cancel_=false;
   loading_models_=ModelChoice(requested?*requested:models_);activating_model_=activate;
   notice_model_=loading_models_.model;deferred_models_.reset();
   prepare_started_=GetTickCount64();
   if(recognizer_ && !recognizer_->Healthy())recognizer_.reset();
-  prepare_thread_=std::thread([this] {
+#ifdef VOICEIME_TESTING
+  ++prepare_attempts_;
+#endif
+  const auto startup=activate?ModelStartup::Full:ModelStartup::DraftFirst;
+  prepare_thread_=std::thread([this,startup] {
+    bool use_fake=fake_;
 #ifdef VOICEIME_TESTING
     const auto fixture=TestEnvironment(L"VOICEIME_TEST_CAPTURE");
-    ++prepare_attempts_;
+    if(fixture==L"model-real" || fixture==L"model-cold-pcm") use_fake=false;
+    if(fixture==L"model-buffer-limit" || fixture==L"model-buffer-disconnect" || fixture==L"model-buffer-gate") {
+      const auto gate=std::filesystem::path(data_path_)/L"allow-model";
+      const auto deadline=GetTickCount64()+15000;
+      while(!prepare_cancel_ && !std::filesystem::exists(gate) && GetTickCount64()<deadline) Sleep(5);
+    }
     if(fixture==L"model-slow" || fixture==L"model-fail-once") Sleep(500);
     if(fixture==L"model-fail-once" && prepare_attempts_==1) {
       prepared_.reset(); PostMessageW(box_.hwnd(),kPreparedMessage,0,0); return;
     }
 #endif
-    try { prepared_=fake_?std::make_unique<FakeRecognizer>():
-      MakeWorkerRecognizer(ModelRoot(loading_models_),loading_models_,&prepared_error_,L"",120000,&prepare_cancel_); }
+    try { prepared_=use_fake?std::make_unique<FakeRecognizer>():
+      MakeWorkerRecognizer(ModelRoot(loading_models_),loading_models_,&prepared_error_,L"",120000,&prepare_cancel_,startup); }
     catch(...) { prepared_.reset(); }
     PostMessageW(box_.hwnd(),kPreparedMessage,0,0);
   });
@@ -1028,7 +1163,7 @@ void Engine::ReleaseIdleModel(ULONGLONG now) {
   if(models_.idle_minutes>0 && recognizer_ && !preparing_ &&
      !capture_thread_.joinable() && !finalize_thread_.joinable() && session_.phase()==Phase::Idle &&
      now-model_last_used_>=static_cast<ULONGLONG>(models_.idle_minutes)*60000) {
-    recognizer_.reset();model_notice_=L"闲置模型已释放；下次录音会重新准备。";
+    recognizer_.reset();model_notice_=preload_on_activate_?L"闲置模型已释放，下次切入轻音或录音时准备。":L"闲置模型已释放，下次录音时准备。";
   }
 }
 bool Engine::ForegroundClientAllowed(ClientId sender) const {
@@ -1060,6 +1195,10 @@ void Engine::OnPipe(ClientId sender, const Message& message, bool resumed) {
   // Receipts belong to the original insertion client even after focus moves.
   // New actions require the verified foreground host and the current preview.
   if (message.type != MsgType::InsertResult && !ForegroundClientAllowed(sender)) return;
+  if (message.type == MsgType::PreloadModel) {
+    PreloadModelIfIdle();
+    return;
+  }
   if (IsVoiceControl(message.type) && message.state_id != StateMessage().state_id) {
     // The pipe preserves command order. A quick Esc/stop after Start may
     // precede its phase reply, but must still control that same accepted Start.
@@ -1138,19 +1277,7 @@ void Engine::OnPipe(ClientId sender, const Message& message, bool resumed) {
   }
   if (message.type == MsgType::Cancel) {
     if (session_.phase() == Phase::Committing) return;
-    ++finalize_generation_;
-    prepare_cancel_=true;
-    if(recognizer_ && (session_.can_finalize() || session_.phase()==Phase::Finalizing))recognizer_->Cancel();
-    StopCapture();
-    queued_start_=0; ++utterance_generation_; preview_editor_.Close();
-    session_.Escape();
-    pending_insert_.clear();
-    insert_id_ = 0;
-    insert_uncertain_ = false;
-    mic_error_.clear();
-    caret_known_ = false;
-    UpdateBox();
-    PublishPhase();
+    CancelRecording();
     return;
   }
   if (message.type != MsgType::StartListen) return;
@@ -1168,28 +1295,12 @@ void Engine::OnPipe(ClientId sender, const Message& message, bool resumed) {
   }
   ++utterance_generation_;
   preview_editor_.Close(); original_text_.clear();
-  if(preparing_ || (finalize_thread_.joinable() && session_.phase()!=Phase::Finalizing)) {
+  if(finalize_thread_.joinable()) {
     queued_start_=sender; session_.RestorePending("");
-    mic_error_=preparing_?"正在准备语音模型，请稍候。Esc 取消。":"正在结束上一段识别，请稍候。Esc 取消。";
+    mic_error_="正在结束上一段识别，请稍候。Esc 取消。";
     listening_started_=GetTickCount64(); UpdateBox(); PublishPhase(); return;
   }
-  if(deferred_models_) {
-    const auto next=*deferred_models_;queued_start_=sender;session_.RestorePending("");
-    mic_error_="正在验证所选模型，请稍候。Esc 取消。";
-    BeginPrepare(&next,true);listening_started_=GetTickCount64();UpdateBox();PublishPhase();return;
-  }
-  if(!recognizer_ || !recognizer_->Healthy() || !SameModelRuntime(active_models_,models_)) {
-    queued_start_=sender; session_.RestorePending(""); mic_error_="正在准备语音模型，请稍候。Esc 取消。";
-    BeginPrepare(); listening_started_=GetTickCount64(); UpdateBox(); PublishPhase(); return;
-  }
-  if (finalize_thread_.joinable()) finalize_thread_.join();
-  model_last_used_=GetTickCount64();
-  caret_known_ = false;
-  caret_process_ = 0;
-  listening_started_=GetTickCount64();
-  insert_uncertain_ = false;
-  session_.Hotkey();
-  StartCapture();
+  StartRecording(sender);
   RequestCaret();
   UpdateBox();
   PublishPhase();
@@ -1200,6 +1311,9 @@ LRESULT Engine::OnMessage(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
   if (message == WM_APP + 100) { test_foreground_ = static_cast<DWORD>(wparam); return 0; }
   if (message == WM_APP + 101) return RestoreBackup(data_path_+L"\\restore-fixture").find(L"词语与设置已恢复")==0;
   if (message == WM_APP + 102) { ReleaseIdleModel(model_last_used_+wparam); return 0; }
+  if (message == WM_APP + 103) return recognizer_ && recognizer_->FinalReady();
+  if (message == WM_APP + 104) return prepare_attempts_;
+  if (message == WM_APP + 105) return static_cast<LRESULT>(recorded_samples_.load());
 #endif
   static const UINT taskbar_created=RegisterWindowMessageW(L"TaskbarCreated");
   if(taskbar_created && message==taskbar_created) { tray_added_=false;AddTray();return 0; }
@@ -1211,10 +1325,15 @@ LRESULT Engine::OnMessage(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
     if (queued_start_ == static_cast<ClientId>(wparam)) {
       queued_start_ = 0; session_.Escape(); mic_error_.clear(); UpdateBox(); PublishPhase();
     }
+    if (buffering_client_==static_cast<ClientId>(wparam) && buffering_client_) CancelRecording();
     return 0;
   }
   if (message == WM_TIMER && wparam == kInsertTimer) { LoseInsertConfirmation(); return 0; }
-  if (message == WM_TIMER && wparam == kAnchorTimer) { UpdateBox(); return 0; }
+  if (message == WM_TIMER && wparam == kAnchorTimer) {
+    if(buffering_client_ && !ForegroundClientAllowed(buffering_client_)) CancelRecording();
+    else UpdateBox();
+    return 0;
+  }
   if(message==WM_TIMER && wparam==kModelIdleTimer) {
     if(!fake_) ReleaseIdleModel(GetTickCount64());
     return 0;
@@ -1250,6 +1369,8 @@ LRESULT Engine::OnMessage(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
   if(message==kPreparedMessage) {
     if(prepare_thread_.joinable()) prepare_thread_.join();
     preparing_=false;
+    const bool quiet_preload=preloading_ && !waiting_for_model_;
+    preloading_=false;
     last_load_ms_=GetTickCount64()-prepare_started_;
     if(prepare_cancel_) {prepared_.reset();prepared_error_="模型准备已取消，原方案保留。";}
     // Model preparation can finish after the idle preference has changed.
@@ -1260,16 +1381,39 @@ LRESULT Engine::OnMessage(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
     if(prepared_) {
       recognizer_=std::move(prepared_);
       active_models_=loading_models_;models_=loading_models_;model_last_used_=GetTickCount64();
-      model_notice_=L"模型已验证并启用。";
-      if(session_.phase()==Phase::Idle || queued_start_)mic_error_.clear();
+      if(recognizer_->FinalReady())
+        model_notice_=quiet_preload?L"语音模型已预加载。":L"模型已验证并启用。";
+      else model_notice_.clear();
+      if(session_.phase()==Phase::Idle || waiting_for_model_)mic_error_.clear();
     } else {
       model_error_=prepared_error_.empty()?"语音模型未能准备，请重试或重新下载。":prepared_error_;
       model_notice_=Utf8ToWide(model_error_);
-      if(!recognizer_ || !recognizer_->Healthy())mic_error_=model_error_;
+      if(!quiet_preload && (waiting_for_model_ || session_.phase()==Phase::Idle) &&
+         (!recognizer_ || !recognizer_->Healthy()))mic_error_=model_error_;
     }
     activating_model_=false;
-    if(queued_start_ && recognizer_) ResumeQueuedStart();
-    else { queued_start_=0; UpdateBox(); PublishPhase(); }
+    if(waiting_for_model_) {
+      if(buffering_client_ && !ForegroundClientAllowed(buffering_client_)) {
+        CancelRecording();
+        return 0;
+      }
+      if(requested_capture_model_ || (retry_cancelled_load_ && prepare_cancel_)) {
+        const auto requested=std::move(requested_capture_model_);
+        requested_capture_model_.reset();
+        retry_cancelled_load_=false;
+        BeginPrepare(requested?&*requested:nullptr,requested.has_value(),true);
+        return 0;
+      }
+      if(recognizer_ && recognizer_->Healthy()) StartBufferedDecode();
+      else {
+        ++capture_generation_;
+        DiscardCapture();
+        session_.RestorePending("");
+        mic_error_=model_error_;
+        PublishPhase();
+      }
+    }
+    if(!quiet_preload) UpdateBox();
     return 0;
   }
   if(message==kDownloadedMessage) {
@@ -1290,6 +1434,7 @@ LRESULT Engine::OnMessage(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
   if(message==kCaptureReadyMessage) { if(static_cast<int>(wparam)==capture_generation_) UpdateBox(); return 0; }
   if (message == kFinalMessage) {
     if(finalize_thread_.joinable()) finalize_thread_.join();
+    buffered_audio_.reset();
     last_final_ms_=GetTickCount64()-final_started_;model_last_used_=GetTickCount64();
     if(static_cast<int>(wparam)==finalize_generation_ && session_.phase()==Phase::Finalizing) {
       if(final_error_.empty()) PublishFinal(final_result_);
@@ -1299,19 +1444,30 @@ LRESULT Engine::OnMessage(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
     return 0;
   }
   if (message == kPartialMessage) {
-    if (static_cast<int>(wparam) == capture_generation_) OnPartial();
+    if (static_cast<int>(wparam) == capture_generation_) {
+      if(lparam && recognizer_ && session_.phase()==Phase::Stopped) {
+        session_.OnCaptureDrained(recognizer_->Partial());UpdateBox();
+      } else OnPartial();
+    }
     return 0;
   }
   if (message == kCaptureLimitMessage) {
-    if (static_cast<int>(wparam) == capture_generation_) OnCaptureLimit();
+    if (static_cast<int>(wparam) == capture_generation_) {
+      if(lparam) stopped_notice_=L"识别缓冲已满 · 已保留 "+std::to_wstring(recorded_samples_.load()/kRecordingSampleRate)+L" 秒语音";
+      OnCaptureLimit();
+    }
     return 0;
   }
-  if (message == kCaptureErrorMessage) {
-    if (static_cast<int>(wparam) == capture_generation_ && session_.phase() == Phase::Listening) {
-      if(recognizer_)recognizer_->Cancel();
-      StopCapture();
-      // The capture thread posts a static diagnostic; UI state has one owner.
-      mic_error_ = reinterpret_cast<const char*>(lparam);
+  if (message == kCaptureErrorMessage || message == kDeviceErrorMessage) {
+    if (static_cast<int>(wparam) == capture_generation_ && (session_.can_finalize() || session_.phase()==Phase::Finalizing)) {
+      if(message==kDeviceErrorMessage && recorded_samples_>0) {
+        stopped_notice_=L"麦克风已中断 · 已保留本次采音";
+        OnCaptureLimit();
+        return 0;
+      }
+      ++capture_generation_;++finalize_generation_;
+      DiscardCapture();
+      mic_error_=reinterpret_cast<const char*>(lparam);
       session_.RestorePending(session_.box_text());
       UpdateBox();
       PublishPhase();
@@ -1525,57 +1681,86 @@ void Engine::PipeMain() {
 }
 
 bool Engine::AcceptCaptureAudio(const std::int16_t* samples,std::size_t count,int generation,
-                                CaptureHealth& health,RecordingBudget& budget) {
-  if(stop_capture_) return false;
-  const auto accepted=budget.Take(count);
-  if(!accepted) return true;
+                                CaptureHealth& health,RecordingBudget& budget,CaptureBuffer& buffer,bool tail) {
+  if(stop_capture_ && !tail) return false;
+  const auto available=std::min(count,kMaxRecordingSamples-budget.samples());
+  if(!available) return !budget.full() && (!stop_capture_ || tail);
+  const auto written=buffer.Write(samples,available);
+  const auto accepted=budget.Take(written.samples);
+  if(!accepted) return false;
   health.Push(samples,accepted,GetTickCount64());
   input_level_=health.level(); quiet_capture_=health.quiet();
   recorded_samples_=budget.samples();
-  if(!capture_ready_.exchange(true)) PostMessageW(box_.hwnd(),kCaptureReadyMessage,generation,0);
-  recognizer_->AcceptAudio(samples,accepted);
+  if(!tail && !capture_ready_.exchange(true)) PostMessageW(box_.hwnd(),kCaptureReadyMessage,generation,0);
+  if(budget.full() || written.full) {
+    stop_capture_=true;
+    PostMessageW(box_.hwnd(),kCaptureLimitMessage,generation,written.full && !budget.full());
+    return false;
+  }
+  return !stop_capture_ || tail;
+}
+
+bool Engine::ResetDecoder(int generation) {
+  try {recognizer_->Reset();return true;}
+  catch(...) {
+    recognizer_->Cancel();
+    PostMessageW(box_.hwnd(),kCaptureErrorMessage,generation,
+        reinterpret_cast<LPARAM>("模型未能开始本次识别。请重新准备模型或更换模型。"));
+    return false;
+  }
+}
+
+bool Engine::FeedDecoder(const std::int16_t* samples,std::size_t count,int generation) {
+  const bool changed=recognizer_->AcceptAudio(samples,count);
   if(!recognizer_->Healthy()) {
     stop_capture_=true;
     PostMessageW(box_.hwnd(),kCaptureErrorMessage,generation,
         reinterpret_cast<LPARAM>("识别模型已中断，草稿会保留。请重新录音或更换模型。"));
     return false;
   }
-  if(!partial_posted_.exchange(true)) PostMessageW(box_.hwnd(),kPartialMessage,generation,0);
-  if(budget.full()) {
-    stop_capture_=true;
-    PostMessageW(box_.hwnd(),kCaptureLimitMessage,generation,0);
-    return false;
-  }
-  return !stop_capture_;
+  if(changed && !partial_posted_.exchange(true)) PostMessageW(box_.hwnd(),kPartialMessage,generation,0);
+  return true;
 }
 
-void Engine::CaptureMain(int generation,std::wstring microphone,HANDLE wake) {
-  try {recognizer_->Reset();}
-  catch(...) {
-    if(recognizer_)recognizer_->Cancel();
-    PostMessageW(box_.hwnd(),kCaptureErrorMessage,generation,
-        reinterpret_cast<LPARAM>("模型未能开始本次识别。请重新准备模型或更换模型。"));
-    return;
-  }
+void Engine::CaptureMain(int generation,std::wstring microphone,HANDLE wake,CaptureBuffer& buffer) {
   if(stop_capture_)return;
   CaptureHealth health(GetTickCount64());
   RecordingBudget budget;
 #ifdef VOICEIME_TESTING
   const auto fixture = TestEnvironment(L"VOICEIME_TEST_CAPTURE");
   if (fixture == L"error") {
-    PostMessageW(box_.hwnd(), kCaptureErrorMessage, static_cast<WPARAM>(generation),
+    PostMessageW(box_.hwnd(), kDeviceErrorMessage, static_cast<WPARAM>(generation),
                  reinterpret_cast<LPARAM>("测试：麦克风采集已中断"));
     return;
   }
-  std::vector<std::int16_t> fixture_samples(fixture==L"recording-limit" ? 16000*30 :
+  if(fixture==L"model-cold-pcm") {
+    std::ifstream input(std::filesystem::path(data_path_)/L"capture.pcm",std::ios::binary);
+    std::int16_t block[320];
+    const auto start=GetTickCount64();
+    while(!stop_capture_) {
+      input.read(reinterpret_cast<char*>(block),sizeof(block));
+      const auto count=static_cast<std::size_t>(input.gcount())/sizeof(*block);
+      if(!count || !AcceptCaptureAudio(block,count,generation,health,budget,buffer)) break;
+      const auto due=start+budget.samples()*1000/kRecordingSampleRate;
+      const auto now=GetTickCount64();
+      if(due>now && WaitForSingleObject(wake,static_cast<DWORD>(due-now))==WAIT_OBJECT_0) break;
+    }
+    return;
+  }
+  std::vector<std::int16_t> fixture_samples(fixture==L"recording-limit" ? 16000*4 :
+      fixture==L"model-buffer-limit" ? 16000*5 :
       fixture == L"silence" || fixture==L"long-speech" ? 16000 * 6 : 320, 0);
   int fixture_frames=0;
   while (!stop_capture_) {
     if(fixture==L"speech-end") std::fill(fixture_samples.begin(),fixture_samples.end(),fixture_frames++<5 ? 1200 : 0);
     if(fixture==L"soft-speech") std::fill(fixture_samples.begin(),fixture_samples.end(),fixture_frames++<5 ? 1200 : 250);
     if(fixture==L"long-speech" || fixture==L"recording-limit") std::fill(fixture_samples.begin(),fixture_samples.end(),1200);
-    if(!AcceptCaptureAudio(fixture_samples.data(),fixture_samples.size(),generation,health,budget))return;
-    if (WaitForSingleObject(wake, 20) == WAIT_OBJECT_0) break;
+    if(!AcceptCaptureAudio(fixture_samples.data(),fixture_samples.size(),generation,health,budget,buffer))return;
+    if(fixture==L"model-buffer-disconnect") {
+      PostMessageW(box_.hwnd(),kDeviceErrorMessage,generation,reinterpret_cast<LPARAM>("测试：采样设备已中断"));
+      return;
+    }
+    if (WaitForSingleObject(wake,fixture==L"recording-limit" ? 8 : 20) == WAIT_OBJECT_0) break;
   }
   return;
 #endif
@@ -1588,7 +1773,7 @@ void Engine::CaptureMain(int generation,std::wstring microphone,HANDLE wake) {
   bool started = false;
   auto fail = [&](const char* reason) {
     stop_capture_ = true;
-    PostMessageW(box_.hwnd(), kCaptureErrorMessage, static_cast<WPARAM>(generation), reinterpret_cast<LPARAM>(reason));
+    PostMessageW(box_.hwnd(), kDeviceErrorMessage, static_cast<WPARAM>(generation), reinterpret_cast<LPARAM>(reason));
   };
   if (FAILED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, __uuidof(IMMDeviceEnumerator),
                               reinterpret_cast<void**>(&enumerator))) ||
@@ -1604,10 +1789,11 @@ void Engine::CaptureMain(int generation,std::wstring microphone,HANDLE wake) {
                                         nullptr)) ||
              FAILED(client->SetEventHandle(wake)) ||
              FAILED(client->GetService(__uuidof(IAudioCaptureClient), reinterpret_cast<void**>(&capture))) ||
-             capture == nullptr || FAILED(client->Start())) {
+             capture == nullptr) {
     fail("未能打开麦克风。");
-  } else {
-    started = true;
+  } else if(!stop_capture_) {
+    if(FAILED(client->Start())) fail("未能打开麦克风。");
+    else started=true;
   }
 
   std::unique_ptr<Resampler16k> resampler;
@@ -1617,22 +1803,17 @@ void Engine::CaptureMain(int generation,std::wstring microphone,HANDLE wake) {
       fail("麦克风采样格式暂不支持，请更换输入设备。");
     } else resampler = std::make_unique<Resampler16k>(format->nSamplesPerSec);
   }
-  while (started && !stop_capture_) {
-    const DWORD waited = WaitForSingleObject(wake, 200);
-    if (stop_capture_) break;
-    if(const char* error=health.Error(GetTickCount64())) { fail(error); break; }
-    if (waited != WAIT_OBJECT_0 && waited != WAIT_TIMEOUT) { fail("麦克风采集已中断"); break; }
-    UINT32 packet = 0;
-    if (FAILED(capture->GetNextPacketSize(&packet))) { fail("麦克风采集已中断"); break; }
-    while (packet > 0 && !stop_capture_) {
+  auto read_packets=[&](bool draining) {
+    while(draining?finish_capture_.load():!stop_capture_) {
+      UINT32 packet=0;
+      if(FAILED(capture->GetNextPacketSize(&packet))) {fail("麦克风采集已中断");break;}
+      if(!packet || budget.full()) break;
       BYTE* data = nullptr;
       UINT32 frames = 0;
       DWORD flags = 0;
-      if (FAILED(capture->GetBuffer(&data, &frames, &flags, nullptr, nullptr))) {
-        fail("麦克风采集已中断");
-        packet = 0;
-        break;
-      }
+      const HRESULT result=capture->GetBuffer(&data,&frames,&flags,nullptr,nullptr);
+      if(result==AUDCLNT_S_BUFFER_EMPTY) break;
+      if(FAILED(result)) {fail("麦克风采集已中断");break;}
       std::vector<std::int16_t> mono;
       if ((flags & AUDCLNT_BUFFERFLAGS_SILENT) != 0 || data == nullptr) {
         mono.assign(frames, 0);
@@ -1641,18 +1822,24 @@ void Engine::CaptureMain(int generation,std::wstring microphone,HANDLE wake) {
       }
       capture->ReleaseBuffer(frames);
       std::vector<std::int16_t> samples = resampler->Process(mono.data(), mono.size());
-      if(!AcceptCaptureAudio(samples.data(),samples.size(),generation,health,budget)) break;
-      if (FAILED(capture->GetNextPacketSize(&packet))) { fail("麦克风采集已中断"); packet = 0; }
+      const bool final_packet=draining || (stop_capture_ && finish_capture_);
+      if(!AcceptCaptureAudio(samples.data(),samples.size(),generation,health,budget,buffer,final_packet)) break;
     }
+  };
+  while (started && !stop_capture_) {
+    const DWORD waited=WaitForSingleObject(wake,200);
+    if(stop_capture_) break;
+    if(const char* error=health.Error(GetTickCount64())) {fail(error);break;}
+    if(waited!=WAIT_OBJECT_0 && waited!=WAIT_TIMEOUT) {fail("麦克风采集已中断");break;}
+    read_packets(false);
   }
 
+  // Freeze the endpoint before draining samples already delivered by Windows.
+  if(started && SUCCEEDED(client->Stop()) && resampler && finish_capture_) read_packets(true);
   if (resampler) {
     const auto tail = resampler->Flush();
-    const auto accepted=budget.Take(tail.size());
-    if (accepted && recognizer_->Healthy()) recognizer_->AcceptAudio(tail.data(),accepted);
-    recorded_samples_=budget.samples();
+    AcceptCaptureAudio(tail.data(),tail.size(),generation,health,budget,buffer,true);
   }
-  if (started && client != nullptr) client->Stop();
   if (format != nullptr) CoTaskMemFree(format);
   if (capture != nullptr) capture->Release();
   if (client != nullptr) client->Release();

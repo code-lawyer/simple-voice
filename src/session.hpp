@@ -15,6 +15,7 @@ class Session {
   void OnDraft(std::string text);
   void OnSpeechEnded();
   void OnCaptureLimit();
+  void OnCaptureDrained(std::string text);
   void OnFinal(std::string punctuated);
   void Enter();
   void RestorePending(std::string text);

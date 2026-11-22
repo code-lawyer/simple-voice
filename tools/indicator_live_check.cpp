@@ -1,5 +1,5 @@
 // Explicit interactive deployment check, never a CTest: briefly opens its own
-// empty edit control, selects the installed profile, captures only the taskbar,
+// empty edit control, selects the installed profile, optionally captures the taskbar,
 // then restores the prior profile and foreground. Never sends keys or records.
 #include <initguid.h>
 #include "tsf_service.hpp"
@@ -33,8 +33,9 @@ LRESULT CALLBACK Proc(HWND hwnd,UINT message,WPARAM wp,LPARAM lp) {
 }
 }
 int main(int argc,char** argv) {
-  if(argc!=3 || std::string(argv[1])!="--show") {
-    std::fprintf(stderr,"Usage: voiceime_indicator_live_check --show <taskbar.png>\n");return 2;
+  const bool activate_only=argc==2 && std::string(argv[1])=="--activate";
+  if(!activate_only && (argc!=3 || std::string(argv[1])!="--show")) {
+    std::fprintf(stderr,"Usage: voiceime_indicator_live_check --activate | --show <taskbar.png>\n");return 2;
   }
   SetProcessDPIAware();
   if(FAILED(CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED)))return 1;
@@ -67,7 +68,7 @@ int main(int argc,char** argv) {
   cls.hCursor=LoadCursorW(nullptr,MAKEINTRESOURCEW(32512));cls.hbrBackground=reinterpret_cast<HBRUSH>(COLOR_WINDOW+1);RegisterClassW(&cls);
   HWND window=nullptr;bool captured=false,foreground=false,active_profile=false;std::wstring loaded;
   if(SUCCEEDED(hr)) {
-    window=CreateWindowExW(0,cls.lpszClassName,L"轻音输入法 · 图标检查（自动关闭）",WS_OVERLAPPEDWINDOW,
+    window=CreateWindowExW(0,cls.lpszClassName,activate_only?L"轻音输入法 · 切入检查（自动关闭）":L"轻音输入法 · 图标检查（自动关闭）",WS_OVERLAPPEDWINDOW,
       CW_USEDEFAULT,CW_USEDEFAULT,500,180,nullptr,nullptr,cls.hInstance,nullptr);
     HWND edit=CreateWindowExW(WS_EX_CLIENTEDGE,L"EDIT",L"",WS_CHILD|WS_VISIBLE|WS_TABSTOP|ES_AUTOHSCROLL,
       28,40,420,40,window,nullptr,cls.hInstance,nullptr);
@@ -89,12 +90,13 @@ int main(int argc,char** argv) {
     }
     wchar_t path[32768]{};const HMODULE module=GetModuleHandleW(L"voiceime_tsf.dll");
     if(module && GetModuleFileNameW(module,path,32768))loaded=path;
-    if(SUCCEEDED(hr) && foreground && active_profile && !loaded.empty())captured=CaptureTaskbar(std::filesystem::u8path(argv[2]));
+    if(!activate_only && SUCCEEDED(hr) && foreground && active_profile && !loaded.empty())captured=CaptureTaskbar(std::filesystem::u8path(argv[2]));
   }
   if(have_previous)profiles->ActivateLanguageProfile(previous.clsid,previous.langid,previous.guidProfile);
   if(window) {if(foreground && IsWindow(previous_window))SetForegroundWindow(previous_window);if(IsWindow(window))DestroyWindow(window);}
   if(thread){thread->Deactivate();thread->Release();}if(profiles)profiles->Release();
   Gdiplus::GdiplusShutdown(graphics);CoUninitialize();
   std::printf("activate_hresult=%08lx\nfixture_foreground=%d\nloaded_tsf=%ls\ntaskbar_captured=%d\n",hr,foreground,loaded.c_str(),captured);
-  return captured ? 0 : 1;
+  if(activate_only)return SUCCEEDED(hr) && foreground && active_profile && !loaded.empty()?0:1;
+  return captured?0:1;
 }

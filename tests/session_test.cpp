@@ -90,6 +90,7 @@ void RecordingLimitRequiresManualCalibrationAndConfirmation() {
     CHECK(s.phase()==Phase::Stopped && !s.mic_open());
     s.OnFinal("迟到的结果");s.OnDraft("迟到的草稿");
     CHECK(s.phase()==Phase::Stopped && s.box_text()=="草稿");
+    s.OnCaptureDrained("收音尾段");CHECK(s.phase()==Phase::Stopped && s.box_text()=="收音尾段");
     std::string text;CHECK(!s.TakeCommit(&text));
     if(action==2) {
       s.Escape();CHECK(s.phase()==Phase::Idle);s.Hotkey();

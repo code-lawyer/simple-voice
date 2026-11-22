@@ -27,7 +27,8 @@ bool ValidSize(MsgType type, std::size_t body) {
   switch (type) {
     case MsgType::StartListen: case MsgType::Cancel: case MsgType::Enter:
     case MsgType::ClientHello: return body == 8;
-    case MsgType::QueryCaret: case MsgType::ShowSettings: case MsgType::ServerReady: return body == 0;
+    case MsgType::QueryCaret: case MsgType::ShowSettings: case MsgType::ServerReady:
+    case MsgType::PreloadModel: return body == 0;
     case MsgType::Caret: return body == 32;
     case MsgType::Phase: return body == 9;
     case MsgType::InsertText: return body > 8;
@@ -121,5 +122,5 @@ bool IsVoiceControl(MsgType type) {
 }
 bool IsClientMessage(MsgType type) {
   return IsVoiceControl(type) || type == MsgType::Caret || type == MsgType::ShowSettings ||
-      type == MsgType::PersonalTermUsed || type == MsgType::InsertResult;
+      type == MsgType::PersonalTermUsed || type == MsgType::InsertResult || type == MsgType::PreloadModel;
 }

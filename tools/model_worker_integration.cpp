@@ -25,6 +25,29 @@ void RealPrivatePipesRoundTrip() {
   CHECK(r->Partial()=="测试草稿");CHECK(r->Finalize()=="测试最终文本");
   CHECK(r->Original()=="测试最终文本");r->Reset();CHECK(r->Partial().empty());
 }
+void DraftWorksWhileFinalModelLoads() {
+  Fixture("staged");std::string error;
+  auto r=MakeWorkerRecognizer(root,{},&error,worker,3000,nullptr,ModelStartup::DraftFirst);
+  Fixture(nullptr);
+  CHECK(r && r->Healthy());if(!r)return;
+  CHECK(!r->FinalReady());
+  const std::int16_t input[320]={1200};r->Reset();
+  CHECK(r->AcceptAudio(input,320) && r->Partial()=="测试草稿");
+  CHECK(!r->AcceptAudio(input,320) && r->Partial()=="测试草稿");
+  CHECK(!r->FinalReady());
+  CHECK(r->Finalize()=="测试最终文本");
+  CHECK(r->FinalReady());r->Reset();CHECK(r->Partial().empty());
+}
+void LongReplyCrossesThePipeBuffer() {
+  auto r = Start("large-final");
+  CHECK(r && r->Healthy());
+  if (!r) return;
+  const std::string expected(128 * 1024, 'x');
+  CHECK(r->Finalize() == expected);
+  CHECK(r->Original() == expected);
+  r->Reset();
+  CHECK(r->Partial().empty() && r->Healthy());
+}
 void LongRecordingBudgetIsEnforcedAcrossWorkerRequests() {
   auto r=Start("normal");CHECK(r && r->Healthy());if(!r)return;
   const std::vector<std::int16_t> minute(16000*62,250);
@@ -105,6 +128,8 @@ int main(int argc,char** argv) {
     const auto path=directory/name;fs::create_directories(path.parent_path());std::ofstream(path).put('x');
   }
   const Test tests[]={{"worker.PrivatePipesRoundTrip",RealPrivatePipesRoundTrip},
+      {"worker.DraftBeforeFinalReady",DraftWorksWhileFinalModelLoads},
+      {"worker.LongReplyCrossesThePipeBuffer",LongReplyCrossesThePipeBuffer},
       {"worker.LongRecordingLimit",LongRecordingBudgetIsEnforcedAcrossWorkerRequests},
       {"worker.CancelAndRecover",CancelStopsBlockedInferenceAndAllowsAnotherWorker},
       {"worker.LoadCrashAndTimeout",LoadCrashAndTimeoutDoNotKillTheHost},

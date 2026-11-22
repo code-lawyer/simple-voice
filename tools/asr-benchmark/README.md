@@ -104,6 +104,16 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/asr-benchmark/run.
 
 空闲时在相同线程数、相同模型/语料哈希下比较；系统文件缓存没有被清空，主机负载也不是实验室固定值。更换录音、TTS 声音、推理配置或热词后，应记为新的实验。
 
+### 按录音节奏测本地模型
+
+从仓库根目录运行已编译的 `voiceime_recognizer_smoke`，它会调用同目录的产品模型进程。语料清单为 UTF-8 TSV，每行依次填写样本 ID、单声道 PCM16 WAV 路径和预期关键词，用 Tab 分隔。第三列填 `<observe>` 可记录输出供独立评分，填 `<empty>` 可断言静音无文字。
+
+```powershell
+& "$BuildDir/voiceime_recognizer_smoke.exe" --model qwen3 "$PWD/models/final-qwen" "$CorpusTsv" --realtime
+```
+
+`--realtime` 按每 20 毫秒一个音频包的节奏送入。输出的 `model_load_ms` 从创建识别器计至可用，`first_draft_ms` 从录音起点计至首次非空草稿（-1 表示整段没有草稿），`audio_end_to_text_ms` 从最后一个音频包应到达的时刻计至定稿，包含处理积压。去掉该参数可测尽快回放时的吞吐。两种方式均使用文件音频。
+
 ## 各模型的许可边界
 
 - sherpa-onnx 运行时为 Apache-2.0；其 ONNX Runtime 为 MIT 及相应上游依赖许可。

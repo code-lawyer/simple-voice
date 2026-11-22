@@ -9,4 +9,4 @@
 std::unique_ptr<Recognizer> MakeWorkerRecognizer(
     const std::string& model_root,const ModelSettings& settings,std::string* error=nullptr,
     const std::wstring& worker_executable=L"",unsigned load_timeout_ms=120000,
-    const std::atomic<bool>* cancel_loading=nullptr);
+    const std::atomic<bool>* cancel_loading=nullptr,ModelStartup startup=ModelStartup::Full);

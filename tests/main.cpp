@@ -30,6 +30,7 @@ void ExpiredEntriesDropOut();
 void CutsANameIntoTokensWithPinyin();
 void LongRecordingStopsOnlyAtTheSharedLimit();
 void RecordingLimitClipsPacketsAndRejectsOverflow();
+void ColdBufferPreservesOrderAndAcceptedPrefix();
 void RecordingLimitRequiresManualCalibrationAndConfirmation();
 void Resample48kTo16kKeepsDuration();
 void SessionKeepsDraftUntilFinalThenEnterCommitsFinal();
@@ -119,6 +120,7 @@ int main(int argc, char** argv) {
       {"settings.SaveReportsMissingDirectory", SettingsSaveReportsMissingDirectory},
       {"recording.LongRecordingStopsOnlyAtTheSharedLimit", LongRecordingStopsOnlyAtTheSharedLimit},
       {"recording.LimitClipsPacketsAndRejectsOverflow", RecordingLimitClipsPacketsAndRejectsOverflow},
+      {"recording.ColdBufferPreservesOrderAndAcceptedPrefix", ColdBufferPreservesOrderAndAcceptedPrefix},
       {"session.RecordingLimitRequiresManualCalibrationAndConfirmation", RecordingLimitRequiresManualCalibrationAndConfirmation},
       {"lexicon.ConcurrentReadsWritesAndDeletesAreSerialized", ConcurrentLexiconReadsWritesAndDeletesAreSerialized},
       {"models.ChoicesPersistAndRejectInvalidSettings", ModelChoicesPersistAndRejectInvalidSettings},

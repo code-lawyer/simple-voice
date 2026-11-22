@@ -13,7 +13,7 @@ enum Id {
   ModelUse=63, ModelLocal=65, ModelDefault=66, ModelCancel=67, ModelIdle=68,
   ModelHints=69, DataBackup=70, DataRestore=71, PracticeToggle=72,
   PracticeConfirm=73, PracticeCancel=74, PracticeText=75,
-  SkinPreview=80, HotkeyValue=81, TermsEmpty=82
+  SkinPreview=80, HotkeyValue=81, TermsEmpty=82, ModelPreload=83
 };
 
 // Navigation and feedback live in the frame. The form scrolls in its own child window.

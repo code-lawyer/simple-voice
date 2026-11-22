@@ -4,12 +4,14 @@
 #include "settings.hpp"
 #include "preferences_controls.hpp"
 #include "model_settings.hpp"
+#include "capture_buffer.hpp"
 #include "sqlite3.h"
 #include "lexicon.hpp"
 #include "data_backup.hpp"
 #include "utf8.hpp"
 #include <windows.h>
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <ctime>
 #include <deque>
@@ -103,8 +105,8 @@ class Client {
       Require(WritePipeBytes(pipe_, bytes.substr(2), timeout.value), "fragmented request completes after polling timeout");
     } else Require(WritePipeBytes(pipe_, bytes, timeout.value), "request sent");
   }
-  Message Wait(MsgType type, const char* text = nullptr) {
-    Timer timeout;
+  Message Wait(MsgType type, const char* text = nullptr,int timeout_ms=5000) {
+    Timer timeout(timeout_ms);
     for (;;) {
       for (auto it = messages_.begin(); it != messages_.end(); ++it) {
         if (it->type == type && (text == nullptr || it->text == text)) {
@@ -120,7 +122,7 @@ class Client {
       if (result.status != PipeReadStatus::Data) throw std::runtime_error("engine response timeout/disconnect");
     }
   }
-  void Phase(const char* phase) { Wait(MsgType::Phase, phase); }
+  void Phase(const char* phase,int timeout_ms=5000) { Wait(MsgType::Phase, phase,timeout_ms); }
   bool HasCommit() const {
     return std::any_of(messages_.begin(), messages_.end(),
                        [](const Message& m) { return m.type == MsgType::InsertText; });
@@ -297,8 +299,9 @@ void ModelIdlePreference(const std::filesystem::path& host,const std::filesystem
     Require(LoadModelSettings(file).idle_minutes==5,"re-enabling idle release restores the five-minute timeout");
     SendMessageW(engine.Window(),WM_APP+102,idle_timeout,0);
     client.Send(MsgType::StartListen);
-    Require(client.Wait(MsgType::Phase).text=="3","with idle release on, five idle minutes trigger preparation on the next recording");
-    client.Phase("1");client.Send(MsgType::Cancel);client.Phase("0");engine.Stop();
+    Require(client.Wait(MsgType::Phase).text=="1" && SendMessageW(engine.Window(),WM_APP+104,0,0)==1,
+            "after idle release the next recording opens capture and reloads the worker");
+    client.Send(MsgType::Cancel);client.Phase("0");engine.Stop();
   }
   {
     Host engine(host,data,L"normal"); Client client(engine.Pipe()); client.Phase("0");
@@ -312,11 +315,216 @@ void ModelIdlePreference(const std::filesystem::path& host,const std::filesystem
     Require(saved.model==SpeechModel::Qwen3 && saved.idle_minutes==0,"idle release can be saved independently of a queued model change");
     client.Send(MsgType::Cancel);client.Phase("0");
     client.Send(MsgType::StartListen);client.Phase("1");
+    const auto deadline=GetTickCount64()+3000;
+    while(LoadModelSettings(file).model!=SpeechModel::SenseVoice && GetTickCount64()<deadline) Sleep(10);
     const auto activated=LoadModelSettings(file);
     Require(activated.model==SpeechModel::SenseVoice && activated.idle_minutes==0,
             "completing the queued model change retains the last saved idle preference");
     client.Send(MsgType::Cancel);client.Phase("0");engine.Stop();
   }
+}
+
+void ModelPreload(const std::filesystem::path& host,const std::filesystem::path& output,bool real_model) {
+  using Clock=std::chrono::steady_clock;
+  const auto data=output/("model-preload-"+std::to_string(GetTickCount64()));
+  {
+    Host engine(host,data,real_model?L"model-real":L"model-slow");
+    Client client(engine.Pipe()); client.Phase("0");
+    const auto frame=engine.Window();
+    engine.Foreground(0);
+    client.Send(MsgType::PreloadModel); client.Quiet(100);
+    Require(SendMessageW(frame,WM_APP+104,0,0)==0,"background activation does not load a model");
+    engine.Foreground(GetCurrentProcessId());
+    const auto start=Clock::now();
+    client.Send(MsgType::PreloadModel);
+    Client second(engine.Pipe()); second.Phase("0");
+    second.Send(MsgType::PreloadModel);
+    const auto deadline=GetTickCount64()+30000;
+    while(!SendMessageW(frame,WM_APP+103,0,0) && GetTickCount64()<deadline) Sleep(10);
+    Require(SendMessageW(frame,WM_APP+103,0,0)!=0,"activation prepares the selected model without pressing a voice key");
+    const auto warm=Clock::now();
+    Require(!IsWindowVisible(frame) && SendMessageW(frame,WM_APP+104,0,0)==1,
+            "two foreground hosts share a single load and the recording window stays hidden");
+    if(!real_model) {
+      SendMessageW(frame,WM_APP+102,5*60*1000,0);
+      Require(!SendMessageW(frame,WM_APP+103,0,0),"idle release still unloads a preloaded model");
+      client.Send(MsgType::PreloadModel);
+      client.Send(MsgType::StartListen); client.Phase("1");
+      Require(SendMessageW(frame,WM_APP+104,0,0)==2,"a quick voice hotkey joins the second activation load");
+    } else {
+      const auto key=Clock::now();
+      client.Send(MsgType::StartListen);
+      Require(client.Wait(MsgType::Phase).text=="1","the first voice hotkey goes directly to listening with the real worker ready");
+      std::printf("real_preload_ms=%.1f warm_command_to_listening_ms=%.1f\n",
+                  std::chrono::duration<double,std::milli>(warm-start).count(),
+                  std::chrono::duration<double,std::milli>(Clock::now()-key).count());
+    }
+    client.Send(MsgType::Cancel);client.Phase("0");
+    if(real_model) {engine.Stop(); return;}
+    SendMessageW(frame,WM_COMMAND,3,0);
+    const auto settings=engine.Window(L"SimpleVoicePreferences");
+    ShowModelPage(settings);
+    const auto box=preference::Field(settings,preference::ModelPreload);
+    Require(SendMessageW(box,BM_GETCHECK,0,0)==BST_CHECKED,"model preload is enabled by default");
+    SendMessageW(box,BM_CLICK,0,0);
+    Require(GetPrivateProfileIntW(L"speech",L"preload_on_activate",1,(data/L"speech-startup.ini").c_str())==0,
+            "turning off activation preload is saved independently of the model choice");
+    engine.Stop();
+  }
+  Host engine(host,data,L"model-slow"); Client client(engine.Pipe()); client.Phase("0");
+  client.Send(MsgType::PreloadModel); client.Quiet(120);
+  Require(SendMessageW(engine.Window(),WM_APP+104,0,0)==0,"the preload opt-out survives an engine restart");
+  client.Send(MsgType::StartListen); client.Phase("1");
+  client.Send(MsgType::Cancel); client.Phase("0"); engine.Stop();
+}
+
+LRESULT WaitCaptured(HWND frame,std::size_t required) {
+  const auto deadline=GetTickCount64()+5000+required*1000/kRecordingSampleRate;
+  LRESULT count;
+  do {
+    count=SendMessageW(frame,WM_APP+105,0,0);
+    if(count>=static_cast<LRESULT>(required)) return count;
+    Sleep(2);
+  } while(GetTickCount64()<deadline);
+  throw std::runtime_error("expected "+std::to_string(required)+" captured samples, got "+std::to_string(count));
+}
+
+std::string ConfirmPreview(Client& client,int timeout_ms=5000,
+                           std::chrono::steady_clock::time_point* preview_at=nullptr) {
+  client.Phase("3",timeout_ms);
+  if(preview_at) *preview_at=std::chrono::steady_clock::now();
+  Require(client.Quiet(60),"a completed cold preview waits for explicit confirmation");
+  client.Send(MsgType::Enter);
+  const auto text=client.Wait(MsgType::InsertText).text;
+  client.Phase("4");client.Send(MsgType::InsertResult,"ok");client.Phase("0");
+  return text;
+}
+
+void ColdCapture(const std::filesystem::path& host,const std::filesystem::path& output) {
+  for(bool disconnect:{false,true}) {
+    const auto data=output/("cold-bounded-"+std::to_string(GetTickCount64()));
+    Host engine(host,data,disconnect?L"model-buffer-disconnect":L"model-buffer-limit");
+    Client client(engine.Pipe());client.Phase("0");
+    client.Send(MsgType::StartListen);client.Phase("1");client.Phase("5");
+    const auto count=SendMessageW(engine.Window(),WM_APP+105,0,0);
+    const auto expected=disconnect?320:CaptureBuffer::capacity;
+    Require(count==static_cast<LRESULT>(expected) && !SendMessageW(engine.Window(),WM_APP+103,0,0),
+            "the cold buffer cap or a device disconnect stops capture with the exact prefix");
+    wchar_t notice[1024]{};GetWindowTextW(engine.Window(),notice,1024);
+    Require(std::wstring(notice).find(disconnect?L"麦克风已中断":L"已保留 12 秒")!=std::wstring::npos,
+            "the stop notice states why capture ended and what is kept");
+    client.Send(MsgType::Enter);client.Phase("2");
+    client.Send(MsgType::Enter);Require(client.Quiet(80),"Enter while the stopped audio awaits its model never schedules insertion");
+    std::ofstream(data/"allow-model").put('1');
+    Require(ConfirmPreview(client)==std::to_string(expected)+"假字。","every retained sample is finalized exactly once");
+    engine.Stop();
+  }
+  {
+    const auto data=output/("cold-handoff-"+std::to_string(GetTickCount64()));
+    Host engine(host,data,L"model-buffer-gate");Client client(engine.Pipe());client.Phase("0");
+    client.Send(MsgType::StartListen);client.Phase("1");
+    const auto prefix=WaitCaptured(engine.Window(),960);
+    std::ofstream(data/"allow-model").put('1');
+    const auto deadline=GetTickCount64()+3000;
+    while(!SendMessageW(engine.Window(),WM_APP+103,0,0) && GetTickCount64()<deadline) Sleep(5);
+    Require(SendMessageW(engine.Window(),WM_APP+103,0,0)!=0,"the decoder attaches to a running capture");
+    WaitCaptured(engine.Window(),static_cast<std::size_t>(prefix)+1280);
+    client.Send(MsgType::Enter);client.Phase("2");client.Quiet(40);
+    const auto total=SendMessageW(engine.Window(),WM_APP+105,0,0);
+    Require(ConfirmPreview(client)==std::to_string(total)+"假字。","live and buffered samples share one decoder with no gaps or duplicates");
+    engine.Stop();
+  }
+  const auto data=output/("cold-restart-"+std::to_string(GetTickCount64()));
+  Host engine(host,data,L"model-slow"); Client client(engine.Pipe());client.Phase("0");
+  client.Send(MsgType::StartListen);client.Phase("1");WaitCaptured(engine.Window(),960);
+  client.Send(MsgType::Cancel);client.Phase("0");
+  client.Send(MsgType::StartListen);client.Phase("1");WaitCaptured(engine.Window(),320);
+  client.Send(MsgType::StartListen);client.Phase("2");
+  client.Quiet(40);
+  const auto retained=SendMessageW(engine.Window(),WM_APP+105,0,0);
+  engine.Foreground(0);
+  Require(client.Quiet(80) && SendMessageW(engine.Window(),WM_APP+105,0,0)==retained,
+          "a second hotkey closes capture while the replacement load is pending");
+  client.Phase("3");engine.Foreground(GetCurrentProcessId());
+  Client confirmer(engine.Pipe());
+  Require(ConfirmPreview(confirmer)==std::to_string(retained)+"假字。","switching apps after an early stop keeps only the retried utterance for its confirming client");
+  engine.Stop();
+}
+
+void ColdCaptureReal(const std::filesystem::path& host,const std::filesystem::path& output,
+                     const std::filesystem::path& pcm,bool early_stop,const std::wstring& prefix=L"",bool trace=false) {
+  const auto data=output/("cold-qwen-"+std::to_string(GetTickCount64()));
+  const auto bytes=std::filesystem::file_size(pcm);
+  Require(bytes>0 && bytes%2==0 && bytes<=2*kMaxRecordingSamples,"fixture fits the 16 kHz mono PCM16 recording limit");
+  std::filesystem::create_directories(data);
+  std::filesystem::copy_file(pcm,data/"capture.pcm");
+  Host engine(host,data,L"model-cold-pcm");Client client(engine.Pipe()); client.Phase("0");
+  const auto frame=engine.Window();
+  std::string first;
+  for(bool warm:{false,true}) {
+    const auto start=std::chrono::steady_clock::now();
+    client.Send(MsgType::StartListen);client.Phase("1");WaitCaptured(frame,1);
+    const auto first_frame=std::chrono::steady_clock::now();
+    Require((SendMessageW(frame,WM_APP+103,0,0)!=0)==warm,"first samples arrive with the expected cold or warm model state");
+    if(trace) {
+      const auto deadline=start+std::chrono::milliseconds(bytes/32+5000);
+      std::wstring previous;
+      while(std::chrono::steady_clock::now()<deadline) {
+        wchar_t title[4096]{};
+        GetWindowTextW(frame,title,4096);
+        const std::wstring caption(title);
+        const auto sep=caption.find(L'：'),end=caption.rfind(L'。');
+        if(IsWindowVisible(frame) && sep!=caption.npos && end!=caption.npos && end>sep) {
+          const auto draft=caption.substr(sep+1,end-sep-1);
+          if(draft!=L"请开始说话" && draft!=previous) {
+            const auto ms=std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-start).count();
+            std::printf("visible\t%s\t%lld\t%s\n",warm?"warm":"cold",static_cast<long long>(ms),WideToUtf8(draft).c_str());
+            previous=draft;
+          }
+        }
+        if(SendMessageW(frame,WM_APP+105,0,0)>=static_cast<LRESULT>(bytes/2))break;
+        Sleep(8);
+      }
+    }
+    if(!prefix.empty()) {
+      const auto listen_for=std::chrono::milliseconds((std::max)(std::uintmax_t{6500},bytes/32+250));
+      long long first_prefix=-1;
+      while(std::chrono::steady_clock::now()-start<listen_for) {
+        wchar_t title[2048]{};
+        GetWindowTextW(frame,title,2048);
+        if(IsWindowVisible(frame) && std::wstring_view(title).find(L"："+prefix)!=std::wstring_view::npos) {
+          first_prefix=std::chrono::duration_cast<std::chrono::milliseconds>(
+              std::chrono::steady_clock::now()-start).count();
+          break;
+        }
+        Sleep(8);
+      }
+      std::printf("%s visible_prefix_ms=%lld\n",warm?"warm":"cold",first_prefix);
+      Require(first_prefix>=0,"the listening window displayed the expected spoken prefix");
+    }
+    Require(WaitCaptured(frame,bytes/2)==static_cast<LRESULT>(bytes/2),"all replay samples reach the engine");
+    const auto stop_at=std::chrono::steady_clock::now();
+    client.Send(MsgType::Enter);client.Phase("2");
+    const bool ready_at_stop=SendMessageW(frame,WM_APP+103,0,0)!=0;
+    if(!warm && early_stop) Require(!ready_at_stop,"the first utterance ended before real Qwen was ready");
+    std::string text;
+    std::chrono::steady_clock::time_point preview_at;
+    try { text=ConfirmPreview(client,30000,&preview_at); }
+    catch(...) {
+      wchar_t status[1024]{};GetWindowTextW(frame,status,1024);
+      std::fprintf(stderr,"real model ready=%lld, captured=%lld, status=%s\n",
+          static_cast<long long>(SendMessageW(frame,WM_APP+103,0,0)),
+          static_cast<long long>(SendMessageW(frame,WM_APP+105,0,0)),WideToUtf8(status).c_str());
+      throw;
+    }
+    Require(!text.empty() && (!warm || text==first),"real Qwen returns the same complete text for buffered and warm audio");
+    if(!warm) first=text;
+    std::printf("%s first_simulated_frame_ms=%.1f stop_to_preview_ms=%.1f ready_at_stop=%d samples=%llu text=%s\n",warm?"warm":"cold",
+        std::chrono::duration<double,std::milli>(first_frame-start).count(),
+        std::chrono::duration<double,std::milli>(preview_at-stop_at).count(),ready_at_stop,
+        static_cast<unsigned long long>(bytes/2),text.c_str());
+  }
+  engine.Stop();
 }
 
 void DownloadFixture(const std::filesystem::path& program,bool complete) {
@@ -399,6 +607,28 @@ int main(int argc, char** argv) {
     GetModuleFileNameW(nullptr, own, MAX_PATH);
     const auto host = std::filesystem::path(own).parent_path() / "voiceime_engine_testhost.exe";
     const auto output = std::filesystem::absolute(argc > 1 ? argv[1] : "build/engine-integration");
+    if(argc==4 && std::string(argv[2])=="--visible-trace") {
+      ColdCaptureReal(host,output,argv[3],false,L"",true);return 0;
+    }
+    if(argc==5 && std::string(argv[2])=="--draft-profile") {
+      std::ifstream file(argv[4]);
+      std::string prefix;
+      if(!std::getline(file,prefix) || prefix.empty())throw std::runtime_error("expected a UTF-8 file containing the spoken prefix");
+      ColdCaptureReal(host,output,argv[3],false,Utf8ToWide(prefix));return 0;
+    }
+    if(argc>=3 && std::string(argv[2])=="--cold-capture-real") {
+      const bool live=argc==5 && std::string(argv[4])=="--through-load";
+      if(argc!=4 && !live) throw std::runtime_error("expected a 16 kHz mono PCM16 fixture file, optionally --through-load");
+      ColdCaptureReal(host,output,argv[3],!live);return 0;
+    }
+    if(argc<3 || std::string(argv[2])=="--cold-capture-only") {
+      ColdCapture(host,output);
+      if(argc>=3) {std::printf("%d cold capture checks passed\n",checks);return 0;}
+    }
+    if(argc<3 || std::string(argv[2])=="--model-preload-only" || std::string(argv[2])=="--model-preload-real") {
+      ModelPreload(host,output,argc>=3 && std::string(argv[2])=="--model-preload-real");
+      if(argc>=3) {std::printf("%d activation preload checks passed\n",checks);return 0;}
+    }
     if(argc<3 || std::string(argv[2])=="--model-idle-only") {
       ModelIdlePreference(host,output);
       if(argc>=3) {std::printf("%d idle-release checks passed\n",checks);return 0;}
@@ -529,10 +759,10 @@ int main(int argc, char** argv) {
       Host engine(host,output/(disconnect?"prepare-disconnect":"prepare-focus"),L"model-slow");
       {
         Client client(engine.Pipe()); client.Phase("0");
-        client.Send(MsgType::StartListen); client.Phase("3");
+        client.Send(MsgType::StartListen); client.Phase("1");
         if(!disconnect) {
           engine.Foreground(0); client.Phase("0");
-          Require(client.Quiet(100),"losing foreground while preparing never starts capture");
+          Require(client.Quiet(100),"losing foreground while buffering discards the pending utterance");
         }
       }
       Sleep(650); engine.Foreground(GetCurrentProcessId());
@@ -817,9 +1047,13 @@ int main(int argc, char** argv) {
     }
     {
       Host engine(host,output/"model-preparing",L"model-slow"); Client client(engine.Pipe()); client.Phase("0");
-      client.Send(MsgType::StartListen); client.Phase("3");
+      client.Send(MsgType::StartListen); client.Phase("1");
+      const auto deadline=GetTickCount64()+400;
+      while(!SendMessageW(engine.Window(),WM_APP+105,0,0) && GetTickCount64()<deadline)Sleep(5);
+      Require(SendMessageW(engine.Window(),WM_APP+105,0,0)>0 && !SendMessageW(engine.Window(),WM_APP+103,0,0),
+              "the first microphone samples arrive before the slow model is ready");
       wchar_t title[1024]{}; GetWindowTextW(engine.Window(),title,1024);
-      Require(std::wstring(title).find(L"准备")!=std::wstring::npos,"model preparation is visible before microphone capture");
+      Require(std::wstring(title).find(L"模型")!=std::wstring::npos,"ongoing capture and model loading are visible together");
       const auto began=GetTickCount64(); client.Send(MsgType::Cancel); client.Phase("0");
       Require(GetTickCount64()-began<200,"model loading does not block cancellation");
       Require(client.Quiet(650),"cancelled model preparation never commits");
@@ -844,7 +1078,7 @@ int main(int argc, char** argv) {
       Require(SaveInputPreferences((data/"preferences.ini").wstring(),initial),"editor generation fixture starts bilingual");
       Require(SaveModelSettings((data/"speech-models.ini").wstring(),{}),"preview generation resets the selected model");
       Host engine(host,data,L"model-slow"); Client client(engine.Pipe()); client.Phase("0");
-      client.Send(MsgType::StartListen); client.Phase("3"); client.Phase("1"); Sleep(40);
+      client.Send(MsgType::StartListen); client.Phase("1"); Sleep(40);
       client.Send(MsgType::Enter); client.Phase("2"); client.Phase("3");
       SendMessageW(engine.Window(),WM_COMMAND,5,0);
       const auto editor=engine.Window(L"SimpleVoicePreviewEditor");
@@ -853,13 +1087,13 @@ int main(int argc, char** argv) {
       const auto settings=engine.Window(L"SimpleVoicePreferences");
       ShowModelPage(settings);
       SendMessageW(preference::Field(settings,60),CB_SETCURSEL,1,0); SendMessageW(settings,WM_COMMAND,63,0);
-      client.Send(MsgType::StartListen); client.Phase("3");
+      client.Send(MsgType::StartListen); client.Phase("1");
       Require(!IsWindow(editor),"accepting a queued recording closes the previous utterance editor");
       SendMessageW(engine.Window(),WM_COMMAND,5,0);
       Require(!engine.Window(L"SimpleVoicePreviewEditor"),"model preparation cannot open an editor for an absent preview");
       client.Send(MsgType::Enter);
       Require(client.Quiet(100),"Enter while preparing cannot insert the previous utterance");
-      client.Phase("1"); client.Send(MsgType::Cancel); client.Phase("0"); engine.Stop();
+      client.Phase("2"); client.Phase("3");client.Send(MsgType::Cancel); client.Phase("0"); engine.Stop();
     }
     {
       Host engine(host,output/"model-reset-failure",L"reset-error");Client client(engine.Pipe());client.Phase("0");
@@ -875,6 +1109,8 @@ int main(int argc, char** argv) {
       Host engine(host,output/fixture,fixture);Client client(engine.Pipe());client.Phase("0");
       client.Send(MsgType::StartListen);client.Phase("1");Sleep(80);
       if(std::wstring(fixture)==L"audio-hang") {
+        Require(WaitCaptured(engine.Window(),320*7)>=320*7,
+                "warm capture continues accepting microphone packets while inference is blocked");
         const auto began=GetTickCount64();client.Send(MsgType::Enter);client.Phase("2");
         Require(GetTickCount64()-began<250,"stopping a blocked audio request immediately exposes cancellable finalization");
       }
@@ -964,8 +1200,8 @@ int main(int argc, char** argv) {
       const auto deadline=GetTickCount64()+3000;
       while(LoadModelSettings((data/"speech-models.ini").wstring()).model!=SpeechModel::SenseVoice && GetTickCount64()<deadline)Sleep(10);
       Require(LoadModelSettings((data/"speech-models.ini").wstring()).model==SpeechModel::SenseVoice,
-          "the next practice validates the deferred model before opening capture");
-      SendMessageW(settings,WM_COMMAND,72,0);client.Phase("1");SendMessageW(settings,WM_COMMAND,74,0);client.Phase("0");engine.Stop();
+          "the next practice validates the selected model while already capturing");
+      client.Phase("1");SendMessageW(settings,WM_COMMAND,74,0);client.Phase("0");engine.Stop();
     }
     {
       Host engine(host,output/"practice-unknown",L"normal",L"这是<unk>");Client client(engine.Pipe());client.Phase("0");

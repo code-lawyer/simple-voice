@@ -40,6 +40,10 @@ void Session::OnCaptureLimit() {
   mic_open_ = false;
 }
 
+void Session::OnCaptureDrained(std::string text) {
+  if(phase_==Phase::Stopped) box_=std::move(text);
+}
+
 void Session::OnFinal(std::string punctuated) {
   if (phase_ != Phase::Finalizing) return;
   mic_open_ = false;

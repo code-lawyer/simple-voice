@@ -154,7 +154,7 @@ std::wstring ConfirmBox::HintText() const {
   if (phase_ == Phase::Listening) return quiet_capture_ ?
       L"暂未检测到声音，仍在收音 · Enter 停录并校准 · Esc 取消" :
       L"Enter 停录并校准 · 停顿不会结束 · Esc 取消";
-  if (phase_ == Phase::Stopped) return L"草稿已保留 · Enter 开始校准 · Esc 取消";
+  if (phase_ == Phase::Stopped) return L"本次语音已保留 · Enter 开始校准 · Esc 取消";
   if (phase_ == Phase::Finalizing) return L"校准后可预览并确认 · Esc 取消";
   if (text_.empty()) return L"按语音快捷键重新开始 · Esc 关闭";
   return L"再次按 Enter 确认写入 · 右键编辑 / 复制 · Esc 取消";
