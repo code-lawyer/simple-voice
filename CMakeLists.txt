@@ -25,6 +25,7 @@ add_library(voiceime_protocol STATIC
   src/utf8.cpp
   src/place.cpp
   src/ipc.cpp
+  src/pinyin_client.cpp
   src/pipe_io.cpp
   src/ipc_security.cpp
   src/settings.cpp
@@ -114,12 +115,13 @@ target_link_libraries(voiceime_tsf PRIVATE ole32 oleaut32 uuid user32 gdi32 comc
 target_include_directories(voiceime_tsf PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_compile_definitions(voiceime_tsf PRIVATE _WIN32_WINNT=0x0601)
 target_link_options(voiceime_tsf PRIVATE -static-libstdc++ -static-libgcc)
-# EnsureRime reads rime-data beside the DLL. The source tree is not that directory.
+# The engine opens the packaged schemas beside its executable.
 add_custom_target(voiceime_rime_data ALL
   COMMAND ${CMAKE_COMMAND} -E copy_directory
     "${CMAKE_SOURCE_DIR}/rime-data"
     "${CMAKE_BINARY_DIR}/rime-data")
 add_dependencies(voiceime_tsf voiceime_rime_data)
+add_dependencies(voiceime_engine voiceime_rime_data)
 add_dependencies(voiceime_tests voiceime_tsf)
 
 add_executable(voiceime_register src/register_ime.cpp src/register_ime.rc src/version.rc)
@@ -132,9 +134,9 @@ target_link_options(voiceime_register PRIVATE -static-libstdc++ -static-libgcc)
 
 include(cmake/librime.cmake)
 target_sources(voiceime_tests PRIVATE src/rime_session.cpp)
-target_sources(voiceime_tsf PRIVATE src/rime_session.cpp)
+target_sources(voiceime_engine PRIVATE src/rime_session.cpp)
 voiceime_link_librime(voiceime_tests)
-voiceime_link_librime(voiceime_tsf)
+voiceime_link_librime(voiceime_engine)
 target_link_libraries(voiceime_tsf PRIVATE oleacc advapi32)
 
 add_executable(voiceime_recognizer_smoke tools/recognizer_smoke.cpp src/sherpa_recognizer.cpp)
@@ -152,6 +154,8 @@ voiceime_copy_runtime(voiceime_ui_check)
 # Test host uses the production engine with compile-time pipe/data isolation
 # and synthetic capture. It never connects to the installed input method.
 add_executable(voiceime_engine_testhost src/engine_main.cpp src/confirm_box.cpp src/hotkey_dialog.cpp src/preferences_window.cpp)
+target_sources(voiceime_engine_testhost PRIVATE src/rime_session.cpp)
+voiceime_link_librime(voiceime_engine_testhost)
 target_compile_definitions(voiceime_engine_testhost PRIVATE VOICEIME_TESTING _WIN32_WINNT=0x0601)
 target_link_libraries(voiceime_engine_testhost PRIVATE voiceime_core ole32 uuid user32 gdi32 shell32 comctl32)
 add_dependencies(voiceime_engine_testhost voiceime_model_worker)
@@ -163,14 +167,13 @@ add_dependencies(voiceime_engine_integration voiceime_engine_testhost)
 add_test(NAME voiceime.engine COMMAND voiceime_engine_integration "${CMAKE_BINARY_DIR}/engine-integration")
 set_tests_properties(voiceime.engine PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" TIMEOUT 90)
 
-add_executable(voiceime_tsf_integration tools/tsf_integration.cpp src/rime_session.cpp src/candidate_bar.cpp)
+add_executable(voiceime_tsf_integration tools/tsf_integration.cpp src/candidate_bar.cpp)
 target_sources(voiceime_tsf_integration PRIVATE src/input_indicator.cpp)
 target_compile_definitions(voiceime_tsf_integration PRIVATE VOICEIME_TESTING _WIN32_WINNT=0x0601)
 target_link_libraries(voiceime_tsf_integration PRIVATE voiceime_core ole32 oleaut32 uuid user32 gdi32 comctl32)
 target_link_libraries(voiceime_tsf_integration PRIVATE oleacc advapi32)
-voiceime_link_librime(voiceime_tsf_integration)
 voiceime_copy_runtime(voiceime_tsf_integration)
-add_dependencies(voiceime_tsf_integration voiceime_rime_data)
+add_dependencies(voiceime_tsf_integration voiceime_rime_data voiceime_engine_testhost)
 add_test(NAME voiceime.tsf COMMAND voiceime_tsf_integration "${CMAKE_BINARY_DIR}/tsf-integration")
 set_tests_properties(voiceime.tsf PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" TIMEOUT 60)
 

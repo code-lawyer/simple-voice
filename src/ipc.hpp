@@ -23,6 +23,11 @@ enum class MsgType : std::uint8_t {
   ClientHello = 19,
   ServerReady = 20,
   PreloadModel = 21,
+  PinyinHello = 22,
+  PinyinKey = 23,
+  PinyinClear = 24,
+  PinyinView = 25,
+  PinyinInserted = 26,
 };
 
 struct Message {

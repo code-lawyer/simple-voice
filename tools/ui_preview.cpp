@@ -412,6 +412,16 @@ int main(int argc, char** argv) {
     SendMessageW(field(31),LB_SETCURSEL,0,0); SendMessageW(window,WM_COMMAND,MAKEWPARAM(31,LBN_SELCHANGE),0);
     check(IsWindowEnabled(field(preference::DeleteTerm)),"selecting a real search result enables Delete");
     ok=Save(window,output/"preferences-terms.png") && ok;
+    SendMessageW(field(preference::AddSpeechName),BM_CLICK,0,0);
+    check(IsWindowVisible(field(preference::ModelHints)) && text(preference::ModelHints).find(L"轻音输入法")!=std::wstring::npos,
+          "a selected term opens the editable Qwen name list");
+    auto name_list=text(preference::ModelHints);
+    SendMessageW(field(preference::Navigation),LB_SETCURSEL,1,0);
+    SendMessageW(window,WM_COMMAND,MAKEWPARAM(preference::Navigation,LBN_SELCHANGE),0);
+    SendMessageW(field(preference::AddSpeechName),BM_CLICK,0,0);
+    check(text(preference::ModelHints)==name_list,"adding a speech name twice preserves one entry");
+    SendMessageW(field(preference::Navigation),LB_SETCURSEL,1,0);
+    SendMessageW(window,WM_COMMAND,MAKEWPARAM(preference::Navigation,LBN_SELCHANGE),0);
     SendMessageW(window,WM_COMMAND,37,0); check(lexicon.Search("轻音").empty(),"native delete removes selected term");
     SendMessageW(window,WM_COMMAND,38,0); check(lexicon.Search("轻音").size()==1,"native undo restores the deleted term");
     SendMessageW(field(preference::Terms),LB_SETCURSEL,0,0);

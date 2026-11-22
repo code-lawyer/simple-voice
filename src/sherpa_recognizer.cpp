@@ -347,7 +347,7 @@ class SherpaRecognizer : public Recognizer {
     }
     DropCandidate();
     if(!samples_.empty() && !(qwen_ && !committed_.empty() && pause_.OnlyQuiet(samples_)))
-      Commit(samples_.size(),received_<kRecordingSampleRate && qwen_);
+      Commit(samples_.size(),qwen_ && received_<=kRecordingSampleRate*5/2);
     samples_.clear();
     work_.wait(lock,[this]{return stopping_ || (final_load_done_ && (!final_ready_ || (!decoding_ && chunks_.empty())));});
     if(!final_ready_) throw std::runtime_error("定稿模型加载失败，已保留当前草稿。");
@@ -414,6 +414,24 @@ class SherpaRecognizer : public Recognizer {
     return result && result->text ? result->text : "";
   }
 
+  std::string RetryShortWord(std::vector<float>& wave) {
+    constexpr auto lead=kRecordingSampleRate*80/1000;
+    constexpr auto tail=kRecordingSampleRate*160/1000;
+    const auto length=wave.size();
+    wave.resize(length+2*tail,0.f);
+    const auto first=DecodeSegment(wave);
+    wave.resize(length);
+    wave.insert(wave.begin(),lead,0.f);
+    wave.resize(lead+length+tail,0.f);
+    const auto second=DecodeSegment(wave);
+    if(SameShortRecognition(first,second)) return first;
+    if(first.empty() && second.empty()) return {};
+    wave.resize(lead+length+2*tail,0.f);
+    const auto third=DecodeSegment(wave);
+    if(SameShortRecognition(first,third)) return first;
+    if(SameShortRecognition(second,third)) return second;
+    return {};
+  }
   Job Schedule(std::size_t count,bool retry_short=false,bool at_pause=false) {
     auto job=std::make_shared<OfflineJob>();
     job->pcm.assign(samples_.begin(),samples_.begin()+count);
@@ -486,17 +504,23 @@ class SherpaRecognizer : public Recognizer {
       std::string text;
       bool recovered_short_word = false;
       try {
+        std::size_t begin=0,end=0;
+        const bool retry=job->retry_short && ShortVoicedRegion(samples,begin,end);
         ToFloat(samples.data(),samples.size(),wave);
         std::vector<std::int16_t>().swap(samples);
         wave.resize(wave.size()+job->padding,0.0f);
         text = DecodeSegment(wave);
-        // A very short word can end at the feature boundary. Retry an empty
-        // Qwen result once with 160 ms of trailing silence, retaining all audio.
-        if (text.empty() && job->retry_short) {
-          constexpr auto tail_samples = kRecordingSampleRate * 160 / 1000;
-          wave.resize(wave.size() + tail_samples, 0.0f);
-          text = DecodeSegment(wave);
-          recovered_short_word = !text.empty();
+        if (text.empty() && retry) {
+          // Retain the natural onset/tail. A long wait before pressing stop
+          // should not drown out the acoustic evidence for a single word.
+          constexpr auto margin=kRecordingSampleRate/10;
+          if(wave.size()>kRecordingSampleRate) {
+            end=std::min(wave.size(),end+margin);
+            wave.resize(end);
+            if(begin>margin) wave.erase(wave.begin(),wave.begin()+begin-margin);
+          }
+          text=RetryShortWord(wave);
+          recovered_short_word=!text.empty();
         }
       } catch(...) {}
       {std::lock_guard<std::mutex> lock(mu_);

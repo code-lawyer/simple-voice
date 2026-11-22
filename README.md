@@ -12,8 +12,8 @@ Windows 本地拼音与中英语音输入法。干净的界面，明确的确认
 
 </div>
 
-**v0.2.0-rc.11** 是 **Windows Intel/AMD x64** 本机试用版。切入轻音后可后台准备模型。连续口述时会提前显示句中草稿，出现自然停顿时 Qwen3-ASR 会提前校准，停录后在浮层给出定稿。
-[本轮变化](docs/releases/v0.2.0-rc.11.md) · [本机实测](docs/releases/v0.2.0-rc.11-validation.md)。
+**v0.2.0-rc.12** 是 Windows Intel/AMD x64 本机试用版。各应用共用拼音学习记录，词语页可以把姓名或项目名加入 Qwen 的语音提示。定稿默认使用本地 Qwen3-ASR。
+[本轮变化](docs/releases/v0.2.0-rc.12.md) · [本机实测](docs/releases/v0.2.0-rc.12-validation.md) · [已发布的 rc.11](https://github.com/code-lawyer/simple-voice/releases/tag/v0.2.0-rc.11)。
 
 切换到轻音输入法后，Windows 任务栏会显示「声核」标识，旁边的「中」或「A」表示当前输入模式。点击模式图标可以切换中英文。[任务栏实拍](docs/design/brand/windows-taskbar.png)
 

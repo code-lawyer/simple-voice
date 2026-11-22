@@ -19,6 +19,8 @@
 #include "capture_buffer.hpp"
 
 #include "ipc.hpp"
+#include "pinyin_client.hpp"
+#include "rime_session.hpp"
 #include "pipe_io.hpp"
 #include "ipc_security.hpp"
 
@@ -1194,7 +1196,10 @@ void Engine::OnPipe(ClientId sender, const Message& message, bool resumed) {
   if(practice_ && IsVoiceControl(message.type))return;
   // Receipts belong to the original insertion client even after focus moves.
   // New actions require the verified foreground host and the current preview.
-  if (message.type != MsgType::InsertResult && !ForegroundClientAllowed(sender)) return;
+  // A pinyin receipt is bound to this connection's last generated commit in
+  // ClientLoop. The user can change applications immediately after SetText.
+  if (message.type != MsgType::InsertResult && message.type != MsgType::PinyinInserted &&
+      !ForegroundClientAllowed(sender)) return;
   if (message.type == MsgType::PreloadModel) {
     PreloadModelIfIdle();
     return;
@@ -1215,7 +1220,7 @@ void Engine::OnPipe(ClientId sender, const Message& message, bool resumed) {
         (message.type==MsgType::Enter || message.type==MsgType::StartListen);
     if (!follows_start && !cancels_same_utterance && !stops_at_limit) { WriteClient(StateMessage(), sender); return; }
   }
-  if(message.type==MsgType::PersonalTermUsed) {
+  if(message.type==MsgType::PersonalTermUsed || message.type==MsgType::PinyinInserted) {
     if(lexicon_) try { lexicon_->Commit(message.text,std::time(nullptr)); ExportTerms(); }
       catch(const std::exception& error) { LexiconWarning(error.what()); }
     return;
@@ -1528,6 +1533,8 @@ LRESULT Engine::OnMessage(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
 
 void Engine::ClientLoop(ClientId id, HANDLE pipe, std::shared_ptr<IpcPeer> peer) {
   bool authenticated = false;
+  std::unique_ptr<RimeSession> pinyin;
+  std::string awaiting_insert;
   const auto handshake_deadline = GetTickCount64() + 3000;
   PipeDeadline deadline;
 #ifdef VOICEIME_TESTING
@@ -1550,7 +1557,7 @@ void Engine::ClientLoop(ClientId id, HANDLE pipe, std::shared_ptr<IpcPeer> peer)
     if (outgoing_.empty() && write_event_ != nullptr) ResetEvent(write_event_);
     return mine;
   };
-  auto deliver = [this, id, &authenticated, &peer, &module](std::string& pending) {
+  auto deliver = [&](std::string& pending) {
     for (;;) {
       Message decoded;
       std::size_t used = 0;
@@ -1559,11 +1566,46 @@ void Engine::ClientLoop(ClientId id, HANDLE pipe, std::shared_ptr<IpcPeer> peer)
       if (status == DecodeStatus::Incomplete) return true;
       pending.erase(0, used);
       if (!authenticated) {
-        if (decoded.type != MsgType::ClientHello) return false;
+        const bool wants_pinyin = decoded.type == MsgType::PinyinHello;
+        if (!wants_pinyin && decoded.type != MsgType::ClientHello) return false;
         const auto window = reinterpret_cast<HWND>(static_cast<std::uintptr_t>(decoded.client_window));
-        if (!peer->owns_window(window, module)) return false;
+        auto expected = module;
+#ifdef VOICEIME_TESTING
+        if (wants_pinyin) expected = ExecutableDirectory() + L"\\voiceime_tsf_integration.exe";
+#endif
+        if (!peer->owns_window(window, expected)) return false;
         authenticated = true;
+        if (wants_pinyin) {
+          pinyin = std::make_unique<RimeSession>();
+          if (!pinyin->Start(ExecutableDirectory() + L"\\rime-data", data_path_ + L"\\rime")) return false;
+          if (!WritePipeBytes(pipe, Encode({MsgType::PinyinView, EncodePinyinView(pinyin->view())}), stop_event_)) return false;
+          continue;
+        }
         PostMessageW(box_.hwnd(), kAnnounceMessage, id, reinterpret_cast<LPARAM>(window));
+        continue;
+      }
+      if (pinyin) {
+        if (decoded.type == MsgType::PinyinInserted) {
+          if (!awaiting_insert.empty()) {
+            decoded.text.swap(awaiting_insert);
+            {
+              std::lock_guard<std::mutex> lock(inbox_mu_);
+              inbox_.emplace_back(id, std::move(decoded));
+            }
+            PostMessageW(box_.hwnd(), kPipeMessage, 0, 0);
+          }
+          continue;
+        }
+        if (decoded.type == MsgType::PinyinClear) pinyin->Clear();
+        else if (decoded.type == MsgType::PinyinKey) {
+          const auto vk = static_cast<unsigned char>(decoded.text[0]);
+          const auto modifiers = static_cast<unsigned char>(decoded.text[1]);
+          if (!vk || modifiers > 7) return false;
+          pinyin->ProcessKeyWithModifiers(vk, modifiers & 1, modifiers & 2, modifiers & 4);
+        } else return false;
+        awaiting_insert = pinyin->view().commit;
+        const auto frame = Encode({MsgType::PinyinView, EncodePinyinView(pinyin->view())});
+        if (frame.empty() || !WritePipeBytes(pipe, frame, stop_event_)) return false;
         continue;
       }
       if (!IsClientMessage(decoded.type)) return false;
@@ -1585,7 +1627,8 @@ void Engine::ClientLoop(ClientId id, HANDLE pipe, std::shared_ptr<IpcPeer> peer)
       if (failed || stop_pipe_) break;
       continue;
     }
-    const PipeReadResult received = ReadPipeChunk(pipe, authenticated ? write_event_ : deadline.event(), stop_event_);
+    const auto wake = pinyin ? nullptr : authenticated ? write_event_ : deadline.event();
+    const PipeReadResult received = ReadPipeChunk(pipe, wake, stop_event_);
     buffer += received.bytes;
     if (!deliver(buffer)) break;
     if (received.status == PipeReadStatus::Closed) break;

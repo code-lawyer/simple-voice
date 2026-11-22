@@ -9,6 +9,11 @@
 #include <ctime>
 
 void RecognitionFormattingPreservesInformation() {
+  CHECK(SameShortRecognition(" Nine. ","9"));
+  CHECK(SameShortRecognition("零。","Zero."));
+  CHECK(!SameShortRecognition("1.5","15"));
+  CHECK(!SameShortRecognition("six","七"));
+  CHECK(!SameShortRecognition("",""));
   CHECK(PreserveRecognizedContent("今天使用GitHub处理20个文件","今天使用GitHub处理20个文件。") == "今天使用GitHub处理20个文件。");
   for(const auto& bad:{"今天使用Github处理20个文件。","今天使用GitHub处理10个文件。","今天处理20个文件。"})
     CHECK(PreserveRecognizedContent("今天使用GitHub处理20个文件",bad)=="今天使用GitHub处理20个文件");
@@ -39,6 +44,18 @@ void AudioReadinessAndChunkingProtectBoundaries() {
   for(const auto& part:parts) { CHECK(part.offset==covered); CHECK(part.count>0 && part.count<=15*16000); covered+=part.count; }
   CHECK(covered==samples.size()); CHECK(parts.size()>=3); CHECK(!parts.front().forced);
   CHECK(SegmentAudio({}).empty());
+  samples.assign(16*16000,1500);
+  // A short dip inside a word is quieter than the true, softly noisy pause.
+  std::fill_n(samples.begin()+11*16000,320,0);
+  std::fill_n(samples.begin()+13*16000,3200,30);
+  CHECK(SegmentAudio(samples).front().count==13*16000+1600);
+  std::size_t begin=0,end=0;
+  samples.assign(8000,0);
+  samples[3000]=15000;
+  CHECK(!ShortVoicedRegion(samples,begin,end));
+  for(std::size_t i=2000;i<5200;++i)
+    samples[i]=static_cast<std::int16_t>(4000*std::sin(i*2*3.14159265/80));
+  CHECK(ShortVoicedRegion(samples,begin,end));
   SpeechPause pause;
   std::vector<std::int16_t> speech(7*SpeechPause::rate,1500);
   CHECK(!pause.Scan(speech,0) && !pause.PreviewEnd());

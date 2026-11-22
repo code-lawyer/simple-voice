@@ -7,6 +7,7 @@
 #include "ipc.hpp"
 #include "pipe_io.hpp"
 #include "ipc_security.hpp"
+#include "pinyin_client.hpp"
 #include <msctf.h>
 #include <cstdio>
 #include <filesystem>
@@ -46,7 +47,7 @@ struct ActiveService {
   ITfTextInputProcessor* service;
   ~ActiveService() { service->Deactivate(); }
 };
-int Check(const std::filesystem::path& expected) {
+int Check(const std::filesystem::path& expected, bool check_pinyin) {
   const wchar_t* profile=L"Software\\Microsoft\\CTF\\TIP\\{A4C1E2B0-7D34-4F91-9A62-5E18C3704B21}\\LanguageProfile\\0x00000804\\{6E2D9A14-51C8-4B0E-B733-8F901D6A2C55}";
   wchar_t icon_file[32768]{};DWORD bytes=sizeof(icon_file),icon_index=0;
   if(RegGetValueW(HKEY_LOCAL_MACHINE,profile,L"IconFile",RRF_RT_REG_SZ,nullptr,icon_file,&bytes)!=ERROR_SUCCESS ||
@@ -166,17 +167,29 @@ int Check(const std::filesystem::path& expected) {
     throw std::runtime_error("registered TSF window handshake failed");
   std::printf("production_pipe_ready=1 phase=%s\n",initial.text.c_str());
   if(initial.text!="0")throw std::runtime_error("engine is not idle; check an existing voice session");
+  if(check_pinyin) {
+    PinyinClient pinyin;
+    if(!pinyin.Start(VoicePipeName(),(expected/L"voiceime_engine.exe").wstring(),host_window))
+      throw std::runtime_error("installed pinyin connection failed");
+    for(int vk:{'S','H','I'}) pinyin.ProcessKey(vk,false);
+    if(!pinyin.view().composing || pinyin.view().page.empty())
+      throw std::runtime_error("installed engine returned no pinyin candidates");
+    pinyin.Clear();
+    if(!pinyin.connected() || pinyin.view().composing) throw std::runtime_error("installed pinyin cancel failed");
+    std::puts("production_pinyin_candidates=1 cancelled_without_selection=1");
+  }
   std::puts("PASS installed COM module and real production engine match the requested build; microphone was not started");
   return 0;
 }
 }
 
 int main(int argc,char** argv) {
-  if (argc!=2) return 2;
+  const bool check_pinyin=argc==3 && std::string(argv[2])=="--pinyin";
+  if (argc!=2 && !check_pinyin) return 2;
   const auto initialized=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);
   if (FAILED(initialized)) return 2;
   int result=1;
-  try { result=Check(std::filesystem::absolute(argv[1])); }
+  try { result=Check(std::filesystem::absolute(argv[1]),check_pinyin); }
   catch (const std::exception& error) { std::fprintf(stderr,"FAIL %s\n",error.what()); }
   CoUninitialize();
   return result;

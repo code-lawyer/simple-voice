@@ -211,6 +211,7 @@ void PreferencesWindow::Search() {
   ShowWindow(Field(hwnd_,TermsEmpty),page_==1 && entries_.empty()?SW_SHOWNA:SW_HIDE);
   EnableWindow(Field(hwnd_,Previous),readable && offset_>0); EnableWindow(Field(hwnd_,Next),more);
   EnableWindow(Field(hwnd_,Undo),have_undo_); EnableWindow(Field(hwnd_,DeleteTerm),selected);
+  EnableWindow(Field(hwnd_,AddSpeechName),selected);
   EnableWindow(Field(hwnd_,SaveTerm),readable); changing_=false;
   if(page_==1 && focus && IsChild(pane_,focus) && (!IsWindowVisible(focus) || !IsWindowEnabled(focus))) {
     SetFocus(entries_.empty()?Field(hwnd_,Query):list);
@@ -301,6 +302,7 @@ void PreferencesWindow::Command(int id,int notification) {
       editing_=selected?selected->text:std::string();
       if(selected) { Set(Term,Utf8ToWide(selected->text)); Set(Code,Utf8ToWide(selected->pinyin)); }
       EnableWindow(Field(hwnd_,DeleteTerm),selected!=nullptr);
+      EnableWindow(Field(hwnd_,AddSpeechName),selected!=nullptr);
       return;
     }
     if(notification!=BN_CLICKED && notification!=CBN_SELCHANGE) return;
@@ -311,6 +313,33 @@ void PreferencesWindow::Command(int id,int notification) {
     else if(id==NewTerm) {
       SendMessageW(Field(hwnd_,Terms),LB_SETCURSEL,static_cast<WPARAM>(-1),0);
       editing_.clear(); Set(Term,L""); Set(Code,L""); SetFocus(Field(hwnd_,Term)); EnableWindow(Field(hwnd_,DeleteTerm),FALSE);
+      EnableWindow(Field(hwnd_,AddSpeechName),FALSE);
+    }
+    else if(id==AddSpeechName) {
+      const auto selected=SelectedTerm();
+      if(!selected) return;
+      if(actions_.model_task && actions_.model_task()!=ModelTaskState::Idle) {
+        Status(L"模型正在处理任务，完成后可添加专名。"); return;
+      }
+      const auto name=Utf8ToWide(selected->text);
+      if(name.empty() || name.find_first_of(L",，、\r\n")!=std::wstring::npos) {
+        Status(L"请选一个独立专名。含分隔符的词语可在模型页拆开填写。"); return;
+      }
+      const auto previous=NormalizeSpeechHints(WideToUtf8(Text(ModelHints)));
+      const auto updated=NormalizeSpeechHints(previous+","+selected->text);
+      const bool present=previous==updated;
+      if(!present) {
+        const auto hints=Utf8ToWide(updated);
+        if(hints.size()>SendMessageW(Field(hwnd_,ModelHints),EM_GETLIMITTEXT,0,0)) {
+          Status(L"专名列表已满。请先在模型页精简已有专名。"); return;
+        }
+        Set(ModelHints,hints);
+      }
+      SendMessageW(Field(hwnd_,ModelChoice),CB_SETCURSEL,static_cast<int>(SpeechModel::Qwen3),0);
+      Page(4);
+      SetFocus(Field(hwnd_,ModelHints));
+      Status(present?L"列表中已有这个专名。核对后点击“启用所选模型”保存。":
+                     L"请核对专名，点击“启用所选模型”后用于 Qwen 定稿。");
     }
     else if(id==AutoCode && actions_.input_code) { Set(Code,Utf8ToWide(actions_.input_code(WideToUtf8(Text(Term))))); Status(L"请核对输入码；姓名、多音字和缩写可手动调整。"); }
     else if(id==SaveTerm && lexicon_) {

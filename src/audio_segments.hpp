@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cstddef>
 #include <limits>
+#include <cmath>
 
 struct AudioSegment { std::size_t offset,count; bool forced; };
 // Positions are relative to the current uncommitted Qwen segment. Analyze each
@@ -49,6 +50,34 @@ class SpeechPause {
  private:
   std::size_t cursor_=0,last_sound_=0,pending_cut_=0,resumed_at_=0;
 };
+
+// A second decode can guess a word in clicks or fan noise. Require sustained
+// energy and a few frames with a repeating vocal pitch before retrying.
+inline bool ShortVoicedRegion(const std::vector<std::int16_t>& pcm, std::size_t& first, std::size_t& end) {
+  constexpr auto frame = SpeechPause::frame;
+  constexpr auto rate = SpeechPause::rate;
+  if (pcm.size() > rate*5/2) return false;
+  first=pcm.size(); end=0;
+  unsigned active=0, voiced=0;
+  for (std::size_t pos=0;pos+frame<=pcm.size();pos+=frame) {
+    const auto* samples=pcm.data()+pos;
+    if (SpeechPause::Quiet(samples,frame)) continue;
+    first=std::min(first,pos); end=pos+frame; ++active;
+    if (voiced>=2) continue;
+    double mean=0;
+    for(std::size_t i=0;i<frame;++i) mean+=samples[i];
+    mean/=frame;
+    for (std::size_t lag=32;lag<=160;lag+=2) {
+      double a=0,b=0,cross=0;
+      for (std::size_t i=lag;i<frame;i+=2) {
+        const auto x=samples[i]-mean,y=samples[i-lag]-mean;
+        a+=x*x; b+=y*y; cross+=x*y;
+      }
+      if (a>0 && b>0 && cross>0 && cross*cross>0.45*a*b) { ++voiced; break; }
+    }
+  }
+  return active>=3 && voiced>=2 && end-first<=rate;
+}
 // Each sample belongs to exactly one segment. Short bounded segments avoid
 // long-form ASR omissions; cuts prefer the quietest 20 ms in the last 5 s.
 inline std::vector<AudioSegment> SegmentAudio(const std::vector<std::int16_t>& samples) {
@@ -57,6 +86,16 @@ inline std::vector<AudioSegment> SegmentAudio(const std::vector<std::int16_t>& s
   for(std::size_t start=0;start<samples.size();) {
     std::size_t end=std::min(start+limit,samples.size()); bool forced=false;
     if(end<samples.size()) {
+      // At the duration cap prefer the middle of an actual pause to a
+      // single low-energy frame inside a digit, acronym or name.
+      std::size_t quiet=0,longest=0,center=0;
+      for(std::size_t pos=start+10*rate;pos+window<=end;pos+=window) {
+        quiet=SpeechPause::Quiet(samples.data()+pos,window)?quiet+window:0;
+        if(quiet>=rate*12/100 && quiet>=longest) { longest=quiet; center=pos+window-quiet/2; }
+      }
+      if(center) {
+        result.push_back({start,center-start,false}); start=center; continue;
+      }
       double best=std::numeric_limits<double>::max(); std::size_t cut=end;
       for(std::size_t candidate=start+10*rate;candidate+window<=end;candidate+=step) {
         double energy=0;

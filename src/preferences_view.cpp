@@ -229,6 +229,7 @@ void PreferencesWindow::BuildForm(const ModelSettings& models) {
   SendMessageW(Field(hwnd_,Term),EM_SETLIMITTEXT,256,0); SendMessageW(Field(hwnd_,Code),EM_SETLIMITTEXT,256,0);
   next(12); button(SaveTerm,L"保存词语",0,92);
   button(NewTerm,L"新增",100,62); button(DeleteTerm,L"删除",170,62); button(Undo,L"撤销删除",240,85);
+  next(8); button(AddSpeechName,L"加入语音专名",0,126);
   next(10); label(107,L"输入码使用小写英文字母。手动保存的词语在 365 天未使用后清理。",0,0,Face::Detail);
 
   page=2;

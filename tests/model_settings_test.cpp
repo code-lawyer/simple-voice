@@ -6,6 +6,7 @@
 #include <windows.h>
 
 void ModelChoicesPersistAndRejectInvalidSettings() {
+  CHECK(NormalizeSpeechHints(" 栖云工坊，　沈嘉祺、Aster Vale, 栖云工坊 ")=="栖云工坊, 沈嘉祺, Aster Vale");
   ModelSettings settings;settings.model=SpeechModel::Whisper;
   settings.directories[0]=L"D:\\本地 模型\\qwen";
   settings.directories[2]=L"D:\\模型=目录\\Whisper";

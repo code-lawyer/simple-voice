@@ -26,7 +26,10 @@ namespace {
 bool ValidSize(MsgType type, std::size_t body) {
   switch (type) {
     case MsgType::StartListen: case MsgType::Cancel: case MsgType::Enter:
-    case MsgType::ClientHello: return body == 8;
+    case MsgType::ClientHello: case MsgType::PinyinHello: return body == 8;
+    case MsgType::PinyinKey: return body == 2;
+    case MsgType::PinyinClear: case MsgType::PinyinInserted: return body == 0;
+    case MsgType::PinyinView: return body >= 9;
     case MsgType::QueryCaret: case MsgType::ShowSettings: case MsgType::ServerReady:
     case MsgType::PreloadModel: return body == 0;
     case MsgType::Caret: return body == 32;
@@ -44,8 +47,9 @@ bool ValidSize(MsgType type, std::size_t body) {
 std::string Encode(const Message& message) {
   if (message.text.size() > kMaxFrameLength - 9) return {};
   std::string body;
-  if (IsVoiceControl(message.type) || message.type == MsgType::Phase || message.type == MsgType::ClientHello) {
-    const auto value = message.type == MsgType::ClientHello ? message.client_window : message.state_id;
+  const bool hello = message.type == MsgType::ClientHello || message.type == MsgType::PinyinHello;
+  if (IsVoiceControl(message.type) || message.type == MsgType::Phase || hello) {
+    const auto value = hello ? message.client_window : message.state_id;
     if (!value) return {};
     body.assign(8, '\0');
     WriteLe32(body, 0, static_cast<std::uint32_t>(value));
@@ -88,10 +92,11 @@ DecodeStatus DecodeFrame(std::string_view bytes, Message* out, std::size_t* cons
   if (!ValidSize(message.type, length - 1)) return DecodeStatus::Invalid;
   if (bytes.size() - 4 < length) return DecodeStatus::Incomplete;
   const std::string_view body = bytes.substr(5, length - 1);
-  if (IsVoiceControl(message.type) || message.type == MsgType::Phase || message.type == MsgType::ClientHello) {
+  const bool hello = message.type == MsgType::ClientHello || message.type == MsgType::PinyinHello;
+  if (IsVoiceControl(message.type) || message.type == MsgType::Phase || hello) {
     const auto value = ReadLe32(body, 0) | (static_cast<std::uint64_t>(ReadLe32(body, 4)) << 32);
     if (!value) return DecodeStatus::Invalid;
-    if (message.type == MsgType::ClientHello) message.client_window = value;
+    if (hello) message.client_window = value;
     else message.state_id = value;
     message.text.assign(body.substr(8));
   } else if (message.type == MsgType::Caret) {

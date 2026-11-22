@@ -114,6 +114,12 @@ int main(int argc,char** argv) {
     realtime = true;
     --argc;
   }
+  if (argc >= 7 && std::string(argv[argc - 2]) == "--hints-file") {
+    std::ifstream input(argv[argc - 1], std::ios::binary);
+    if (!input || !std::getline(input, selected.hotwords)) return 2;
+    if (!selected.hotwords.empty() && selected.hotwords.back()=='\r') selected.hotwords.pop_back();
+    argc -= 2;
+  }
   if(argc>=3 && std::string(argv[1])=="--model") {
     bool found=false;
     for(auto m:{SpeechModel::Qwen3,SpeechModel::SenseVoice,SpeechModel::Whisper,SpeechModel::ChineseLegacy})

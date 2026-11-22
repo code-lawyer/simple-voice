@@ -9,6 +9,7 @@
 #include <stdexcept>
 #include <olectl.h>
 #include "brand_icon.hpp"
+#include "lexicon.hpp"
 
 HINSTANCE VoiceImeModule() { return GetModuleHandleW(nullptr); }
 
@@ -456,9 +457,121 @@ MSG QueuedInsert(std::uint64_t id) {
 }
 }  // namespace
 
+namespace {
+class LearningEngine {
+ public:
+  explicit LearningEngine(const std::filesystem::path& data) {
+    const auto executable = ExecutableDirectory() + L"\\voiceime_engine_testhost.exe";
+    const auto id = L"tsf_learning_" + std::to_wstring(GetCurrentProcessId());
+    SetEnvironmentVariableW(L"VOICEIME_TEST_ID", id.c_str());
+    SetEnvironmentVariableW(L"VOICEIME_TEST_DATA", data.c_str());
+    std::wstring command = L"\"" + executable + L"\" --fake";
+    STARTUPINFOW startup{sizeof(startup)};
+    if (!CreateProcessW(executable.c_str(), command.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW,
+                        nullptr, nullptr, &startup, &process_)) throw std::runtime_error("start learning engine");
+    CloseHandle(process_.hThread);
+  }
+  ~LearningEngine() {
+    EnumWindows([](HWND window, LPARAM pid) -> BOOL {
+      DWORD owner = 0;
+      wchar_t name[64]{};
+      GetWindowThreadProcessId(window, &owner);
+      GetClassNameW(window, name, 64);
+      if (owner == static_cast<DWORD>(pid) && lstrcmpW(name, L"VoiceImeConfirm") == 0)
+        PostMessageW(window, WM_CLOSE, 0, 0);
+      return TRUE;
+    }, process_.dwProcessId);
+    if (WaitForSingleObject(process_.hProcess, 5000) != WAIT_OBJECT_0) {
+      TerminateProcess(process_.hProcess, 98);
+      WaitForSingleObject(process_.hProcess, 3000);
+    }
+    CloseHandle(process_.hProcess);
+  }
+ private:
+  PROCESS_INFORMATION process_{};
+};
+
+void RunLearningHost(const std::filesystem::path& data, const wchar_t* mode) {
+  const auto executable = ExecutableDirectory() + L"\\voiceime_tsf_integration.exe";
+  std::wstring command = L"\"" + executable + L"\" \"" + data.wstring() + L"\" " + mode;
+  STARTUPINFOW startup{sizeof(startup)};
+  PROCESS_INFORMATION child{};
+  Check(CreateProcessW(executable.c_str(), command.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW,
+                       nullptr, nullptr, &startup, &child), "start second application");
+  CloseHandle(child.hThread);
+  const auto wait = WaitForSingleObject(child.hProcess, 12000);
+  if (wait != WAIT_OBJECT_0) TerminateProcess(child.hProcess, 98);
+  DWORD code = 1;
+  GetExitCodeProcess(child.hProcess, &code);
+  CloseHandle(child.hProcess);
+  Check(wait == WAIT_OBJECT_0 && code == 0, "second application completes its six selections");
+}
+void CrossAppLearning(ITfThreadMgr* thread, TfClientId id, const std::filesystem::path& data,
+                      bool child, bool restarted, bool paused = false) {
+  VoiceService service;
+  Hr(service.Activate(thread, id), "activate cross-application text service");
+  wchar_t fixture[100]{};
+  GetEnvironmentVariableW(L"VOICEIME_TEST_ID", fixture, 100);
+  PinyinClient app;
+  Check(app.Start(std::wstring(L"\\\\.\\pipe\\VoiceImeQA_") + fixture,
+                  ExecutableDirectory() + L"\\voiceime_engine_testhost.exe", service.IndicatorMessageWindowForTest()),
+        "application opens an independent pinyin session");
+  auto page = [&] {
+    app.Clear();
+    for (int key : {'S','H','I'}) app.ProcessKey(key, false);
+    return app.view().page;
+  };
+  const std::string term = paused ? "时" : "十";
+  auto candidates = page();
+  if (child) {
+    for (int n = 0; n < 6; ++n) {
+      auto found = std::find(candidates.begin(), candidates.end(), term);
+      Check(found != candidates.end(), "learning target is selectable");
+      Check(app.ProcessKey('1' + static_cast<int>(found - candidates.begin()), false).commit == term,
+            "second application commits the chosen candidate");
+      app.ConfirmInserted(term);
+      app.ConfirmInserted(term);
+      candidates = page();
+    }
+  } else {
+    if (!restarted) {
+      Check(!candidates.empty() && candidates.front() != term, "a fresh dictionary starts with a different candidate");
+      Lexicon saved((data/"VoiceIme"/"lexicon.sqlite").u8string());
+      saved.SaveTerm(term,"qashici",std::time(nullptr));
+      RunLearningHost(data,L"--learn");
+      Check(app.ProcessKey(VK_RETURN,false).commit=="shi","another host leaves the first composition intact");
+      candidates = page();
+      auto entries=saved.Search(term);
+      Check(entries.size()==1 && entries.front().count==6,
+            "six confirmed selections update the saved term exactly once each across applications");
+    }
+    Check(!candidates.empty() && candidates.front() == term,
+          restarted ? "selected candidate survives engine restart" : "first application sees second application's learning");
+    if(restarted) {
+      const auto file=(data/"VoiceIme"/"preferences.ini").wstring();
+      auto preferences=LoadInputPreferences(file);
+      preferences.learning=false;
+      Check(SaveInputPreferences(file,preferences),"pause automatic learning");
+      candidates=page();
+      Check(!candidates.empty() && candidates.front()!=term,"paused learning hides prior choices");
+      RunLearningHost(data,L"--private-learn");
+      preferences.learning=true;
+      Check(SaveInputPreferences(file,preferences),"resume automatic learning");
+      candidates=page();
+      Check(!candidates.empty() && candidates.front()==term,"private selections do not change the shared dictionary");
+    }
+  }
+  app.Shutdown();
+  service.Deactivate();
+}
+}
+
 int main(int argc,char** argv) {
   try {
-    const auto data=std::filesystem::absolute(argc>1 ? argv[1] : "build/tsf-integration");
+    const bool paused=argc>2 && std::string(argv[2])=="--private-learn";
+    const bool learner = paused || (argc > 2 && std::string(argv[2]) == "--learn");
+    auto data=std::filesystem::absolute(argc>1 ? argv[1] : "build/tsf-integration");
+    if (!learner) data /= std::to_string(GetCurrentProcessId());
     std::filesystem::create_directories(data / "VoiceIme");
     // Environment is private to this disposable executable, not the desktop.
     SetEnvironmentVariableW(L"LOCALAPPDATA",data.c_str());
@@ -471,6 +584,17 @@ int main(int argc,char** argv) {
                         reinterpret_cast<void**>(&thread)),"create real TSF manager");
     TfClientId id=0;
     Hr(thread->ActivateEx(&id,TF_TMAE_NOACTIVATETIP | TF_TMAE_NOACTIVATEKEYBOARDLAYOUT | TF_TMAE_SECUREMODE),"activate hidden TSF manager");
+    if (learner) {
+      CrossAppLearning(thread, id, data, true, false, paused);
+      thread->Deactivate(); thread->Release(); CoUninitialize();
+      return 0;
+    }
+    {
+      LearningEngine first(data / "VoiceIme");
+      CrossAppLearning(thread, id, data, false, false);
+    }
+    LearningEngine engine(data / "VoiceIme");
+    CrossAppLearning(thread, id, data, false, true);
     BYTE keyboard[256]{},clear[256]{};
     GetKeyboardState(keyboard);SetKeyboardState(clear);
     CheckPunctuation(thread,id);

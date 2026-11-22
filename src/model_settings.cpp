@@ -8,6 +8,8 @@
 #include <charconv>
 #include <cstdio>
 #include <io.h>
+#include <algorithm>
+#include <vector>
 
 namespace {
 bool Text(const std::string& value, size_t limit) {
@@ -106,14 +108,35 @@ bool SaveModelSettings(const std::wstring& path,const ModelSettings& s) {
   if(ok) ok=MoveFileExW(temp.c_str(),path.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH)!=FALSE;
   if(!ok) DeleteFileW(temp.c_str()); return ok;
 }
+std::string NormalizeSpeechHints(const std::string& hints) {
+  const auto text=Utf8ToWide(hints);
+  std::vector<std::wstring> names;
+  std::wstring result;
+  for(std::size_t begin=0;begin<text.size();) {
+    const auto end=text.find_first_of(L",，、",begin);
+    auto name=text.substr(begin,end-begin);
+    const auto first=name.find_first_not_of(L" \t　");
+    if(first!=std::wstring::npos) {
+      name=name.substr(first,name.find_last_not_of(L" \t　")-first+1);
+      if(std::find(names.begin(),names.end(),name)==names.end()) {
+        names.push_back(name);
+        if(!result.empty()) result+=L", ";
+        result+=name;
+      }
+    }
+    if(end==std::wstring::npos) break;
+    begin=end+1;
+  }
+  return WideToUtf8(result);
+}
 bool SameModelRuntime(const ModelSettings& a,const ModelSettings& b) {
   if(!SpeechModelId(a.model) || !SpeechModelId(b.model))return false;
   return a.model==b.model && a.directories[static_cast<int>(a.model)]==b.directories[static_cast<int>(b.model)] &&
-      (a.model!=SpeechModel::Qwen3 || a.hotwords==b.hotwords);
+      (a.model!=SpeechModel::Qwen3 || NormalizeSpeechHints(a.hotwords)==NormalizeSpeechHints(b.hotwords));
 }
 bool ResolveModelFiles(const std::string& root,const ModelSettings& settings,ModelFiles& f,std::string& error) {
   if(!Valid(settings)) { error="模型设置无效，请恢复推荐方案。"; return false; }
-  f={}; f.model=settings.model; f.hotwords=settings.model==SpeechModel::Qwen3?settings.hotwords:"";
+  f={}; f.model=settings.model; f.hotwords=settings.model==SpeechModel::Qwen3?NormalizeSpeechHints(settings.hotwords):"";
   const auto custom=WideToUtf8(settings.directories[static_cast<int>(settings.model)]);
   const auto final_dir=custom.empty()?Join(root,SpeechModelFolder(settings.model)):custom;
   auto required=[&](const std::string& dir,const std::string& name,std::string& out) {

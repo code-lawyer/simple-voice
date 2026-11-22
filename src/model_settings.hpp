@@ -20,6 +20,7 @@ std::string SerializeModelSettings(const ModelSettings& settings);
 ModelSettings LoadModelSettings(const std::wstring& path, bool legacy_chinese=false);
 bool SaveModelSettings(const std::wstring& path, const ModelSettings& settings);
 bool SameModelRuntime(const ModelSettings& a, const ModelSettings& b);
+std::string NormalizeSpeechHints(const std::string& hints);
 struct ModelFiles {
   SpeechModel model = SpeechModel::Qwen3;
   std::string stream_encoder, stream_decoder, stream_joiner, stream_tokens;

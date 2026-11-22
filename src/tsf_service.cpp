@@ -11,7 +11,7 @@
 #include "pipe_io.hpp"
 #include "ipc_security.hpp"
 #include "register_status.hpp"
-#include "rime_session.hpp"
+#include "pinyin_client.hpp"
 #include "utf8.hpp"
 
 #include <msctf.h>
@@ -72,13 +72,6 @@ std::wstring ModuleDirectory() {
   const auto slash = path.find_last_of(L"\\/");
   if (slash == std::wstring::npos) return L"";
   return path.substr(0, slash);
-}
-
-std::wstring RimeUserDirectory() {
-  wchar_t local[MAX_PATH];
-  const DWORD count = GetEnvironmentVariableW(L"LOCALAPPDATA", local, MAX_PATH);
-  if (count == 0 || count >= MAX_PATH) return L"";
-  return std::wstring(local, count) + L"\\VoiceIme\\rime";
 }
 
 bool EatsKey(KeyAction action) {
@@ -623,15 +616,13 @@ class VoiceService : public ITfTextInputProcessor {
   ThreadSink thread_sink_;
   CompositionSink composition_sink_;
   AttributeProvider attribute_provider_;
-  RimeSession rime_;
+  PinyinClient rime_;
   PinyinController pinyin_;
   CandidateBar bar_;
   InputIndicator* input_indicator_ = nullptr;
   ITfComposition* composition_ = nullptr;
   ITfContext* composition_context_ = nullptr;
   bool ending_composition_ = false;
-  bool rime_ready_ = false;
-  bool rime_failed_ = false;
   LONG refs_ = 1;
   ITfThreadMgr* thread_mgr_ = nullptr;
   TfClientId client_id_ = 0;
@@ -1108,8 +1099,6 @@ HRESULT VoiceService::Deactivate() {
   CancelFocusComposition();
   bar_.Hide();
   rime_.Shutdown();
-  rime_ready_ = false;
-  rime_failed_ = false;
   pending_toggle_ = false;
   last_key_was_digit_ = false;
   stop_reader_ = true;
@@ -1196,17 +1185,16 @@ HRESULT STDMETHODCALLTYPE VoiceService::CompSession::DoEditSession(TfEditCookie 
 }
 
 bool VoiceService::EnsureRime() {
-  if (rime_ready_) return true;
-  if (rime_failed_) return false;
-  const std::wstring shared = ModuleDirectory();
-  const std::wstring user = RimeUserDirectory();
-  // Maintenance is slow. Activate must return without this call.
-  if (shared.empty() || user.empty() || !rime_.Start(shared + L"\\rime-data", user)) {
-    rime_failed_ = true;
-    return false;
-  }
-  rime_ready_ = true;
-  return true;
+  if (rime_.connected()) return true;
+  LaunchEngine();
+#ifdef VOICEIME_TESTING
+  wchar_t id[100]{};
+  if (!GetEnvironmentVariableW(L"VOICEIME_TEST_ID", id, 100)) return false;
+  return rime_.Start(std::wstring(L"\\\\.\\pipe\\VoiceImeQA_") + id,
+                     ModuleDirectory() + L"\\voiceime_engine_testhost.exe", host_);
+#else
+  return rime_.Start(VoicePipeName(), ModuleDirectory() + L"\\voiceime_engine.exe", host_);
+#endif
 }
 
 bool VoiceService::PipeConnected() {
@@ -1350,7 +1338,7 @@ void VoiceService::CommitComposition(TfEditCookie cookie, ITfContext* context, c
     SetInputAttribute(cookie, context, range, false);
     MoveCaretToEnd(cookie, context, range);
     range->Release();
-    if(!text.empty()) { Message used; used.type=MsgType::PersonalTermUsed; used.text=WideToUtf8(text); WriteClient(used); }
+    if(!text.empty()) rime_.ConfirmInserted(WideToUtf8(text));
   }
   ITfComposition* held = composition_;
   ending_composition_ = true;
@@ -1520,7 +1508,7 @@ HRESULT VoiceService::OnKey(ITfContext* context, WPARAM vk, LPARAM lparam, WINBO
       if (eaten != nullptr) *eaten = TRUE;
       return S_OK;
     }
-    if (action == KeyAction::ToRime && rime_failed_) return S_OK;
+    if (action == KeyAction::ToRime && !EnsureRime()) return S_OK;
     // A host that sees eaten false does not call OnKeyDown, so the clear has to happen here.
     if (action == KeyAction::PassAfterClear || (action == KeyAction::OpenVoice && !PipeConnected())) {
       DropUncommitted(context, state, hotkey);
@@ -1553,6 +1541,7 @@ HRESULT VoiceService::OnKey(ITfContext* context, WPARAM vk, LPARAM lparam, WINBO
       break;
     case KeyAction::ToRime:
       SyncAfterRime(context);
+      if (!rime_.connected()) return S_OK;
       last_key_was_digit_ = false;
       eaten_vk_ = static_cast<int>(vk);
       if (eaten != nullptr) *eaten = TRUE;
