@@ -504,13 +504,12 @@ class SherpaRecognizer : public Recognizer {
       std::string text;
       bool recovered_short_word = false;
       try {
-        std::size_t begin=0,end=0;
-        const bool retry=job->retry_short && ShortVoicedRegion(samples,begin,end);
         ToFloat(samples.data(),samples.size(),wave);
-        std::vector<std::int16_t>().swap(samples);
+        if (!job->retry_short) std::vector<std::int16_t>().swap(samples);
         wave.resize(wave.size()+job->padding,0.0f);
         text = DecodeSegment(wave);
-        if (text.empty() && retry) {
+        std::size_t begin = 0, end = 0;
+        if (text.empty() && job->retry_short && ShortVoicedRegion(samples, begin, end)) {
           // Retain the natural onset/tail. A long wait before pressing stop
           // should not drown out the acoustic evidence for a single word.
           constexpr auto margin=kRecordingSampleRate/10;

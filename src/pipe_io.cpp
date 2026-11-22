@@ -56,10 +56,10 @@ PipeReadResult ReadPipeChunk(HANDLE pipe, HANDLE wake_event, HANDLE stop_event, 
   }
 }
 
-bool WritePipeBytes(HANDLE pipe, const std::string& bytes, HANDLE stop_event) {
+bool WritePipeBytes(HANDLE pipe, const std::string& bytes, HANDLE stop_event, HANDLE deadline) {
   std::size_t offset = 0;
   while (offset < bytes.size()) {
-    if (Stopped(stop_event)) return false;
+    if (Stopped(stop_event) || Stopped(deadline)) return false;
     Operation operation;
     if (operation.value.hEvent == nullptr) return false;
     DWORD wrote = 0;
@@ -67,8 +67,11 @@ bool WritePipeBytes(HANDLE pipe, const std::string& bytes, HANDLE stop_event) {
         ? MAXDWORD : bytes.size() - offset);
     BOOL ok = WriteFile(pipe, bytes.data() + offset, size, &wrote, &operation.value);
     if (!ok && GetLastError() == ERROR_IO_PENDING) {
-      HANDLE waits[2] = {operation.value.hEvent, stop_event};
-      const DWORD which = WaitForMultipleObjects(stop_event == nullptr ? 1 : 2, waits, FALSE, INFINITE);
+      HANDLE waits[3] = {operation.value.hEvent};
+      DWORD count = 1;
+      if (stop_event != nullptr) waits[count++] = stop_event;
+      if (deadline != nullptr) waits[count++] = deadline;
+      const DWORD which = WaitForMultipleObjects(count, waits, FALSE, INFINITE);
       if (which == WAIT_OBJECT_0) ok = GetOverlappedResult(pipe, &operation.value, &wrote, FALSE);
       else {
         CancelAndDrain(pipe, &operation.value, &wrote);

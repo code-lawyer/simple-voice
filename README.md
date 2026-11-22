@@ -12,12 +12,12 @@ Windows 本地拼音与中英语音输入法。干净的界面，明确的确认
 
 </div>
 
-**v0.2.0-rc.12** 是 Windows Intel/AMD x64 本机试用版。各应用共用拼音学习记录，词语页可以把姓名或项目名加入 Qwen 的语音提示。定稿默认使用本地 Qwen3-ASR。
-[本轮变化](docs/releases/v0.2.0-rc.12.md) · [本机实测](docs/releases/v0.2.0-rc.12-validation.md) · [已发布的 rc.11](https://github.com/code-lawyer/simple-voice/releases/tag/v0.2.0-rc.11)。
+**v0.2.0-rc.12** 是 Windows Intel/AMD x64 预发布版。各应用共用拼音学习记录，词语页可以把姓名或项目名加入 Qwen 的语音提示。定稿默认使用本地 Qwen3-ASR。
+[下载 rc.12](https://github.com/code-lawyer/simple-voice/releases/tag/v0.2.0-rc.12) · [本轮变化](docs/releases/v0.2.0-rc.12.md) · [本机实测](docs/releases/v0.2.0-rc.12-validation.md)。
 
 切换到轻音输入法后，Windows 任务栏会显示「声核」标识，旁边的「中」或「A」表示当前输入模式。点击模式图标可以切换中英文。[任务栏实拍](docs/design/brand/windows-taskbar.png)
 
-「设置 → 本地模型」可调整切入时预加载及闲置释放。模型准备期间按语音键也会立即开始收音。[开发进度与施工方案](docs/plans/voice-input-optimization.md)
+「设置 → 本地模型」可调整切入时预加载及闲置释放。模型准备期间按语音键也会立即开始收音。
 
 ## 能做什么
 
@@ -37,7 +37,7 @@ Windows 本地拼音与中英语音输入法。干净的界面，明确的确认
 1. 从 [Releases](https://github.com/code-lawyer/simple-voice/releases) 下载对应 Windows ZIP，完整解压到准备长期保留的新目录。
 2. 安装 [Microsoft Visual C++ x64 运行库](https://aka.ms/vc14/vc_redist.x64.exe)（已安装可跳过）。
 3. 双击 `install.cmd`。首次从 sherpa-onnx 官方地址下载运行时和模型并校验 SHA-256，然后请求 Windows 管理员注册。
-4. 注销 Windows 再登录，按 `Win + Space` 选择 **轻音输入法**。
+4. 首次安装后注销再登录。替换已安装版本时重启 Windows，再按 `Win + Space` 选择 **轻音输入法**。
 
 首次需要下载较大的模型。建议 16 GB 内存、至少 8 GB 可用磁盘（含下载缓存和解压暂存）；
 CPU 即可运行。中英模型在本机集成样本测试中峰值工作集约 2.33 GiB，中文优先约 0.92 GiB，
@@ -116,11 +116,11 @@ CPU 即可运行。中英模型在本机集成样本测试中峰值工作集约 
 
 ## 更新、回滚、卸载
 
-- **更新**：解压到新目录，运行该目录的 `install.cmd`，注销再登录。个人数据沿用，不覆盖正在加载的 DLL。
-- **回滚**：保留旧程序目录和更新前自行备份的个人数据；重新运行旧目录安装并注销登录。旧程序不会读取新版显式词语表，且可能恢复旧版自动学习和同音改写行为。
+- **更新**：解压到新目录，运行该目录的 `install.cmd`。替换已注册版本后重启 Windows，新引擎再打开原拼音学习库。个人设置和词语继续沿用。
+- **回滚**：保留旧程序目录和更新前的个人数据备份。从当前安装目录运行 `uninstall.cmd`，重启 Windows 后再运行旧目录的 `install.cmd`。旧版功能以其版本说明为准。
 - **卸载**：从当前注册目录运行 `uninstall.cmd`，注销再登录后删除程序目录。个人数据默认保留。
 - **语音不可用**：先运行 `check.cmd`，在设置里刷新/选择麦克风、查看电平并重试模型，再检查 Windows 桌面应用麦克风权限。
-- **应用仍显示旧版**：已打开的应用可能保留旧 DLL，注销再登录后统一刷新。
+- **应用仍显示旧版**：已打开的应用可能保留旧 DLL，重启 Windows 后统一刷新。
 
 已知限制：很短的英语数字可能漏识别；噪声中文数字有时中文优先配置更好；纯词库整句候选仍有歧义。
 本轮真人麦克风、浏览器/Codex 实际编辑、物理跨屏与屏幕阅读器验收后置。

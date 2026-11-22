@@ -3,6 +3,7 @@
 #include "product.hpp"
 #include "tsf_service.hpp"
 #include "brand_resources.h"
+#include "pinyin_handover.hpp"
 
 #include <msctf.h>
 #include <objbase.h>
@@ -105,6 +106,18 @@ bool RegisterComServer(const std::wstring& dll) {
   ok = WriteString(HKEY_LOCAL_MACHINE, classes + L"\\InProcServer32", nullptr, dll) && ok;
   ok = WriteString(HKEY_LOCAL_MACHINE, classes + L"\\InProcServer32", L"ThreadingModel", L"Apartment") && ok;
   return ok;
+}
+
+bool ReplacesRegisteredDll(const std::wstring& dll) {
+  const auto key = L"Software\\Classes\\CLSID\\" + GuidText(CLSID_VoiceIme) + L"\\InProcServer32";
+  for (const HKEY root : {HKEY_LOCAL_MACHINE, HKEY_CURRENT_USER}) {
+    wchar_t previous[MAX_PATH]{};
+    DWORD bytes = sizeof(previous);
+    const auto status = RegGetValueW(root, key.c_str(), nullptr, RRF_RT_REG_SZ, nullptr, previous, &bytes);
+    if (status == ERROR_FILE_NOT_FOUND || status == ERROR_PATH_NOT_FOUND) continue;
+    if (status != ERROR_SUCCESS || _wcsicmp(previous, dll.c_str()) != 0) return true;
+  }
+  return false;
 }
 
 bool DeleteTree(HKEY root) {
@@ -214,9 +227,10 @@ bool UnregisterProfile() {
 }  // namespace
 
 int main(int argc, char** argv) {
-  bool uninstall=false;std::wstring expected_user;
+  bool uninstall=false, wait_for_restart=false;std::wstring expected_user;
   for(int i=1;i<argc;++i) {
     if(std::strcmp(argv[i],"--unregister")==0)uninstall=true;
+    else if(std::strcmp(argv[i],"--wait-for-restart")==0)wait_for_restart=true;
     else if(std::strcmp(argv[i],"--expected-user-sid")==0 && i+1<argc)expected_user=Utf8ToWide(argv[++i]);
     else {std::fprintf(stderr,"Invalid registration argument\n");return 2;}
   }
@@ -236,6 +250,13 @@ int main(int argc, char** argv) {
     const bool hklm = DeleteTree(HKEY_LOCAL_MACHINE);
     std::printf("unregistered\n");
     return UnregisterExitCode(hkcu && hklm);
+  }
+  if (wait_for_restart || ReplacesRegisteredDll(dll)) {
+    const auto status = MarkPinyinHandover(HKEY_LOCAL_MACHINE, kPinyinHandoverKey);
+    if (status != ERROR_SUCCESS) {
+      std::fprintf(stderr, "Could not protect the pinyin dictionary during upgrade (%ld)\n", status);
+      return RegisterExitCode(false, false);
+    }
   }
   const bool machine = RegisterComServer(dll) && RefreshProfile(dll);
   if(!machine) {

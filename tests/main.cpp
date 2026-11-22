@@ -1,4 +1,16 @@
 #include "harness.hpp"
+#include "ipc_security.hpp"
+
+const std::filesystem::path& TestScratchDirectory() {
+  static const auto path = [] {
+    const auto run = std::to_wstring(GetCurrentProcessId()) + L"-" + std::to_wstring(GetTickCount64());
+    const auto directory = std::filesystem::path(ExecutableDirectory()) / L"unit" / run;
+    std::filesystem::create_directories(directory);
+    return directory;
+  }();
+  return path;
+}
+
 void ModelChoicesPersistAndRejectInvalidSettings();
 void ModelDownloadUsesCuratedIdAndCanBeCancelled();
 void BackupRestoresExplicitTermsAndSettings();

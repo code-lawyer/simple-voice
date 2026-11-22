@@ -72,8 +72,7 @@ void AudioReadinessAndChunkingProtectBoundaries() {
   CHECK(pause.Scan(speech,speech.size()-SpeechPause::frame)==last_sound+SpeechPause::tail);
   InputPreferences preferences; preferences.learning=false; preferences.chinese_only=true; preferences.pause_ms=1200;
   preferences.microphone=L"{0.0.1.test}.测试设备";
-  const std::wstring file=L"build/personal-terms-test/preferences.ini";
-  std::filesystem::create_directories("build/personal-terms-test");
+  const auto file = (TestScratchDirectory() / L"preferences.ini").wstring();
   CHECK(SaveInputPreferences(file,preferences)); const auto loaded=LoadInputPreferences(file);
   CHECK(!loaded.learning && loaded.chinese_only && loaded.pause_ms==1200 && loaded.microphone==preferences.microphone);
   preferences.microphone=L"device\nlearning=1"; CHECK(!SaveInputPreferences(file,preferences));
@@ -103,8 +102,9 @@ void PersonalTermsAreExplicitSearchableAndReversible() {
   for(const auto& invalid:{"123","ai1","GitHub"}) {
     rejected=false; try{lex.SaveTerm("invalid code",invalid,now);}catch(...){rejected=true;} CHECK(rejected);
   }
-  CHECK(lex.ExportTerms(L"build/personal-terms-test/voiceime_personal.txt"));
-  std::ifstream file("build/personal-terms-test/voiceime_personal.txt");
+  const auto path = TestScratchDirectory() / L"voiceime_personal.txt";
+  CHECK(lex.ExportTerms(path.wstring()));
+  std::ifstream file(path);
   std::string body((std::istreambuf_iterator<char>(file)),{});
   CHECK(body.find("轻音\tqy\t")!=std::string::npos);
   Lexicon large(":memory:");

@@ -4,5 +4,7 @@
 #define SIMPLE_VOICE_VERSION "0.2.0-rc.12"
 #define SIMPLE_VOICE_FILE_VERSION 0,2,0,12
 
+#ifndef RC_INVOKED
 inline constexpr char kProductName[] = "Simple Voice";
 inline constexpr wchar_t kProductDisplayName[] = L"轻音输入法";
+#endif

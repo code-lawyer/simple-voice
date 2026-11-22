@@ -19,10 +19,10 @@ try {
   . (Join-Path $PSScriptRoot 'upgrade_status.ps1')
   $upgrade = Get-SimpleVoiceUpgradeState $root
   if ($upgrade.OldComponents.Count) {
-    Write-Host 'Older components are still loaded. Save your work; sign out and in after installation.' -ForegroundColor Yellow
+    Write-Host 'Older components are still loaded. Save your work and restart Windows after the upgrade.' -ForegroundColor Yellow
     $upgrade.OldComponents | Format-Table Pid,Process,Kind,Path -AutoSize | Out-Host
   }
-  if ($upgrade.UnreadableProcesses) { Write-Host "Some processes could not be inspected ($($upgrade.UnreadableProcesses)); sign-out is still required after upgrading." }
+  if ($upgrade.UnreadableProcesses) { Write-Host "Some processes could not be inspected ($($upgrade.UnreadableProcesses))." }
   foreach ($file in @($engine, $registrar, $dll)) {
     if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw "Extract the complete release ZIP first. Missing: $file" }
   }
@@ -79,7 +79,9 @@ try {
   if ($Action -eq 'Uninstall') {
     $process = Start-Process -FilePath $registrar -ArgumentList @('--unregister','--expected-user-sid',$userSid) -Verb RunAs -WindowStyle Hidden -PassThru -Wait
   } else {
-    $process = Start-Process -FilePath $registrar -ArgumentList @('--expected-user-sid',$userSid) -Verb RunAs -WindowStyle Hidden -PassThru -Wait
+    $registerArgs = @('--expected-user-sid',$userSid)
+    if ($upgrade.RequiresSignOut) { $registerArgs += '--wait-for-restart' }
+    $process = Start-Process -FilePath $registrar -ArgumentList $registerArgs -Verb RunAs -WindowStyle Hidden -PassThru -Wait
   }
   if ($process.ExitCode -ne 0) { throw "Registration failed (exit $($process.ExitCode)). The Windows administrator prompt must be accepted." }
   if ($Action -eq 'Install') {
@@ -93,9 +95,12 @@ try {
         (Test-Path -LiteralPath "Registry::HKEY_CURRENT_USER\$tip\Category")) {
       throw 'The current-user profile was not enabled or legacy profile metadata remains.'
     }
-    Write-Host 'Installed Simple Voice. Sign out of Windows and sign in again, then choose Simple Voice / Qingyin with Win+Space.'
-    Write-Host 'Keep this folder in place. Sign-in refreshes any previously loaded input-method DLLs.'
-    if ($upgrade.RequiresSignOut) { exit 3010 }
+    Write-Host 'Keep this folder in place.'
+    if (Test-Path -LiteralPath 'Registry::HKEY_LOCAL_MACHINE\Software\SimpleVoicePinyinHandover') {
+      Write-Host 'Upgraded Simple Voice. Restart Windows before using pinyin. Then choose Simple Voice / Qingyin with Win+Space.'
+      exit 3010
+    }
+    Write-Host 'Installed Simple Voice. Sign out and sign in again, then choose Simple Voice / Qingyin with Win+Space.'
   } else {
     foreach ($hive in @('HKEY_CURRENT_USER','HKEY_LOCAL_MACHINE')) {
       if ((Test-Path -LiteralPath "Registry::$hive\Software\Classes\CLSID\$clsid") -or

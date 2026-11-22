@@ -22,8 +22,7 @@ struct TestDb {
   sqlite3* raw = nullptr;
   TestDb() {
     static int serial = 0;
-    path = "build/hardening-" + std::to_string(++serial) + ".sqlite";
-    std::remove(path.c_str());
+    path = (TestScratchDirectory() / ("hardening-" + std::to_string(++serial) + ".sqlite")).u8string();
     if (sqlite3_open(path.c_str(), &raw) != SQLITE_OK) throw std::runtime_error("test db open");
   }
   ~TestDb() { sqlite3_close(raw); std::remove(path.c_str()); }
@@ -112,12 +111,13 @@ void SettingsRejectCorruptionAndUseTheSameHotkeyPolicy() {
   }
   CHECK(ParseSettings("{ \n\"vk\": 119, \"modifiers\": 1\r\n}").hotkey.vk == 119);
   CHECK(ParseSettings(std::string(5000, '9')).hotkey.vk == DefaultHotkey().vk);
-  const std::string path = "build/hardening-settings.json";
+  const auto file = TestScratchDirectory() / "hardening-settings.json";
+  const auto path = file.u8string();
   CHECK(SaveSettings(path, {DefaultHotkey()}));
   CHECK(!SaveSettings(path, {{0, 65}}));
   CHECK(LoadSettings(path).hotkey.vk == DefaultHotkey().vk);
-  CHECK(LoadSettings(std::wstring(L"build/hardening-settings.json")).hotkey.vk == DefaultHotkey().vk);
-  std::remove(path.c_str());
+  CHECK(LoadSettings(file.wstring()).hotkey.vk == DefaultHotkey().vk);
+  std::filesystem::remove(file);
 }
 
 void LexiconStatementFailuresRollBackAndCanRecover() {

@@ -10,6 +10,7 @@
 #include "rime_api.h"
 #include "settings.hpp"
 #include "product.hpp"
+#include "utf8.hpp"
 
 #include <cctype>
 #include <filesystem>
@@ -125,15 +126,6 @@ constexpr int kKeyEscape = 0xff1b;
 constexpr int kKeyDelete = 0xffff;
 constexpr int kKeyPrior = 0xff55;
 constexpr int kKeyNext = 0xff56;
-
-std::string WideToUtf8(const std::wstring& wide) {
-  if (wide.empty()) return {};
-  const int bytes = WideCharToMultiByte(CP_UTF8, 0, wide.c_str(), -1, nullptr, 0, nullptr, nullptr);
-  if (bytes <= 1) return {};
-  std::string utf8(static_cast<size_t>(bytes - 1), '\0');
-  WideCharToMultiByte(CP_UTF8, 0, wide.c_str(), -1, utf8.data(), bytes, nullptr, nullptr);
-  return utf8;
-}
 
 int Shifted(bool shift, int plain, int shifted) {
   return shift ? shifted : plain;
@@ -298,7 +290,6 @@ bool RimeSession::Start(const std::wstring& shared_dir, const std::wstring& user
   personal_generation_=runtime.personal_generation;
   const uintptr_t session=CreateConfiguredSession(api,learning_,runtime.personal_generation);
   if (session == 0) {
-    if (session != 0 && api->destroy_session != nullptr) api->destroy_session(session);
     if (runtime.sessions == 0 && api->finalize != nullptr) api->finalize();
     return false;
   }

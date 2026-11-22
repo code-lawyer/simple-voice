@@ -37,6 +37,7 @@ CTest 五组：单元/并发，模拟采音的真实引擎 IPC，真实 Windows 
 不修改系统注册、生产词库或用户窗口。包括不安全改写、迁移/保留期限、拼音英语路由、
 组合光标、原生编辑器语音状态隔离、切换模型/取消迟到回调和写入断线保护。
 IPC v2 还覆盖连接身份、前台授权、话轮关联、跨应用确认和快捷键配置通知。
+单元测试的临时词库和设置位于所选构建目录的 `unit/`，每次运行使用独立子目录。
 测试须使用普通桌面用户令牌；受限沙箱令牌可能被身份校验或 Windows TSF 拒绝。
 权限边界、夹具范围和同时升级 DLL/引擎的要求见 [本地 IPC 约定](ipc-security.md)。
 
@@ -64,9 +65,10 @@ UI 工具测试键盘、分页、编辑/恢复、可访问性对象、长文本�
 
 - [语音对比](research/asr-selection-2026-11-15.md)、`tools/asr-benchmark/`。
 - [拼音数据与候选评测](research/pinyin-selection-2026-11-15.md)、`tools/pinyin-data/`。
-- [当前回归证据](releases/v0.2.0-rc.9-validation.md)。
+- [rc.12 的语音与跨应用词库回归](releases/v0.2.0-rc.12-validation.md)。
 
 `voiceime_installed_check.exe <安装目录>` 是另行部署后才运行的生产检查，会使用系统 COM 注册并可能启动生产引擎。
+附加 `--pinyin` 可在本工具的前台窗口核对拼音候选。
 不在本轮开发回归或 CI 中运行；不能把源码测试结果称为已安装版验证。
 
 ## CI 与打包
@@ -87,7 +89,7 @@ CI 使用固定哈希的 SDK，MSYS2 编译器跟随软件包仓库版本，二�
 发布前应在全新解压目录、与源码无关的当前目录运行 `tools/setup.ps1 -Action Check`，
 校验默认及兼容模型；可选的 SenseVoiceSmall、Whisper Turbo 另以隔离样本验证。
 再按照真人验收清单决定公开发行。`install.cmd` 会请求管理员注册，
-`Check` 不注册。版本升级使用新目录；注册后注销再登录，避免宿主保留旧 DLL。
+`Check` 不注册。版本升级使用新目录。替换已注册版本后，重启 Windows 才会开放拼音学习库。回滚时先卸载当前版本并重启，再安装旧版。
 
 兼容标识仍为 `voiceime_*`、`%LOCALAPPDATA%\VoiceIme` 及既有 TSF GUID。
 产品名 Simple Voice / 轻音输入法；当前行为以 README、PRODUCT 为准，视觉规则以 DESIGN 为准。

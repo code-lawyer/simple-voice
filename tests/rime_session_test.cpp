@@ -46,10 +46,7 @@ std::wstring SharedDataDir() {
 
 std::wstring TempUserDir() {
   static int n = 0;
-  const std::filesystem::path path =
-      std::filesystem::path(VOICEIME_SOURCE_DIR) / "build" / ("rime-user-" + std::to_string(++n));
-  std::error_code ec;
-  std::filesystem::remove_all(path, ec);
+  const auto path = TestScratchDirectory() / ("rime-user-" + std::to_string(++n));
   std::filesystem::create_directories(path);
   return path.wstring();
 }
@@ -315,7 +312,7 @@ void RimeSessionsOnDifferentThreadsRemainIndependent() {
 }
 
 void ModernInputAndPersonalTermsSurviveLiveSessions() {
-  const auto root=std::filesystem::path(VOICEIME_SOURCE_DIR)/"build-professional"/("rime-quality-"+std::to_string(GetCurrentProcessId()));
+  const auto root = TestScratchDirectory() / "rime-quality";
   const auto user=root/"rime"; std::filesystem::create_directories(user);
   const auto personal_table=user/"voiceime_personal.txt";
   InputPreferences preferences; CHECK(SaveInputPreferences((root/"preferences.ini").wstring(),preferences));

@@ -23,6 +23,10 @@ struct Handle {
   HANDLE value=INVALID_HANDLE_VALUE;
   ~Handle() { if (value && value!=INVALID_HANDLE_VALUE) CloseHandle(value); }
 };
+struct Window {
+  HWND value = nullptr;
+  ~Window() { if (value) DestroyWindow(value); }
+};
 void Hr(HRESULT result,const char* operation) {
   if (FAILED(result)) {
     std::fprintf(stderr,"%s HRESULT=%08lx\n",operation,static_cast<unsigned long>(result));
@@ -168,9 +172,18 @@ int Check(const std::filesystem::path& expected, bool check_pinyin) {
   std::printf("production_pipe_ready=1 phase=%s\n",initial.text.c_str());
   if(initial.text!="0")throw std::runtime_error("engine is not idle; check an existing voice session");
   if(check_pinyin) {
+    Window focus{CreateWindowExW(0, L"STATIC", L"Simple Voice Pinyin check", WS_OVERLAPPEDWINDOW,
+        CW_USEDEFAULT, CW_USEDEFAULT, 300, 100, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr)};
+    if (!focus.value) throw std::runtime_error("create a foreground window for the pinyin check");
+    ShowWindow(focus.value, SW_SHOWNORMAL);
+    SetForegroundWindow(focus.value);
     PinyinClient pinyin;
-    if(!pinyin.Start(VoicePipeName(),(expected/L"voiceime_engine.exe").wstring(),host_window))
-      throw std::runtime_error("installed pinyin connection failed");
+    pinyin.Configure(pipe_name, (expected/L"voiceime_engine.exe").wstring(), host_window);
+    const auto ready_by = GetTickCount64() + 10000;
+    while (!pinyin.EnsureConnected() && GetTickCount64() < ready_by) { Pump(); Sleep(10); }
+    if (!pinyin.connected()) throw std::runtime_error("installed pinyin connection failed");
+    if (ForegroundProcessId() != GetCurrentProcessId())
+      throw std::runtime_error("pinyin check requires its window to be in the foreground");
     for(int vk:{'S','H','I'}) pinyin.ProcessKey(vk,false);
     if(!pinyin.view().composing || pinyin.view().page.empty())
       throw std::runtime_error("installed engine returned no pinyin candidates");

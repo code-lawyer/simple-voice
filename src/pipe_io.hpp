@@ -21,4 +21,5 @@ struct PipeReadResult {
 
 PipeReadResult ReadPipeChunk(HANDLE pipe, HANDLE wake_event, HANDLE stop_event,
                              DWORD poll_ms = 1000);
-bool WritePipeBytes(HANDLE pipe, const std::string& bytes, HANDLE stop_event = nullptr);
+bool WritePipeBytes(HANDLE pipe, const std::string& bytes, HANDLE stop_event = nullptr,
+                    HANDLE deadline = nullptr);

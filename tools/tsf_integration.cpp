@@ -5,11 +5,15 @@
 #include <textstor.h>
 #include <algorithm>
 #include <cstdio>
+#include <cwchar>
 #include <filesystem>
+#include <functional>
+#include <utility>
 #include <stdexcept>
 #include <olectl.h>
 #include "brand_icon.hpp"
 #include "lexicon.hpp"
+#include "pinyin_handover.hpp"
 
 HINSTANCE VoiceImeModule() { return GetModuleHandleW(nullptr); }
 
@@ -78,6 +82,7 @@ void CheckIndicatorContract() {
 
 class TextStore final : public ITextStoreACP, public ITfContextOwnerCompositionSink {
  public:
+  std::function<void()> after_next_write;
   explicit TextStore(bool readonly = false) : readonly_(readonly) {
     hwnd_ = CreateWindowExW(0,L"STATIC",L"VoiceIme TSF test document",WS_POPUP,
                              100,100,700,400,nullptr,nullptr,GetModuleHandleW(nullptr),nullptr);
@@ -139,6 +144,7 @@ class TextStore final : public ITextStoreACP, public ITfContextOwnerCompositionS
     text.replace(start,end-start,value ? std::wstring(value,count) : L"");
     *change={start,end,start+static_cast<LONG>(count)};
     selection_={change->acpNewEnd,change->acpNewEnd,{TS_AE_END,FALSE}};
+    if (after_next_write) std::exchange(after_next_write, {})();
     return S_OK;
   }
   HRESULT STDMETHODCALLTYPE GetFormattedText(LONG,LONG,IDataObject**) override { return E_NOTIMPL; }
@@ -234,6 +240,20 @@ bool ModifiedKey(VoiceService& service,ITfContext* context,int modifier,int vk) 
   if(eaten) service.OnKeyUp(context,modifier,&eaten,true);
   return handled;
 }
+template <typename Ready>
+bool WaitForPinyin(Ready ready, DWORD timeout = 10000) {
+  const auto deadline = GetTickCount64() + timeout;
+  do {
+    if (ready()) return true;
+    Sleep(10);
+  } while (GetTickCount64() < deadline);
+  return false;
+}
+
+void WaitForServicePinyin(VoiceService& service) {
+  Check(WaitForPinyin([&] { return service.PinyinReadyForTest(); }), "TSF prepares pinyin off the input thread");
+}
+
 void Type(VoiceService& service,ITfContext* context,const char* letters) {
   for (const char* p=letters;*p;++p)Check(Key(service,context,*p-'a'+'A'),"pinyin key handled by TSF");
 }
@@ -243,6 +263,7 @@ void CheckPunctuation(ITfThreadMgr* thread,TfClientId id) {
   Hr(thread->SetFocus(doc.manager),"focus punctuation fixture");
   VoiceService service;
   Hr(service.Activate(thread,id),"activate punctuation fixture");
+  WaitForServicePinyin(service);
   auto chord=[&](int modifier,int vk){ return ModifiedKey(service,doc.context,modifier,vk); };
   auto key=[&](int vk){ return Key(service,doc.context,vk); };
   Check(chord(VK_SHIFT,VK_OEM_MINUS) && doc.store->text==L"——","Shift+minus inserts a Chinese dash");
@@ -465,11 +486,13 @@ class LearningEngine {
     const auto id = L"tsf_learning_" + std::to_wstring(GetCurrentProcessId());
     SetEnvironmentVariableW(L"VOICEIME_TEST_ID", id.c_str());
     SetEnvironmentVariableW(L"VOICEIME_TEST_DATA", data.c_str());
+    SetEnvironmentVariableW(L"VOICEIME_TEST_FOREGROUND", std::to_wstring(GetCurrentProcessId()).c_str());
     std::wstring command = L"\"" + executable + L"\" --fake";
     STARTUPINFOW startup{sizeof(startup)};
     if (!CreateProcessW(executable.c_str(), command.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW,
                         nullptr, nullptr, &startup, &process_)) throw std::runtime_error("start learning engine");
     CloseHandle(process_.hThread);
+    SetEnvironmentVariableW(L"VOICEIME_TEST_ENGINE_PID", std::to_wstring(process_.dwProcessId).c_str());
   }
   ~LearningEngine() {
     EnumWindows([](HWND window, LPARAM pid) -> BOOL {
@@ -491,6 +514,59 @@ class LearningEngine {
   PROCESS_INFORMATION process_{};
 };
 
+void CheckPinyinHandover(ITfThreadMgr* thread, TfClientId id, const std::filesystem::path& data) {
+  const auto run = std::to_wstring(GetCurrentProcessId()) + L"-" + std::to_wstring(GetTickCount64());
+  struct Marker {
+    std::wstring path;
+    ~Marker() {
+      RegDeleteKeyW(HKEY_CURRENT_USER, path.c_str());
+      SetEnvironmentVariableW(L"VOICEIME_TEST_PINYIN_HANDOVER", nullptr);
+    }
+  } marker{L"Software\\SimpleVoicePinyinTest-" + run};
+  Check(MarkPinyinHandover(HKEY_CURRENT_USER, marker.path.c_str()) == ERROR_SUCCESS,
+        "create an isolated volatile pinyin handover marker");
+  Check(SetEnvironmentVariableW(L"VOICEIME_TEST_PINYIN_HANDOVER", marker.path.c_str()),
+        "point the isolated engine at the handover marker");
+  const auto fixture = data / run;
+  LearningEngine engine(fixture);
+  const auto pipe = L"\\\\.\\pipe\\VoiceImeQA_tsf_learning_" + std::to_wstring(GetCurrentProcessId());
+  Check(WaitForPinyin([&] { return WaitNamedPipeW(pipe.c_str(), 10); }), "handover engine is listening");
+
+  Document doc(thread, id);
+  Hr(thread->SetFocus(doc.manager), "focus the handover document");
+  VoiceService service;
+  Hr(service.Activate(thread, id), "activate the handover text service");
+  Check(!WaitForPinyin([&] { return service.PinyinReadyForTest(); }, 750), "pending restart blocks pinyin");
+  const auto rime = fixture / "rime";
+  Check(!std::filesystem::exists(rime / "build") && !std::filesystem::exists(rime / "voiceime.userdb"),
+        "the engine leaves the Rime learning database untouched while restart is pending");
+  Check(RegDeleteKeyW(HKEY_CURRENT_USER, marker.path.c_str()) == ERROR_SUCCESS,
+        "simulate Windows clearing the volatile marker on restart");
+  WaitForServicePinyin(service);
+  Type(service, doc.context, "nihao");
+  Check(Key(service, doc.context, VK_SPACE) && doc.store->text == L"你好",
+        "pinyin works after the handover marker is gone");
+  service.Deactivate();
+}
+
+void SetLearningForeground(DWORD foreground) {
+  wchar_t pid[16]{};
+  GetEnvironmentVariableW(L"VOICEIME_TEST_ENGINE_PID", pid, 16);
+  struct Target { DWORD process; HWND window = nullptr; } target{std::wcstoul(pid, nullptr, 10)};
+  EnumWindows([](HWND window, LPARAM data) -> BOOL {
+    auto& target = *reinterpret_cast<Target*>(data);
+    DWORD process = 0;
+    wchar_t name[64]{};
+    GetWindowThreadProcessId(window, &process);
+    GetClassNameW(window, name, 64);
+    if (process != target.process || lstrcmpW(name, L"VoiceImeConfirm") != 0) return TRUE;
+    target.window = window;
+    return FALSE;
+  }, reinterpret_cast<LPARAM>(&target));
+  Check(target.window && SendMessageTimeoutW(target.window, WM_APP + 100, foreground, 0,
+      SMTO_ABORTIFHUNG | SMTO_BLOCK, 1000, nullptr), "set the isolated engine's foreground process");
+}
+
 void RunLearningHost(const std::filesystem::path& data, const wchar_t* mode) {
   const auto executable = ExecutableDirectory() + L"\\voiceime_tsf_integration.exe";
   std::wstring command = L"\"" + executable + L"\" \"" + data.wstring() + L"\" " + mode;
@@ -505,6 +581,7 @@ void RunLearningHost(const std::filesystem::path& data, const wchar_t* mode) {
   GetExitCodeProcess(child.hProcess, &code);
   CloseHandle(child.hProcess);
   Check(wait == WAIT_OBJECT_0 && code == 0, "second application completes its six selections");
+  SetLearningForeground(GetCurrentProcessId());
 }
 void CrossAppLearning(ITfThreadMgr* thread, TfClientId id, const std::filesystem::path& data,
                       bool child, bool restarted, bool paused = false) {
@@ -513,9 +590,11 @@ void CrossAppLearning(ITfThreadMgr* thread, TfClientId id, const std::filesystem
   wchar_t fixture[100]{};
   GetEnvironmentVariableW(L"VOICEIME_TEST_ID", fixture, 100);
   PinyinClient app;
-  Check(app.Start(std::wstring(L"\\\\.\\pipe\\VoiceImeQA_") + fixture,
-                  ExecutableDirectory() + L"\\voiceime_engine_testhost.exe", service.IndicatorMessageWindowForTest()),
+  app.Configure(std::wstring(L"\\\\.\\pipe\\VoiceImeQA_") + fixture,
+                ExecutableDirectory() + L"\\voiceime_engine_testhost.exe", service.IndicatorMessageWindowForTest());
+  Check(WaitForPinyin([&] { return app.EnsureConnected(); }),
         "application opens an independent pinyin session");
+  if (child) SetLearningForeground(GetCurrentProcessId());
   auto page = [&] {
     app.Clear();
     for (int key : {'S','H','I'}) app.ProcessKey(key, false);
@@ -559,6 +638,12 @@ void CrossAppLearning(ITfThreadMgr* thread, TfClientId id, const std::filesystem
       Check(SaveInputPreferences(file,preferences),"resume automatic learning");
       candidates=page();
       Check(!candidates.empty() && candidates.front()==term,"private selections do not change the shared dictionary");
+      SetLearningForeground(0);
+      app.Clear();
+      Check(app.connected() && !app.view().composing, "an unfocused client can clear its own composition");
+      app.ProcessKey('S', false);
+      Check(!app.connected(), "an unfocused client cannot send new pinyin keys");
+      SetLearningForeground(GetCurrentProcessId());
     }
   }
   app.Shutdown();
@@ -590,6 +675,19 @@ int main(int argc,char** argv) {
       return 0;
     }
     {
+      const auto missing = L"tsf_missing_" + std::to_wstring(GetCurrentProcessId());
+      SetEnvironmentVariableW(L"VOICEIME_TEST_ID", missing.c_str());
+      Document doc(thread, id);
+      VoiceService service;
+      Hr(service.Activate(thread, id), "activate text service without an engine");
+      const auto started = GetTickCount64();
+      Check(!Key(service, doc.context, 'N') && !Key(service, doc.context, 'I'),
+            "keys pass through while pinyin is unavailable");
+      service.Deactivate();
+      Check(GetTickCount64() - started < 350, "missing pinyin engine does not stall typing or shutdown");
+    }
+    CheckPinyinHandover(thread, id, data / "pinyin-handover");
+    {
       LearningEngine first(data / "VoiceIme");
       CrossAppLearning(thread, id, data, false, false);
     }
@@ -598,10 +696,23 @@ int main(int argc,char** argv) {
     BYTE keyboard[256]{},clear[256]{};
     GetKeyboardState(keyboard);SetKeyboardState(clear);
     CheckPunctuation(thread,id);
+    {
+      Document doc(thread, id);
+      Hr(thread->SetFocus(doc.manager), "focus a document for the pinyin receipt check");
+      VoiceService service;
+      Hr(service.Activate(thread, id), "activate a text service for the pinyin receipt check");
+      WaitForServicePinyin(service);
+      Type(service, doc.context, "nihao");
+      doc.store->after_next_write = [&] { service.DisconnectPinyinForTest(); };
+      Check(Key(service, doc.context, VK_SPACE) && doc.store->text == L"你好",
+            "selection remains consumed when the pinyin connection closes after writing");
+      service.Deactivate();
+    }
     for(bool remove:{false,true}) {
       Document edited(thread,id);
       Hr(thread->SetFocus(edited.manager),"focus composition editing fixture");
       VoiceService service; Hr(service.Activate(thread,id),"activate service for composition editing");
+      WaitForServicePinyin(service);
       Type(service,edited.context,"nihao"); Key(service,edited.context,VK_LEFT);
       if(remove) Key(service,edited.context,VK_DELETE);
       Key(service,edited.context,VK_RETURN);
@@ -615,6 +726,7 @@ int main(int argc,char** argv) {
       Hr(thread->SetFocus(doc.manager),"focus document");
       VoiceService service;
       Hr(service.Activate(thread,id),"activate production text service");
+      WaitForServicePinyin(service);
       Check(service.CachedHotkeyForTest().vk==DefaultHotkey().vk,"TSF loads the hotkey on activation");
       Check(SaveSettings(hotkey_path,Settings{Hotkey{0,VK_F8}}),"save a changed hotkey in isolated preferences");
       Check(service.CachedHotkeyForTest().vk==DefaultHotkey().vk,"TSF keeps its current key decision until notified");

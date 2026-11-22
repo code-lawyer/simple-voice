@@ -10,7 +10,9 @@ class PinyinClient final : public Composer {
   PinyinClient(const PinyinClient&) = delete;
   PinyinClient& operator=(const PinyinClient&) = delete;
   ~PinyinClient() { Shutdown(); }
-  bool Start(const std::wstring& name, const std::wstring& engine, HWND window);
+  void Configure(std::wstring name, std::wstring engine, HWND window);
+  // Starts or observes a background handshake without waiting for Rime deploy.
+  bool EnsureConnected();
   void Shutdown();
   bool connected() const { return pipe_ != INVALID_HANDLE_VALUE; }
   RimeView ProcessKey(int vk, bool shift) override;
@@ -20,7 +22,18 @@ class PinyinClient final : public Composer {
   const RimeView& view() const override { return view_; }
 
  private:
-  bool Exchange(const Message& request, DWORD timeout);
+  static DWORD WINAPI ConnectThread(void* self);
+  void Connect();
+  void Disconnect();
+  bool Exchange(const Message& request);
+
+  std::wstring name_, engine_;
+  HWND window_ = nullptr;
+  HANDLE connector_ = nullptr, cancel_connect_ = nullptr;
+  ULONGLONG retry_after_ = 0;
+  // The worker owns these until its thread handle signals completion.
+  HANDLE pending_pipe_ = INVALID_HANDLE_VALUE;
+  RimeView pending_view_;
   HANDLE pipe_ = INVALID_HANDLE_VALUE;
   RimeView view_;
 };

@@ -1,6 +1,11 @@
 #include "pinyin_client.hpp"
 
+#include <utility>
+
 namespace {
+constexpr DWORD kKeyTimeoutMs = 60;
+constexpr DWORD kRetryDelayMs = 350;
+
 void Append16(std::string& out, std::size_t value) {
   out.push_back(static_cast<char>(value & 255));
   out.push_back(static_cast<char>(value >> 8));
@@ -34,6 +39,23 @@ bool ReadView(std::string_view data, RimeView& view) {
   view = std::move(next);
   return true;
 }
+
+bool ExchangeView(HANDLE pipe, const Message& request, RimeView& view, DWORD timeout,
+                  HANDLE stop = nullptr) {
+  PipeDeadline deadline(timeout);
+  if (!deadline.event() || !WritePipeBytes(pipe, Encode(request), stop, deadline.event())) return false;
+  std::string bytes;
+  for (;;) {
+    auto part = ReadPipeChunk(pipe, deadline.event(), stop);
+    bytes += part.bytes;
+    Message reply;
+    std::size_t used = 0;
+    const auto status = DecodeFrame(bytes, &reply, &used);
+    if (status == DecodeStatus::Complete)
+      return used == bytes.size() && reply.type == MsgType::PinyinView && ReadView(reply.text, view);
+    if (status != DecodeStatus::Incomplete || part.status != PipeReadStatus::Data) return false;
+  }
+}
 }
 
 std::string EncodePinyinView(const RimeView& view) {
@@ -49,49 +71,80 @@ std::string EncodePinyinView(const RimeView& view) {
   return out;
 }
 
-bool PinyinClient::Start(const std::wstring& name, const std::wstring& engine, HWND window) {
+void PinyinClient::Configure(std::wstring name, std::wstring engine, HWND window) {
+  Shutdown();
+  name_ = std::move(name);
+  engine_ = std::move(engine);
+  window_ = window;
+}
+
+bool PinyinClient::EnsureConnected() {
   if (connected()) return true;
-  if (name.empty() || !window) return false;
+  if (connector_) {
+    if (WaitForSingleObject(connector_, 0) != WAIT_OBJECT_0) return false;
+    CloseHandle(std::exchange(connector_, nullptr));
+    pipe_ = std::exchange(pending_pipe_, INVALID_HANDLE_VALUE);
+    if (connected()) {
+      view_ = std::move(pending_view_);
+      return true;
+    }
+    retry_after_ = GetTickCount64() + kRetryDelayMs;
+  }
+  if (!window_ || name_.empty() || GetTickCount64() < retry_after_) return false;
+  if (!cancel_connect_) cancel_connect_ = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+  if (cancel_connect_) connector_ = CreateThread(nullptr, 0, ConnectThread, this, 0, nullptr);
+  if (!connector_) retry_after_ = GetTickCount64() + kRetryDelayMs;
+  return false;
+}
+
+DWORD WINAPI PinyinClient::ConnectThread(void* self) {
+  try { static_cast<PinyinClient*>(self)->Connect(); } catch (...) {}
+  return 0;
+}
+
+void PinyinClient::Connect() {
   const auto until = GetTickCount64() + 650;
-  do {
-    pipe_ = CreateFileW(name.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING,
-                        FILE_FLAG_OVERLAPPED | SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION, nullptr);
-    if (connected()) break;
-    const auto error = GetLastError();
-    if (error != ERROR_PIPE_BUSY && error != ERROR_FILE_NOT_FOUND) return false;
-    if (error == ERROR_PIPE_BUSY) WaitNamedPipeW(name.c_str(), 25);
-    else Sleep(15);
-  } while (GetTickCount64() < until);
-  if (!connected()) return false;
-  auto peer = PipeServerPeer(pipe_);
-  if (!peer || !peer->is_image(engine)) { Shutdown(); return false; }
-  Message hello{MsgType::PinyinHello};
-  hello.client_window = reinterpret_cast<std::uintptr_t>(window);
-  return Exchange(hello, 5000);
+  while (WaitForSingleObject(cancel_connect_, 0) == WAIT_TIMEOUT) {
+    HANDLE handle = CreateFileW(name_.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING,
+        FILE_FLAG_OVERLAPPED | SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION, nullptr);
+    if (handle != INVALID_HANDLE_VALUE) {
+      std::unique_ptr<void, decltype(&CloseHandle)> pipe(handle, CloseHandle);
+      auto peer = PipeServerPeer(handle);
+      if (!peer || !peer->is_image(engine_)) return;
+      Message hello{MsgType::PinyinHello};
+      hello.client_window = reinterpret_cast<std::uintptr_t>(window_);
+      if (ExchangeView(handle, hello, pending_view_, 8000, cancel_connect_)) pending_pipe_ = pipe.release();
+      return;
+    }
+    const DWORD error = GetLastError();
+    if ((error != ERROR_PIPE_BUSY && error != ERROR_FILE_NOT_FOUND) || GetTickCount64() >= until) return;
+    if (WaitForSingleObject(cancel_connect_, 20) != WAIT_TIMEOUT) return;
+  }
+}
+
+void PinyinClient::Disconnect() {
+  if (connected()) CloseHandle(std::exchange(pipe_, INVALID_HANDLE_VALUE));
+  view_ = {};
+  retry_after_ = GetTickCount64() + kRetryDelayMs;
 }
 
 void PinyinClient::Shutdown() {
-  if (connected()) CloseHandle(pipe_);
-  pipe_ = INVALID_HANDLE_VALUE;
-  view_ = {};
+  if (connector_) {
+    SetEvent(cancel_connect_);
+    WaitForSingleObject(connector_, INFINITE);
+    CloseHandle(std::exchange(connector_, nullptr));
+  }
+  if (cancel_connect_) CloseHandle(std::exchange(cancel_connect_, nullptr));
+  if (pending_pipe_ != INVALID_HANDLE_VALUE) CloseHandle(std::exchange(pending_pipe_, INVALID_HANDLE_VALUE));
+  pending_view_ = {};
+  Disconnect();
+  window_ = nullptr;
+  retry_after_ = 0;
 }
 
-bool PinyinClient::Exchange(const Message& request, DWORD timeout) {
-  PipeDeadline deadline(timeout);
-  if (connected() && deadline.event() && WritePipeBytes(pipe_, Encode(request), deadline.event())) {
-    std::string bytes;
-    for (;;) {
-      auto part = ReadPipeChunk(pipe_, nullptr, deadline.event());
-      bytes += part.bytes;
-      Message reply;
-      std::size_t used = 0;
-      const auto status = DecodeFrame(bytes, &reply, &used);
-      if (status == DecodeStatus::Complete && used == bytes.size() &&
-          reply.type == MsgType::PinyinView && ReadView(reply.text, view_)) return true;
-      if (status != DecodeStatus::Incomplete || part.status != PipeReadStatus::Data) break;
-    }
-  }
-  Shutdown();
+bool PinyinClient::Exchange(const Message& request) {
+  if (connected() && ExchangeView(pipe_, request, view_, kKeyTimeoutMs)) return true;
+  Disconnect();
   return false;
 }
 RimeView PinyinClient::ProcessKey(int vk, bool shift) {
@@ -101,16 +154,16 @@ RimeView PinyinClient::ProcessKeyWithModifiers(int vk, bool shift, bool ctrl, bo
   Message request{MsgType::PinyinKey};
   request.text.push_back(static_cast<char>(vk));
   request.text.push_back((shift ? 1 : 0) | (ctrl ? 2 : 0) | (alt ? 4 : 0));
-  Exchange(request, 1000);
+  Exchange(request);
   return view_;
 }
 void PinyinClient::Clear() {
-  if (connected() && view_.composing) Exchange(Message{MsgType::PinyinClear}, 1000);
+  if (connected() && view_.composing) Exchange(Message{MsgType::PinyinClear});
   view_.commit.clear();
 }
 void PinyinClient::ConfirmInserted(const std::string& text) {
   if (!connected() || text.empty() || view_.commit != text) return;
-  PipeDeadline deadline(500);
-  if (!deadline.event() || !WritePipeBytes(pipe_, Encode({MsgType::PinyinInserted}), deadline.event())) Shutdown();
+  PipeDeadline deadline(kKeyTimeoutMs);
+  if (!deadline.event() || !WritePipeBytes(pipe_, Encode({MsgType::PinyinInserted}), deadline.event())) Disconnect();
   else view_.commit.clear();
 }

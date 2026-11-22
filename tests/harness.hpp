@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdio>
+#include <filesystem>
 #include <string>
 
 struct Test {
@@ -9,6 +10,8 @@ struct Test {
 };
 
 inline int g_failed = 0;
+
+const std::filesystem::path& TestScratchDirectory();
 
 inline void Check(bool ok, const char* expr, const char* file, int line) {
   if (ok) return;

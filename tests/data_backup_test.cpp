@@ -8,7 +8,7 @@
 namespace fs=std::filesystem;
 namespace {
 fs::path Folder(const wchar_t* name) {
-  const auto path=fs::path(L"build-review/backup-tests")/(std::wstring(name)+L"-"+std::to_wstring(GetCurrentProcessId())+L"-"+std::to_wstring(GetTickCount64()));
+  const auto path = TestScratchDirectory() / name;
   fs::create_directories(path);return path;
 }
 bool Fails(const std::function<void()>& run){try{run();return false;}catch(...){return true;}}

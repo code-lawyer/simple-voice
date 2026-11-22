@@ -8,7 +8,7 @@
 #include <chrono>
 namespace fs=std::filesystem;
 void ModelDownloadUsesCuratedIdAndCanBeCancelled() {
-  const auto root=fs::absolute(fs::path(L"build-review/download-tests")/std::to_wstring(GetCurrentProcessId()));
+  const auto root = TestScratchDirectory() / L"model-download";
   fs::create_directories(root/L"tools");
   const auto script=root/L"tools/download_models.ps1";
   {std::ofstream out(script);out<<"param([string]$Root,[string]$OnlyModel,[string]$StatusFile)\n[IO.File]::WriteAllText($StatusFile,$OnlyModel)\nexit 0\n";}

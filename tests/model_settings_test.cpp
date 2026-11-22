@@ -25,16 +25,16 @@ void ModelChoicesPersistAndRejectInvalidSettings() {
   settings.hotwords="";settings.idle_minutes=-1;CHECK(SerializeModelSettings(settings).empty());
 }
 void ModelSettingsSaveFailureKeepsWorkingChoice() {
-  const auto path=L"build/model-settings-test.ini";
+  const auto path = (TestScratchDirectory() / L"model-settings-test.ini").wstring();
   ModelSettings old;CHECK(SaveModelSettings(path,old));
-  HANDLE held=CreateFileW(path,GENERIC_READ,FILE_SHARE_READ,nullptr,OPEN_EXISTING,0,nullptr);
+  HANDLE held=CreateFileW(path.c_str(),GENERIC_READ,FILE_SHARE_READ,nullptr,OPEN_EXISTING,0,nullptr);
   CHECK(held!=INVALID_HANDLE_VALUE);
   ModelSettings next;next.model=SpeechModel::SenseVoice;
   CHECK(!SaveModelSettings(path,next));
   CHECK(LoadModelSettings(path).model==SpeechModel::Qwen3);
   CloseHandle(held);CHECK(SaveModelSettings(path,next));
   CHECK(LoadModelSettings(path).model==SpeechModel::SenseVoice);
-  DeleteFileW(path);
+  DeleteFileW(path.c_str());
   CHECK(LoadModelSettings(path,true).model==SpeechModel::ChineseLegacy);
 }
 void ModelChangesHaveExplicitRuntimeBoundaries() {
@@ -45,6 +45,6 @@ void ModelChangesHaveExplicitRuntimeBoundaries() {
   b=a;b.hotwords="词语";CHECK(!SameModelRuntime(a,b));
   a.model=b.model=SpeechModel::SenseVoice;CHECK(SameModelRuntime(a,b));
   ModelFiles files;std::string error;
-  CHECK(!ResolveModelFiles("build/does-not-contain-speech-models",a,files,error));
+  CHECK(!ResolveModelFiles((TestScratchDirectory() / "missing-models").u8string(),a,files,error));
   CHECK(!error.empty());
 }

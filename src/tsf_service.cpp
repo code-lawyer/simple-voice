@@ -324,18 +324,26 @@ class VoiceService : public ITfTextInputProcessor {
   void SetVoiceActiveForTest(bool active) { active_=active; }
   HWND IndicatorMessageWindowForTest() const { return host_; }
   Hotkey CachedHotkeyForTest() const { return hotkey_cache_.value(); }
+  bool PinyinReadyForTest() { return rime_.EnsureConnected(); }
+  void DisconnectPinyinForTest() { rime_.Shutdown(); }
 #endif
   HRESULT OnKeyUp(ITfContext* context, WPARAM vk, WINBOOL* eaten, bool down);
   void OnProfileActivation(REFCLSID clsid, REFGUID profile, BOOL activated) {
     if (!IsEqualGUID(clsid, CLSID_VoiceIme) || !IsEqualGUID(profile, GUID_VoiceImeProfile)) return;
     profile_selected_ = activated != FALSE;
-    if (profile_selected_) RequestModelPreload();
+    if (profile_selected_) {
+      WarmPinyin();
+      RequestModelPreload();
+    }
     else preload_connection_ = 0;
   }
   void OnForeground(bool foreground) {
     foreground_ = foreground;
     last_caret_sent_.clear();
-    if (foreground) RequestModelPreload();
+    if (foreground) {
+      WarmPinyin();
+      RequestModelPreload();
+    }
     else {
       preload_connection_ = 0;
       bar_.Hide();
@@ -575,6 +583,7 @@ class VoiceService : public ITfTextInputProcessor {
     ITfContext* context = nullptr;
     CompositionEdit op = CompositionEdit::Cancel;
     std::wstring text;
+    bool inserted = false;
     HRESULT STDMETHODCALLTYPE DoEditSession(TfEditCookie cookie) override;
   };
 
@@ -587,16 +596,16 @@ class VoiceService : public ITfTextInputProcessor {
   static bool ToggleInputMode(void* self);
   static void SettingsClicked(void* self);
   static void CandidateClicked(void* self, int index);
-  bool EnsureRime();
+  void WarmPinyin();
   bool PipeConnected();
   KeyState MakeKeyState(ITfContext* context, WPARAM vk, LPARAM lparam);
   void SendVoice(MsgType type, WPARAM vk, WINBOOL* eaten);
-  void RunComposition(ITfContext* context, CompositionEdit op, const std::wstring& text);
+  bool RunComposition(ITfContext* context, CompositionEdit op, const std::wstring& text);
   void DropUncommitted(ITfContext* context, const KeyState& state, const Hotkey& hotkey);
-  void EditComposition(TfEditCookie cookie, ITfContext* context, CompositionEdit op, const std::wstring& text);
+  bool EditComposition(TfEditCookie cookie, ITfContext* context, CompositionEdit op, const std::wstring& text);
   bool StartComposition(TfEditCookie cookie, ITfContext* context);
   void SetCompositionText(TfEditCookie cookie, ITfContext* context, const std::wstring& text);
-  void CommitComposition(TfEditCookie cookie, ITfContext* context, const std::wstring& text);
+  bool CommitComposition(TfEditCookie cookie, ITfContext* context, const std::wstring& text);
   void CancelComposition(TfEditCookie cookie);
   void ReleaseCompositionPointer();
   void OnCompositionTerminated(TfEditCookie cookie, ITfComposition* composition);
@@ -838,6 +847,7 @@ LRESULT CALLBACK VoiceService::WindowProc(HWND hwnd, UINT message, WPARAM wparam
     return 0;
   }
   if (message == kEngineConnectedMessage) {
+    self->WarmPinyin();
     self->RequestModelPreload();
     return 0;
   }
@@ -1063,6 +1073,18 @@ HRESULT VoiceService::Activate(ITfThreadMgr* manager, TfClientId client_id) {
   thread_mgr_->AddRef();
   client_id_ = client_id;
   EnsureWindow();
+  const auto directory = ModuleDirectory();
+  if (!directory.empty()) {
+#ifdef VOICEIME_TESTING
+    wchar_t id[100]{};
+    const DWORD size = GetEnvironmentVariableW(L"VOICEIME_TEST_ID", id, 100);
+    if (size && size < 100)
+      rime_.Configure(std::wstring(L"\\\\.\\pipe\\VoiceImeQA_") + id,
+                      directory + L"\\voiceime_engine_testhost.exe", host_);
+#else
+    rime_.Configure(VoicePipeName(), directory + L"\\voiceime_engine.exe", host_);
+#endif
+  }
   input_indicator_=new(std::nothrow) InputIndicator(VoiceImeModule(),&VoiceService::ToggleInputMode,this,pinyin_.mode(),&VoiceService::CanToggleInputMode);
   if(input_indicator_ && FAILED(input_indicator_->Attach(manager))) {
     input_indicator_->Release();input_indicator_=nullptr;
@@ -1085,6 +1107,7 @@ HRESULT VoiceService::Activate(ITfThreadMgr* manager, TfClientId client_id) {
   if (write_event_ == nullptr) write_event_ = CreateEventW(nullptr, TRUE, FALSE, nullptr);
   else ResetEvent(write_event_);
   reader_ = CreateThread(nullptr, 0, VoiceReader, this, 0, nullptr);
+  WarmPinyin();
   return S_OK;
 }
 
@@ -1180,21 +1203,13 @@ HRESULT STDMETHODCALLTYPE VoiceService::CompositionSink::OnCompositionTerminated
 }
 
 HRESULT STDMETHODCALLTYPE VoiceService::CompSession::DoEditSession(TfEditCookie cookie) {
-  if (owner != nullptr) owner->EditComposition(cookie, context, op, text);
+  if (owner != nullptr) inserted = owner->EditComposition(cookie, context, op, text);
   return S_OK;
 }
 
-bool VoiceService::EnsureRime() {
-  if (rime_.connected()) return true;
-  LaunchEngine();
-#ifdef VOICEIME_TESTING
-  wchar_t id[100]{};
-  if (!GetEnvironmentVariableW(L"VOICEIME_TEST_ID", id, 100)) return false;
-  return rime_.Start(std::wstring(L"\\\\.\\pipe\\VoiceImeQA_") + id,
-                     ModuleDirectory() + L"\\voiceime_engine_testhost.exe", host_);
-#else
-  return rime_.Start(VoicePipeName(), ModuleDirectory() + L"\\voiceime_engine.exe", host_);
-#endif
+void VoiceService::WarmPinyin() {
+  if (profile_selected_ && OwnsForeground() && pinyin_.mode() == InputMode::Chinese)
+    rime_.EnsureConnected();
 }
 
 bool VoiceService::PipeConnected() {
@@ -1250,11 +1265,11 @@ void VoiceService::DropUncommitted(ITfContext* context, const KeyState& state, c
   bar_.Hide();
 }
 
-void VoiceService::RunComposition(ITfContext* context, CompositionEdit op, const std::wstring& text) {
-  if (op == CompositionEdit::Cancel && composition_ == nullptr) return;
+bool VoiceService::RunComposition(ITfContext* context, CompositionEdit op, const std::wstring& text) {
+  if (op == CompositionEdit::Cancel && composition_ == nullptr) return false;
   if (context == nullptr || client_id_ == 0) {
     if (op == CompositionEdit::Cancel) ReleaseCompositionPointer();
-    return;
+    return false;
   }
   CompSession session;
   session.owner = this;
@@ -1262,19 +1277,22 @@ void VoiceService::RunComposition(ITfContext* context, CompositionEdit op, const
   session.op = op;
   session.text = text;
   HRESULT session_hr = E_FAIL;
-  context->RequestEditSession(client_id_, &session, TF_ES_SYNC | TF_ES_READWRITE, &session_hr);
+  const HRESULT requested = context->RequestEditSession(client_id_, &session, TF_ES_SYNC | TF_ES_READWRITE, &session_hr);
   if (FAILED(session_hr) && op == CompositionEdit::Cancel) ReleaseCompositionPointer();
+  return SUCCEEDED(requested) && SUCCEEDED(session_hr) && session.inserted;
 }
 
-void VoiceService::EditComposition(TfEditCookie cookie, ITfContext* context, CompositionEdit op, const std::wstring& text) {
+bool VoiceService::EditComposition(TfEditCookie cookie, ITfContext* context, CompositionEdit op, const std::wstring& text) {
   if (op == CompositionEdit::Commit) {
-    if (last_key_was_digit_ && !composition_ && text == L"。" && CaretFollowsDigit(cookie, context))
+    if (last_key_was_digit_ && !composition_ && text == L"。" && CaretFollowsDigit(cookie, context)) {
       CommitComposition(cookie, context, L".");
-    else
-      CommitComposition(cookie, context, text);
+      return false;
+    }
+    return CommitComposition(cookie, context, text);
   }
   else if (op == CompositionEdit::SetPreedit) SetCompositionText(cookie, context, text);
   else CancelComposition(cookie);
+  return false;
 }
 
 bool VoiceService::StartComposition(TfEditCookie cookie, ITfContext* context) {
@@ -1329,22 +1347,27 @@ void VoiceService::SetCompositionText(TfEditCookie cookie, ITfContext* context, 
   range->Release();
 }
 
-void VoiceService::CommitComposition(TfEditCookie cookie, ITfContext* context, const std::wstring& text) {
-  if (composition_ == nullptr && !text.empty() && !StartComposition(cookie, context)) return;
-  if (composition_ == nullptr) return;
+bool VoiceService::CommitComposition(TfEditCookie cookie, ITfContext* context, const std::wstring& text) {
+  if (composition_ == nullptr && !text.empty() && !StartComposition(cookie, context)) return false;
+  if (composition_ == nullptr) return false;
+  bool inserted = false;
   ITfRange* range = nullptr;
   if (SUCCEEDED(composition_->GetRange(&range)) && range != nullptr) {
-    if(FAILED(range->SetText(cookie, 0, text.c_str(), static_cast<LONG>(text.size())))) { range->Release(); return; }
+    if (FAILED(range->SetText(cookie, 0, text.c_str(), static_cast<LONG>(text.size())))) {
+      range->Release();
+      return false;
+    }
+    inserted = !text.empty();
     SetInputAttribute(cookie, context, range, false);
     MoveCaretToEnd(cookie, context, range);
     range->Release();
-    if(!text.empty()) rime_.ConfirmInserted(WideToUtf8(text));
   }
   ITfComposition* held = composition_;
   ending_composition_ = true;
   held->EndComposition(cookie);
   ending_composition_ = false;
   if (composition_ == held) ReleaseCompositionPointer();
+  return inserted;
 }
 
 void VoiceService::CancelComposition(TfEditCookie cookie) {
@@ -1420,7 +1443,8 @@ void VoiceService::SyncAfterRime(ITfContext* context) {
   UpdateTracking();
   if (!view.composing) candidate_anchor_known_ = false;
   if (!view.commit.empty()) {
-    RunComposition(context, CompositionEdit::Commit, Utf8ToWide(view.commit));
+    const auto commit = view.commit;
+    if (RunComposition(context, CompositionEdit::Commit, Utf8ToWide(commit))) rime_.ConfirmInserted(commit);
     if (view.composing && !view.preedit.empty()) {
       RunComposition(context, CompositionEdit::SetPreedit, Utf8ToWide(view.preedit));
       ShowCandidates(context);
@@ -1508,7 +1532,7 @@ HRESULT VoiceService::OnKey(ITfContext* context, WPARAM vk, LPARAM lparam, WINBO
       if (eaten != nullptr) *eaten = TRUE;
       return S_OK;
     }
-    if (action == KeyAction::ToRime && !EnsureRime()) return S_OK;
+    if (action == KeyAction::ToRime && !rime_.EnsureConnected()) return S_OK;
     // A host that sees eaten false does not call OnKeyDown, so the clear has to happen here.
     if (action == KeyAction::PassAfterClear || (action == KeyAction::OpenVoice && !PipeConnected())) {
       DropUncommitted(context, state, hotkey);
@@ -1529,7 +1553,7 @@ HRESULT VoiceService::OnKey(ITfContext* context, WPARAM vk, LPARAM lparam, WINBO
     if (composition_ != nullptr || pinyin_.view().composing) DropUncommitted(context, state, hotkey);
     return S_OK;
   }
-  if (action == KeyAction::ToRime && !EnsureRime()) return S_OK;
+  if (action == KeyAction::ToRime && !rime_.EnsureConnected()) return S_OK;
 
   const KeyAction decided = pinyin_.Apply(state, hotkey).action;
   switch (decided) {
@@ -1539,13 +1563,15 @@ HRESULT VoiceService::OnKey(ITfContext* context, WPARAM vk, LPARAM lparam, WINBO
       RunComposition(context, CompositionEdit::Cancel, L"");
       bar_.Hide();
       break;
-    case KeyAction::ToRime:
+    case KeyAction::ToRime: {
+      const bool processed = rime_.connected();
       SyncAfterRime(context);
-      if (!rime_.connected()) return S_OK;
+      if (!processed) return S_OK;
       last_key_was_digit_ = false;
       eaten_vk_ = static_cast<int>(vk);
       if (eaten != nullptr) *eaten = TRUE;
       break;
+    }
     case KeyAction::ToggleMode:
       break;
     case KeyAction::OpenVoice:

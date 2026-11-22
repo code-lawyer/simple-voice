@@ -14,9 +14,6 @@ add_custom_command(OUTPUT "${VOICEIME_PTHREAD_CORE}"
   COMMAND ${CMAKE_AR} d "${VOICEIME_PTHREAD_CORE}" version.o
   DEPENDS "${VOICEIME_PTHREAD_ARCHIVE}" VERBATIM)
 add_custom_target(voiceime_pthread_core DEPENDS "${VOICEIME_PTHREAD_CORE}")
-if(MSVC)
-  add_compile_options(/utf-8)
-endif()
 
 # cppjieba yanyiwu/cppjieba cbdf949eadb8887f060473b5dc6d3194655c8bef (MIT).
 # Pinyin table: mozillazg/pinyin-data fe29ad32bdf352b31a02b9936e537f575432e9a6 (MIT),
@@ -51,11 +48,7 @@ target_include_directories(voiceime_core PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/third_party/cppjieba/include)
 target_link_libraries(voiceime_core PUBLIC voiceime_protocol bcrypt)
 target_compile_definitions(voiceime_core PRIVATE SQLITE_THREADSAFE=1 SQLITE_OMIT_LOAD_EXTENSION _WIN32_WINNT=0x0601)
-if(MSVC)
-  set_source_files_properties(third_party/sqlite/sqlite3.c PROPERTIES COMPILE_OPTIONS /w)
-else()
-  set_source_files_properties(third_party/sqlite/sqlite3.c PROPERTIES COMPILE_OPTIONS -w)
-endif()
+set_source_files_properties(third_party/sqlite/sqlite3.c PROPERTIES COMPILE_OPTIONS -w)
 
 add_executable(voiceime_tests tests/main.cpp tests/utf8_test.cpp tests/lexicon_test.cpp tests/segmenter_test.cpp tests/recording_test.cpp tests/session_test.cpp tests/place_test.cpp tests/ipc_test.cpp tests/tsf_load_test.cpp tests/settings_test.cpp tests/key_route_test.cpp tests/pinyin_controller_test.cpp tests/rime_session_test.cpp tests/candidate_test.cpp)
 target_link_libraries(voiceime_tests PRIVATE voiceime_core)
@@ -120,7 +113,6 @@ add_custom_target(voiceime_rime_data ALL
   COMMAND ${CMAKE_COMMAND} -E copy_directory
     "${CMAKE_SOURCE_DIR}/rime-data"
     "${CMAKE_BINARY_DIR}/rime-data")
-add_dependencies(voiceime_tsf voiceime_rime_data)
 add_dependencies(voiceime_engine voiceime_rime_data)
 add_dependencies(voiceime_tests voiceime_tsf)
 

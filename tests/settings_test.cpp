@@ -14,9 +14,7 @@ namespace {
 
 std::string TempPath() {
   static int n = 0;
-  std::string path = "build/settings-" + std::to_string(++n) + ".json";
-  std::remove(path.c_str());
-  return path;
+  return (TestScratchDirectory() / ("settings-" + std::to_string(++n) + ".json")).u8string();
 }
 
 std::string ReadFile(const std::string& path) {
@@ -101,14 +99,14 @@ void RegisterRequiresTheMachineKey() {
 }
 
 void SettingsRoundTripOnANonAsciiPath() {
-  const std::string path = "build/设置-hotkey.json";
-  std::remove(path.c_str());
+  const auto file = TestScratchDirectory() / L"设置-hotkey.json";
+  const auto path = file.u8string();
   SaveSettings(path, Settings{Hotkey{1, 0x70}});
   const Settings s = LoadSettings(path);
   CHECK(s.hotkey.modifiers == 1);
   CHECK(s.hotkey.vk == 0x70);
   CHECK(FileExistsUtf8(path));
-  std::remove(path.c_str());
+  std::filesystem::remove(file);
 }
 
 void SkinsPersistWithoutChangingLegacyHotkeys() {

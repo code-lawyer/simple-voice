@@ -23,6 +23,7 @@
 #include "rime_session.hpp"
 #include "pipe_io.hpp"
 #include "ipc_security.hpp"
+#include "pinyin_handover.hpp"
 
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -100,6 +101,15 @@ std::wstring MutexName() {
   return L"Local\\VoiceImeQA_" + TestEnvironment(L"VOICEIME_TEST_ID");
 #else
   return VoiceMutexName();
+#endif
+}
+
+bool PinyinWaitingForRestart() {
+#ifdef VOICEIME_TESTING
+  const auto path = TestEnvironment(L"VOICEIME_TEST_PINYIN_HANDOVER");
+  return !path.empty() && PinyinHandoverPending(HKEY_CURRENT_USER, path.c_str());
+#else
+  return PinyinHandoverPending(HKEY_LOCAL_MACHINE, kPinyinHandoverKey);
 #endif
 }
 
@@ -291,6 +301,7 @@ class Engine {
  private:
   LRESULT OnMessage(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam);
   void OnPipe(ClientId sender, const Message& message, bool resumed = false);
+  DWORD ForegroundInputProcess() const;
   bool ForegroundClientAllowed(ClientId sender) const;
   void ResumeQueuedStart();
   Message StateMessage();
@@ -373,7 +384,7 @@ class Engine {
   ULONGLONG prepare_started_=0,model_last_used_=0,final_started_=0,last_load_ms_=0,last_final_ms_=0;
 #ifdef VOICEIME_TESTING
   int prepare_attempts_=0;
-  DWORD test_foreground_ = 0;
+  std::atomic<DWORD> test_foreground_{0};
 #endif
   std::string model_error_;
   ClientId queued_start_=0;
@@ -1168,16 +1179,25 @@ void Engine::ReleaseIdleModel(ULONGLONG now) {
     recognizer_.reset();model_notice_=preload_on_activate_?L"闲置模型已释放，下次切入轻音或录音时准备。":L"闲置模型已释放，下次录音时准备。";
   }
 }
-bool Engine::ForegroundClientAllowed(ClientId sender) const {
-  DWORD foreground = ForegroundProcessId();
+DWORD Engine::ForegroundInputProcess() const {
 #ifdef VOICEIME_TESTING
-  foreground = test_foreground_;  // Fixture input; identity/window checks are unchanged.
+  return test_foreground_;  // Fixture input; identity/window checks are unchanged.
+#else
+  return ForegroundProcessId();
 #endif
+}
+
+bool IsForegroundPeer(const IpcPeer& peer, HWND window, DWORD foreground) {
+  DWORD owner = 0;
+  return window && peer.id() == foreground && peer.alive() &&
+      GetWindowThreadProcessId(window, &owner) && owner == foreground;
+}
+
+bool Engine::ForegroundClientAllowed(ClientId sender) const {
+  const DWORD foreground = ForegroundInputProcess();
   std::lock_guard<std::mutex> lock(write_mu_);
   for (const auto& client : clients_) {
-    if (client.id != sender || !client.window || !client.peer->alive() || client.peer->id() != foreground) continue;
-    DWORD owner = 0;
-    return IsWindow(client.window) && GetWindowThreadProcessId(client.window, &owner) && owner == foreground;
+    if (client.id == sender) return IsForegroundPeer(*client.peer, client.window, foreground);
   }
   return false;
 }
@@ -1534,6 +1554,7 @@ LRESULT Engine::OnMessage(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
 void Engine::ClientLoop(ClientId id, HANDLE pipe, std::shared_ptr<IpcPeer> peer) {
   bool authenticated = false;
   std::unique_ptr<RimeSession> pinyin;
+  HWND pinyin_window = nullptr;
   std::string awaiting_insert;
   const auto handshake_deadline = GetTickCount64() + 3000;
   PipeDeadline deadline;
@@ -1576,6 +1597,8 @@ void Engine::ClientLoop(ClientId id, HANDLE pipe, std::shared_ptr<IpcPeer> peer)
         if (!peer->owns_window(window, expected)) return false;
         authenticated = true;
         if (wants_pinyin) {
+          if (PinyinWaitingForRestart()) return false;
+          pinyin_window = window;
           pinyin = std::make_unique<RimeSession>();
           if (!pinyin->Start(ExecutableDirectory() + L"\\rime-data", data_path_ + L"\\rime")) return false;
           if (!WritePipeBytes(pipe, Encode({MsgType::PinyinView, EncodePinyinView(pinyin->view())}), stop_event_)) return false;
@@ -1598,6 +1621,7 @@ void Engine::ClientLoop(ClientId id, HANDLE pipe, std::shared_ptr<IpcPeer> peer)
         }
         if (decoded.type == MsgType::PinyinClear) pinyin->Clear();
         else if (decoded.type == MsgType::PinyinKey) {
+          if (!IsForegroundPeer(*peer, pinyin_window, ForegroundInputProcess())) return false;
           const auto vk = static_cast<unsigned char>(decoded.text[0]);
           const auto modifiers = static_cast<unsigned char>(decoded.text[1]);
           if (!vk || modifiers > 7) return false;
