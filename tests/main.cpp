@@ -85,6 +85,7 @@ void ClampPullsTheRectInsideTheWorkArea();
 void SettingsHitIsTheRightStrip();
 void ConcurrentLexiconReadsWritesAndDeletesAreSerialized();
 void RimeSessionsSurviveAnotherSessionShuttingDown();
+void RimeLeavesBusyUserDictionaryUntouched();
 void RimeRejectsReconfigurationWhileAnotherSessionIsLive();
 void RimeSessionsOnDifferentThreadsRemainIndependent();
 void PipeReadSurvivesRepeatedTimeouts();
@@ -131,6 +132,7 @@ int main(int argc, char** argv) {
       {"backup.CorruptionAndWriteFailure", BackupCorruptionAndWriteFailurePreserveData},
       {"backup.InterruptedRestore", InterruptedRestoreRecoversBeforeLoadingPreferences},
       {"rime.SessionsSurviveAnotherSessionShuttingDown", RimeSessionsSurviveAnotherSessionShuttingDown},
+      {"rime.LeavesBusyUserDictionaryUntouched", RimeLeavesBusyUserDictionaryUntouched},
       {"rime.RejectsReconfigurationWhileAnotherSessionIsLive", RimeRejectsReconfigurationWhileAnotherSessionIsLive},
       {"rime.SessionsOnDifferentThreadsRemainIndependent", RimeSessionsOnDifferentThreadsRemainIndependent},
       {"pipe.ReadSurvivesRepeatedTimeouts", PipeReadSurvivesRepeatedTimeouts},

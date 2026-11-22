@@ -40,6 +40,22 @@ RimeRuntime& Runtime() {
   return runtime;
 }
 
+bool CanOpenUserDictionary(const std::filesystem::path& user_path) {
+  const auto path = user_path / "voiceime.userdb" / "LOCK";
+  // Match the lock taken by LevelDB on Windows. librime 1.17 attempts
+  // automatic recovery even when opening the database failed due to sharing.
+  const auto file = CreateFileW(path.c_str(), GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ,
+                                nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+  if (file == INVALID_HANDLE_VALUE) {
+    const DWORD error = GetLastError();
+    return error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND;
+  }
+  const bool available = LockFile(file, 0, 0, MAXDWORD, MAXDWORD) != FALSE;
+  if (available) UnlockFile(file, 0, 0, MAXDWORD, MAXDWORD);
+  CloseHandle(file);
+  return available;
+}
+
 void ConfigurePersonal(RimeRuntime& runtime) {
   const auto path=std::filesystem::path(runtime.user_path)/"voiceime_personal.txt";
   const HANDLE file=CreateFileW(path.c_str(),GENERIC_READ,FILE_SHARE_READ|FILE_SHARE_DELETE,nullptr,
@@ -254,6 +270,7 @@ bool RimeSession::Start(const std::wstring& shared_dir, const std::wstring& user
   }
 
   if (runtime.sessions == 0) {
+    if (!CanOpenUserDictionary(user_path)) return false;
     runtime.shared_path = shared_path;
     runtime.user_path = user_path;
     runtime.shared_utf8 = WideToUtf8(shared_path);

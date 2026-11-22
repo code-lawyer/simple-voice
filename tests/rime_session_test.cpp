@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <atomic>
 #include <thread>
 #include <string>
@@ -231,6 +232,37 @@ void SelectingACandidateCreatesAUserDb() {
   session.ProcessKey(0x20, false);
   session.Shutdown();
   CHECK(DirectoryContainsUserDb(user));
+}
+
+void RimeLeavesBusyUserDictionaryUntouched() {
+  const auto user = TempUserDir();
+  const auto database = std::filesystem::path(user) / "voiceime.userdb";
+  RimeSession session;
+  CHECK(session.Start(SharedDataDir(), user));
+  TypeNihao(session);
+  CHECK(session.ProcessKey(VK_SPACE, false).commit == "你好");
+  session.Shutdown();
+  const auto current_manifest = [&] {
+    std::ifstream input(database / "CURRENT");
+    std::string name;
+    std::getline(input, name);
+    return name;
+  };
+  const auto original = current_manifest();
+  CHECK(!original.empty());
+  // A running older TSF host holds this handle for the lifetime of its DB.
+  const auto owner = CreateFileW((database / "LOCK").c_str(), GENERIC_READ | GENERIC_WRITE,
+                                 FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+  CHECK(owner != INVALID_HANDLE_VALUE);
+  if (owner == INVALID_HANDLE_VALUE) return;
+  CHECK(LockFile(owner, 0, 0, MAXDWORD, MAXDWORD));
+  CHECK(!session.Start(SharedDataDir(), user));
+  session.Shutdown();
+  CHECK(current_manifest() == original);
+  CHECK(CloseHandle(owner));
+  CHECK(session.Start(SharedDataDir(), user));
+  TypeNihao(session);
+  CHECK(session.ProcessKey(VK_SPACE, false).commit == "你好");
 }
 
 void RimeSessionsSurviveAnotherSessionShuttingDown() {
