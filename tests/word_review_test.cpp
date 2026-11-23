@@ -178,7 +178,9 @@ void ReviewCollectorRecoversFromTemporaryDbLock() {
     CHECK(sqlite3_exec(blocker,"BEGIN IMMEDIATE",nullptr,nullptr,nullptr)==SQLITE_OK);
     collector.Submit(WordSource::Pinyin,"Codex");
     std::this_thread::sleep_for(std::chrono::milliseconds(1750));
-    CHECK(sqlite3_exec(blocker,"COMMIT",nullptr,nullptr,nullptr)==SQLITE_OK);
+    // This connection only holds the writer lock. Committing an empty transaction
+    // can request an exclusive lock while the collector is retrying its write.
+    CHECK(sqlite3_exec(blocker,"ROLLBACK",nullptr,nullptr,nullptr)==SQLITE_OK);
   }
   const auto rows=db.ReviewWords(ReviewFilter::Frequent,"Codex",5,0,now);
   CHECK(rows.size()==1 && rows[0].count==2);
