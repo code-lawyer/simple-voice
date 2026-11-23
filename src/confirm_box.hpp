@@ -20,10 +20,12 @@ class ConfirmBox {
   ~ConfirmBox();
   bool Create(HINSTANCE instance, Hook hook, void* self);
   void ShowText(const std::string& utf8, Rect caret, Rect window_client,
-                Phase phase = Phase::Pending, bool error = false, bool uncertain = false);
+                Phase phase = Phase::Pending, bool error = false, bool uncertain = false,
+                bool editable_error = false);
   void Hide();
   void SetSkin(UiSkin skin);
   void SetActivity(std::wstring activity);
+  void SetPreviewNotice(std::wstring notice);
   void SetRecordingProgress(int seconds,bool quiet);
   UiSkin skin() const { return skin_; }
   HWND hwnd() const { return hwnd_; }
@@ -38,10 +40,12 @@ class ConfirmBox {
   void* hook_self_ = nullptr;
   std::wstring text_;
   std::wstring activity_;
+  std::wstring preview_notice_;
   Phase phase_ = Phase::Pending;
   int recording_seconds_ = 0;
   bool quiet_capture_ = false;
   bool error_ = false;
+  bool editable_error_ = false;
   bool uncertain_ = false;
   UINT dpi_ = 96;
   Rect caret_{};

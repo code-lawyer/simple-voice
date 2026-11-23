@@ -5,6 +5,7 @@
 #include "audio_segments.hpp"
 #include "live_draft.hpp"
 #include "utf8.hpp"
+#include "windows_paths.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -58,6 +59,7 @@ struct SherpaApi {
   void (*destroy_offline)(const SherpaOnnxOfflineRecognizer*) = nullptr;
   const SherpaOnnxOfflineStream* (*create_offline_stream)(const SherpaOnnxOfflineRecognizer*) = nullptr;
   void (*destroy_offline_stream)(const SherpaOnnxOfflineStream*) = nullptr;
+  decltype(&SherpaOnnxOfflineStreamSetOption) set_offline_option = nullptr;
   void (*accept_offline)(const SherpaOnnxOfflineStream*, int32_t, const float*, int32_t) = nullptr;
   void (*decode_offline)(const SherpaOnnxOfflineRecognizer*, const SherpaOnnxOfflineStream*) = nullptr;
   const SherpaOnnxOfflineRecognizerResult* (*offline_result)(const SherpaOnnxOfflineStream*) = nullptr;
@@ -70,20 +72,17 @@ struct SherpaApi {
 
 HMODULE LoadSherpaDll(const std::wstring& path) {
   if (GetFileAttributesW(path.c_str()) == INVALID_FILE_ATTRIBUTES) return nullptr;
-  wchar_t full[MAX_PATH];
-  const DWORD length = GetFullPathNameW(path.c_str(), MAX_PATH, full, nullptr);
-  if (length == 0 || length >= MAX_PATH) return nullptr;
+  std::error_code ec;
+  const auto full=std::filesystem::absolute(path,ec);
+  if(ec) return nullptr;
   // System32 ships an older onnxruntime.dll. Load from the DLL's own directory
   // so v2.0.1 gets the runtime that was packaged with it.
-  return LoadLibraryExW(full, nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
+  return LoadLibraryExW(full.c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
 }
 
 bool Bind(SherpaApi& api) {
-  wchar_t exe[MAX_PATH];
-  GetModuleFileNameW(nullptr, exe, MAX_PATH);
-  std::wstring exe_dir(exe);
-  const auto slash = exe_dir.find_last_of(L"\\/");
-  if (slash != std::wstring::npos) exe_dir.resize(slash);
+  const auto exe_dir=ExecutableDirectory();
+  if(exe_dir.empty()) return false;
   const std::wstring sdk =
       L"third_party\\sherpa-onnx\\sherpa-onnx-v2.0.1-win-x64-shared-MD-Release\\lib\\sherpa-onnx-c-api.dll";
   const std::wstring candidates[] = {
@@ -118,6 +117,7 @@ bool Bind(SherpaApi& api) {
   BIND(destroy_offline, "SherpaOnnxDestroyOfflineRecognizer");
   BIND(create_offline_stream, "SherpaOnnxCreateOfflineStream");
   BIND(destroy_offline_stream, "SherpaOnnxDestroyOfflineStream");
+  BIND(set_offline_option, "SherpaOnnxOfflineStreamSetOption");
   BIND(accept_offline, "SherpaOnnxAcceptWaveformOffline");
   BIND(decode_offline, "SherpaOnnxDecodeOfflineStream");
   BIND(offline_result, "SherpaOnnxGetOfflineStreamResult");
@@ -150,7 +150,7 @@ class SherpaRecognizer : public Recognizer {
     std::vector<std::int16_t> pcm;
     std::string text;
     std::size_t padding=0;
-    bool ready=false, retry_short=false, recovered=false;
+    bool ready=false, retry_short=false, recovered=false, mandarin=false;
   };
   using Job=std::shared_ptr<OfflineJob>;
  public:
@@ -206,10 +206,9 @@ class SherpaRecognizer : public Recognizer {
   bool LoadFinalModel() {
     std::string provider="cpu";
     if(qwen_) {
-      wchar_t executable[32768];
-      const auto length=GetModuleFileNameW(nullptr,executable,32768);
-      if(length && length<32768) {
-        const auto config=std::filesystem::path(executable).parent_path()/L"qwen-cpu.conf";
+      const auto directory=ExecutableDirectory();
+      if(!directory.empty()) {
+        const auto config=std::filesystem::path(directory)/L"qwen-cpu.conf";
         std::error_code ec;
         if(std::filesystem::is_regular_file(config,ec)) {
           // The worker runs in its own directory. An ASCII config path also
@@ -355,7 +354,7 @@ class SherpaRecognizer : public Recognizer {
     std::string text;
     bool incomplete=false;
     for(const auto& job:committed_) {
-      if(job->recovered)warning_="录音较短，首次识别为空，请核对重试得到的文字。";
+      if(job->recovered)warning_=kShortRetryWarning;
       if(job->text.empty()) {incomplete=true;continue;}
       if(!text.empty() && static_cast<unsigned char>(text.back())<128 &&
          static_cast<unsigned char>(job->text.front())<128 && text.back()!=' ')text+=' ';
@@ -364,7 +363,7 @@ class SherpaRecognizer : public Recognizer {
     if(forced_) warning_="长段语音缺少停顿，已分段校准。请编辑核对分段处，再确认写入。";
     if(incomplete) warning_="部分语音没有得到最终文字。请编辑核对，或取消后分段重录。";
     original_=text;
-    if (text.empty()) { warning_="最终识别没有得到文字。当前仅保留草稿，请编辑后确认。"; return partial_; }
+    if (text.empty()) { warning_=kDraftOnlyWarning; return partial_; }
     const char* punctuated = punct_?api_.add_punct(punct_, text.c_str()):nullptr;
     if (punctuated != nullptr) {
       text = PreserveRecognizedContent(text, punctuated);
@@ -403,10 +402,11 @@ class SherpaRecognizer : public Recognizer {
   }
 
  private:
-  std::string DecodeSegment(const std::vector<float>& wave) {
+  std::string DecodeSegment(const std::vector<float>& wave,bool mandarin=false) {
     std::unique_ptr<const SherpaOnnxOfflineStream, decltype(api_.destroy_offline_stream)>
         stream(api_.create_offline_stream(offline_), api_.destroy_offline_stream);
     if (!stream) return {};
+    if(mandarin) api_.set_offline_option(stream.get(),"language","Chinese");
     Feed(api_.accept_offline, stream.get(), wave.data(), wave.size());
     api_.decode_offline(offline_, stream.get());
     std::unique_ptr<const SherpaOnnxOfflineRecognizerResult, decltype(api_.destroy_offline_result)>
@@ -439,6 +439,14 @@ class SherpaRecognizer : public Recognizer {
     // These zeros belong only to the offline candidate, never to capture or draft.
     if(at_pause) job->padding=count<2*kRecordingSampleRate ? kRecordingSampleRate*55/100 : SpeechPause::tail;
     job->retry_short=retry_short;
+    // Qwen normally generates the language tag one token at a time. For a
+    // short, consistently Chinese draft, prefill that tag in the prompt.
+    // Keep automatic language detection for names, mixed scripts and retries.
+    if(qwen_ && hotwords_.empty() && committed_.empty() && count<SpeechPause::short_limit) {
+      const auto draft=Utf8ToWide(partial_);
+      job->mandarin=draft.size()>=5 && std::all_of(draft.begin(),draft.end(),
+          [](wchar_t c){return c>=0x4e00 && c<=0x9fff;});
+    }
     chunks_.push_back(job);work_.notify_all();
     return job;
   }
@@ -483,10 +491,12 @@ class SherpaRecognizer : public Recognizer {
       if(candidate_ && candidate_end_!=pending)DropCandidate();
       return;
     }
-    const auto end=pause_.PreviewEnd();
+    const auto early=committed_.empty()?pause_.ShortPreviewEnd():0;
+    const auto end=early?early:pause_.PreviewEnd();
     if(candidate_ && candidate_end_!=end)DropCandidate();
     if(end && !candidate_ && final_ready_ && !decoding_ && chunks_.empty()) {
       candidate_=Schedule(end,false,true);
+      if(early) candidate_->padding+=SpeechPause::tail-4*SpeechPause::frame;
       candidate_end_=end;
     }
   }
@@ -507,7 +517,8 @@ class SherpaRecognizer : public Recognizer {
         ToFloat(samples.data(),samples.size(),wave);
         if (!job->retry_short) std::vector<std::int16_t>().swap(samples);
         wave.resize(wave.size()+job->padding,0.0f);
-        text = DecodeSegment(wave);
+        text = DecodeSegment(wave,job->mandarin);
+        if(text.empty() && job->mandarin) text=DecodeSegment(wave);
         std::size_t begin = 0, end = 0;
         if (text.empty() && job->retry_short && ShortVoicedRegion(samples, begin, end)) {
           // Retain the natural onset/tail. A long wait before pressing stop

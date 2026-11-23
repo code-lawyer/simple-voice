@@ -4,6 +4,7 @@
 #include "tsf_service.hpp"
 #include "brand_resources.h"
 #include "pinyin_handover.hpp"
+#include "windows_paths.hpp"
 
 #include <msctf.h>
 #include <objbase.h>
@@ -38,17 +39,6 @@ std::wstring GuidText(const GUID& guid) {
   wchar_t text[64];
   const int count = StringFromGUID2(guid, text, 64);
   return count > 0 ? std::wstring(text) : L"";
-}
-
-std::wstring DllPath() {
-  wchar_t exe[MAX_PATH];
-  const DWORD count = GetModuleFileNameW(nullptr, exe, MAX_PATH);
-  std::wstring path(exe, count);
-  const auto slash = path.find_last_of(L"\\/");
-  if (slash == std::wstring::npos) return L"voiceime_tsf.dll";
-  path.resize(slash + 1);
-  path += L"voiceime_tsf.dll";
-  return path;
 }
 
 std::wstring CurrentUserSid() {
@@ -238,7 +228,6 @@ int main(int argc, char** argv) {
     std::fprintf(stderr,"Administrator elevation used a different Windows account; no registration was changed\n");
     return 2;
   }
-  const std::wstring dll = DllPath();
   if (uninstall) {
     const bool layout=InstallLayout(true) || UserProfileDisabled();
     const bool profile=UnregisterProfile();
@@ -251,6 +240,9 @@ int main(int argc, char** argv) {
     std::printf("unregistered\n");
     return UnregisterExitCode(hkcu && hklm);
   }
+  const auto directory=ExecutableDirectory();
+  if(directory.empty()) {std::fprintf(stderr,"Cannot locate the registration directory\n");return 2;}
+  const auto dll=directory+L"\\voiceime_tsf.dll";
   if (wait_for_restart || ReplacesRegisteredDll(dll)) {
     const auto status = MarkPinyinHandover(HKEY_LOCAL_MACHINE, kPinyinHandoverKey);
     if (status != ERROR_SUCCESS) {

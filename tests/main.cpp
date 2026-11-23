@@ -111,8 +111,16 @@ void FailedSettingsReplacePreservesPreviousFile();
 void SettingsSaveReportsMissingDirectory();
 void ConcurrentSegmentationKeepsTheTextIntact();
 
+void ReviewCountsTheRollingWindowAndHonorsConsent();
+void ReviewBatchHonorsEditsAndExplicitSpeechSelection();
+void ReviewExplanationUsesTheThreeActualTexts();
+void ReviewCollectorRecoversFromTemporaryDbLock();
 int main(int argc, char** argv) {
   const Test tests[] = {
+      {"review.RollingWindowAndConsent",ReviewCountsTheRollingWindowAndHonorsConsent},
+      {"review.BatchAndSpeechSelection",ReviewBatchHonorsEditsAndExplicitSpeechSelection},
+      {"review.ExplanationAndShortExamples",ReviewExplanationUsesTheThreeActualTexts},
+      {"review.CollectorRetriesDatabaseLock",ReviewCollectorRecoversFromTemporaryDbLock},
       {"ipc.RetiredAndUnauthenticatedFramesAreRejected", RetiredAndUnauthenticatedFramesAreRejected},
       {"ipc.PipePeersAndLogonAclAreVerified", PipePeersAndLogonAclAreVerified},
       {"settings.HotkeyCacheKeepsTypingIndependentOfFileReads", HotkeyCacheKeepsTypingIndependentOfFileReads},

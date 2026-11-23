@@ -38,16 +38,17 @@ bool ConfirmBox::Create(HINSTANCE instance, Hook hook, void* self) {
   return hwnd_ != nullptr;
 }
 
-void ConfirmBox::ShowText(const std::string& utf8, Rect caret, Rect window_client, Phase phase, bool error, bool uncertain) {
+void ConfirmBox::ShowText(const std::string& utf8, Rect caret, Rect window_client, Phase phase, bool error, bool uncertain, bool editable_error) {
   if (hwnd_ == nullptr) return;
   UiDpiScope coordinates;
   const auto next = Wide(utf8);
-  if (next==text_ && phase==phase_ && error==error_ && uncertain==uncertain_ &&
+  if (next==text_ && phase==phase_ && error==error_ && uncertain==uncertain_ && editable_error==editable_error_ &&
       SameRect(caret,caret_) && SameRect(window_client,window_) && IsWindowVisible(hwnd_)) return;
-  if (next != text_ || phase != phase_) scroll_ = 0;
+  if (phase != phase_ || !IsWindowVisible(hwnd_)) scroll_ = 0;
   text_ = next;
   phase_ = phase;
   error_ = error;
+  editable_error_ = editable_error;
   uncertain_ = uncertain;
   caret_ = caret;
   window_ = window_client;
@@ -148,7 +149,13 @@ std::wstring ConfirmBox::StatusText() const {
   return text_.empty() ? L"录音已结束" : L"待确认";
 }
 std::wstring ConfirmBox::HintText() const {
-  if (error_) return L"右键查看设置 / 编辑预览 · Esc 关闭";
+  const auto with_notice=[this](const wchar_t* actions) {
+    return preview_notice_.empty()?std::wstring(actions):preview_notice_+L"\n"+actions;
+  };
+  if (error_) {
+    if(!editable_error_) return L"右键打开设置 · Esc 关闭";
+    return with_notice(L"右键编辑预览或打开设置 · Esc 关闭");
+  }
   if (uncertain_) return L"请先核对正文 · 确认未写入后 Enter 重试 · Esc 关闭";
   if (phase_ == Phase::Committing) return L"正在等待应用确认，请稍候";
   if (phase_ == Phase::Listening) return quiet_capture_ ?
@@ -157,7 +164,13 @@ std::wstring ConfirmBox::HintText() const {
   if (phase_ == Phase::Stopped) return L"本次语音已保留 · Enter 开始校准 · Esc 取消";
   if (phase_ == Phase::Finalizing) return L"校准后可预览并确认 · Esc 取消";
   if (text_.empty()) return L"按语音快捷键重新开始 · Esc 关闭";
-  return L"再次按 Enter 确认写入 · 右键编辑 / 复制 · Esc 取消";
+  return with_notice(L"再次按 Enter 确认写入 · 右键编辑 / 复制 · Esc 取消");
+}
+
+void ConfirmBox::SetPreviewNotice(std::wstring notice) {
+  if(preview_notice_==notice) return;
+  preview_notice_=std::move(notice);
+  if(hwnd_ && phase_==Phase::Pending && IsWindowVisible(hwnd_)) Layout();
 }
 
 void ConfirmBox::SetRecordingProgress(int seconds,bool quiet) {

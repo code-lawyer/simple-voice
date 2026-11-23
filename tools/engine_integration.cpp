@@ -3,12 +3,14 @@
 #include "ipc_security.hpp"
 #include "settings.hpp"
 #include "preferences_controls.hpp"
+#include "review_window.hpp"
 #include "model_settings.hpp"
 #include "capture_buffer.hpp"
 #include "sqlite3.h"
 #include "lexicon.hpp"
 #include "data_backup.hpp"
 #include "utf8.hpp"
+#include "windows_paths.hpp"
 #include <windows.h>
 #include <algorithm>
 #include <chrono>
@@ -31,6 +33,19 @@ void Require(bool ok, const char* name) {
   if (!ok) throw std::runtime_error(name);
   ++checks;
   std::printf("PASS %s\n", name);
+}
+
+void CheckDataDirectory() {
+  wchar_t saved[32768]{};
+  const DWORD length=GetEnvironmentVariableW(L"LOCALAPPDATA",saved,32768);
+  std::wstring directory=L"D:\\资料";
+  for(int i=0;i<8;++i) directory+=L"\\"+std::wstring(40,L'名');
+  const bool long_ok=SetEnvironmentVariableW(L"LOCALAPPDATA",directory.c_str()) &&
+      VoiceUserDataDirectory()==directory+L"\\VoiceIme";
+  SetEnvironmentVariableW(L"LOCALAPPDATA",nullptr);
+  const bool missing_ok=VoiceUserDataDirectory().empty();
+  SetEnvironmentVariableW(L"LOCALAPPDATA",length?saved:nullptr);
+  Require(long_ok && missing_ok,"the real data-directory lookup keeps long Unicode paths and reports a missing base");
 }
 void ShowModelPage(HWND settings) {
   const bool compact=IsWindowVisible(preference::Field(settings,preference::CompactNavigation));
@@ -390,12 +405,27 @@ LRESULT WaitCaptured(HWND frame,std::size_t required) {
 }
 
 std::string ConfirmPreview(Client& client,int timeout_ms=5000,
-                           std::chrono::steady_clock::time_point* preview_at=nullptr) {
+                           std::chrono::steady_clock::time_point* preview_at=nullptr, HWND frame=nullptr,
+                           std::chrono::steady_clock::time_point* visible_at=nullptr) {
   client.Phase("3",timeout_ms);
   if(preview_at) *preview_at=std::chrono::steady_clock::now();
+  std::wstring caption;
+  if(frame && visible_at) {
+    const auto timeout=GetTickCount64()+2000;
+    do {
+      wchar_t title[4096]{};
+      GetWindowTextW(frame,title,4096);
+      caption=title;
+      if(IsWindowVisible(frame) && caption.find(L"待确认：")!=caption.npos) break;
+      Sleep(2);
+    } while(GetTickCount64()<timeout);
+    *visible_at=std::chrono::steady_clock::now();
+    Require(IsWindowVisible(frame) && caption.find(L"待确认：")!=caption.npos,"pending preview is visible in the native overlay");
+  }
   Require(client.Quiet(60),"a completed cold preview waits for explicit confirmation");
   client.Send(MsgType::Enter);
   const auto text=client.Wait(MsgType::InsertText).text;
+  if(frame) Require(caption.find(Utf8ToWide(text))!=caption.npos,"visible preview matches the text sent on confirmation");
   client.Phase("4");client.Send(MsgType::InsertResult,"ok");client.Phase("0");
   return text;
 }
@@ -452,16 +482,26 @@ void ColdCapture(const std::filesystem::path& host,const std::filesystem::path& 
 }
 
 void ColdCaptureReal(const std::filesystem::path& host,const std::filesystem::path& output,
-                     const std::filesystem::path& pcm,bool early_stop,const std::wstring& prefix=L"",bool trace=false) {
+                     const std::filesystem::path& pcm,bool early_stop,const std::wstring& prefix=L"",bool trace=false,
+                     bool collect=false,int warm_trials=1,bool hints=false) {
   const auto data=output/("cold-qwen-"+std::to_string(GetTickCount64()));
   const auto bytes=std::filesystem::file_size(pcm);
   Require(bytes>0 && bytes%2==0 && bytes<=2*kMaxRecordingSamples,"fixture fits the 16 kHz mono PCM16 recording limit");
   std::filesystem::create_directories(data);
   std::filesystem::copy_file(pcm,data/"capture.pcm");
+  if(hints) {
+    ModelSettings models;models.hotwords="Codex, 轻音输入法";
+    Require(SaveModelSettings((data/"speech-models.ini").wstring(),models),"explicit Qwen names installed in isolated model settings");
+  }
+  if(collect) {
+    Lexicon db((data/"lexicon.sqlite").string());
+    db.SetReviewEnabled(true);
+  }
   Host engine(host,data,L"model-cold-pcm");Client client(engine.Pipe()); client.Phase("0");
   const auto frame=engine.Window();
   std::string first;
-  for(bool warm:{false,true}) {
+  for(int trial=0;trial<=warm_trials;++trial) {
+    const bool warm=trial>0;
     const auto start=std::chrono::steady_clock::now();
     client.Send(MsgType::StartListen);client.Phase("1");WaitCaptured(frame,1);
     const auto first_frame=std::chrono::steady_clock::now();
@@ -508,8 +548,8 @@ void ColdCaptureReal(const std::filesystem::path& host,const std::filesystem::pa
     const bool ready_at_stop=SendMessageW(frame,WM_APP+103,0,0)!=0;
     if(!warm && early_stop) Require(!ready_at_stop,"the first utterance ended before real Qwen was ready");
     std::string text;
-    std::chrono::steady_clock::time_point preview_at;
-    try { text=ConfirmPreview(client,30000,&preview_at); }
+    std::chrono::steady_clock::time_point preview_at,visible_at;
+    try { text=ConfirmPreview(client,30000,&preview_at,frame,&visible_at); }
     catch(...) {
       wchar_t status[1024]{};GetWindowTextW(frame,status,1024);
       std::fprintf(stderr,"real model ready=%lld, captured=%lld, status=%s\n",
@@ -517,14 +557,108 @@ void ColdCaptureReal(const std::filesystem::path& host,const std::filesystem::pa
           static_cast<long long>(SendMessageW(frame,WM_APP+105,0,0)),WideToUtf8(status).c_str());
       throw;
     }
-    Require(!text.empty() && (!warm || text==first),"real Qwen returns the same complete text for buffered and warm audio");
+    Require(!text.empty(),"real Qwen returns text for every captured utterance");
+    if(early_stop) Require(!warm || text==first,"real Qwen returns the same complete text for buffered and warm audio");
     if(!warm) first=text;
-    std::printf("%s first_simulated_frame_ms=%.1f stop_to_preview_ms=%.1f ready_at_stop=%d samples=%llu text=%s\n",warm?"warm":"cold",
+    std::printf("%s first_simulated_frame_ms=%.1f stop_to_preview_ms=%.1f stop_to_visible_ms=%.1f ready_at_stop=%d samples=%llu text=%s\n",warm?"warm":"cold",
         std::chrono::duration<double,std::milli>(first_frame-start).count(),
-        std::chrono::duration<double,std::milli>(preview_at-stop_at).count(),ready_at_stop,
+        std::chrono::duration<double,std::milli>(preview_at-stop_at).count(),
+        std::chrono::duration<double,std::milli>(visible_at-stop_at).count(),ready_at_stop,
         static_cast<unsigned long long>(bytes/2),text.c_str());
   }
   engine.Stop();
+  if(collect) {
+    Lexicon db((data/"lexicon.sqlite").string());
+    const auto rows=db.ReviewWords(ReviewFilter::All,"",20,0,std::time(nullptr));
+    Require(!rows.empty() && rows.front().sources==static_cast<int>(WordSource::Voice),"successful replay produced local voice review evidence");
+  }
+}
+
+void SevenDayReview(const std::filesystem::path& host,const std::filesystem::path& root) {
+  const auto folder=root/("weekly-"+std::to_string(GetTickCount64()));
+  std::filesystem::create_directories(folder);
+  Lexicon db((folder/"lexicon.sqlite").u8string());
+  db.SetReviewEnabled(true);
+  Host engine(host,folder,L"manual",L"使用 Cortex 整理文件");Client client(engine.Pipe());client.Phase("0");
+  const auto initial_exports=SendMessageW(engine.Window(),WM_APP+106,0,0);
+  auto preview=[&]{client.Send(MsgType::StartListen);client.Phase("1");client.Send(MsgType::Enter);client.Phase("3");};
+  preview();client.Send(MsgType::Cancel);client.Phase("0");
+  preview();client.Send(MsgType::Enter);client.Wait(MsgType::InsertText);client.Phase("4");
+  client.Send(MsgType::InsertResult,"fail");client.Phase("3");client.Send(MsgType::Cancel);client.Phase("0");
+  SendMessageW(engine.Window(),WM_COMMAND,3,0);auto settings=engine.Window(L"SimpleVoicePreferences");
+  SendMessageW(settings,WM_COMMAND,72,0);client.Phase("1");
+  SendMessageW(settings,WM_COMMAND,72,0);client.Phase("3");
+  SendMessageW(settings,WM_COMMAND,73,0);client.Phase("0");SendMessageW(settings,WM_CLOSE,0,0);
+  preview();SendMessageW(engine.Window(),WM_COMMAND,5,0);
+  auto editor=engine.Window(L"SimpleVoicePreviewEditor");
+  Require(editor!=nullptr,"review fixture opens the live preview editor");
+  SendDlgItemMessageW(editor,10,EM_SETSEL,0,-1);
+  SendDlgItemMessageW(editor,10,EM_REPLACESEL,TRUE,reinterpret_cast<LPARAM>(L"使用 Codex 整理文件"));
+  SendMessageW(editor,WM_COMMAND,IDOK,0);client.Phase("3");
+  Require(WaitWindowClosed(editor),"changed preview finishes updating the engine");
+  client.Send(MsgType::Enter);auto request=client.Wait(MsgType::InsertText);client.Phase("4");
+  Require(request.text=="使用 Codex 整理文件","the reviewed voice spelling is the text actually sent to the host");
+  client.Send(MsgType::InsertResult,"ok");client.Phase("0");
+  client.Send(MsgType::InsertResult,"ok",false,request.request_id);
+  const auto deadline=GetTickCount64()+10000;
+  while(!db.ReviewCandidateExists("Codex",std::time(nullptr)) && GetTickCount64()<deadline) Sleep(20);
+  auto word=db.ReviewWords(ReviewFilter::Uncertain,"Codex",5,0,std::time(nullptr));
+  Require(word.size()==1 && word[0].count==1 && (word[0].reasons&UserEdited) && word[0].sources==2,"one successful edited voice receipt creates one explainable candidate");
+  auto common=db.ReviewWords(ReviewFilter::All,"文件",5,0,std::time(nullptr));
+  const auto files=std::find_if(common.begin(),common.end(),[](const ReviewWord& item){return item.text=="文件";});
+  Require(files!=common.end() && files->count==1 && !db.ReviewCandidateExists("Cortex",std::time(nullptr)) && db.Count()==0,
+          "cancelled, rejected, practice and duplicate receipts add no evidence or personal terms");
+  Require(SendMessageW(engine.Window(),WM_APP+106,0,0)==initial_exports,
+          "successful normal input does not scan and export the personal vocabulary again");
+  SendMessageW(engine.Window(),WM_COMMAND,3,0);settings=engine.Window(L"SimpleVoicePreferences");
+  SendMessageW(settings,WM_COMMAND,preference::RecentReview,0);
+  auto review=engine.Window(L"SimpleVoiceWordReview");Require(review!=nullptr,"native settings opened weekly review");
+  using namespace review_control;
+  SendDlgItemMessageW(review,Filter,CB_SETCURSEL,2,0);
+  SendMessageW(review,WM_COMMAND,MAKEWPARAM(Filter,CBN_SELCHANGE),0);
+  SendDlgItemMessageW(review,Query,WM_SETTEXT,0,reinterpret_cast<LPARAM>(L"Codex"));SendDlgItemMessageW(review,Speech,BM_CLICK,0,0);
+  SendDlgItemMessageW(review,Query,WM_SETTEXT,0,reinterpret_cast<LPARAM>(L"文件"));
+  SendDlgItemMessageW(review,Code,WM_SETTEXT,0,reinterpret_cast<LPARAM>(L"wenjian"));
+  SendDlgItemMessageW(review,Save,BM_CLICK,0,0);
+  const auto model=LoadModelSettings((folder/"speech-models.ini").wstring());
+  Require(db.Search("codex").size()==1 && db.Search("wenjian").size()==1 && model.hotwords=="Codex" && db.PendingSpeechNames().empty(),
+          "one native batch writes both pinyin terms and persists only the separately checked Qwen hint");
+  const auto frame=engine.Window();
+  const auto loads=SendMessageW(frame,WM_APP+104,0,0);
+  client.Send(MsgType::PreloadModel);
+  const auto preload_deadline=GetTickCount64()+3000;
+  while(SendMessageW(frame,WM_APP+104,0,0)==loads && GetTickCount64()<preload_deadline) Sleep(10);
+  Require(SendMessageW(frame,WM_APP+104,0,0)==loads+1,
+          "keyboard activation starts warming the changed Qwen hints even when the previous model is healthy");
+  db.RecordReview({{"栖云","测试栖云",1,0}},WordSource::Pinyin,std::time(nullptr),db.ReviewEpoch());
+  SendDlgItemMessageW(review,Query,WM_SETTEXT,0,reinterpret_cast<LPARAM>(L"栖云"));
+  const auto blocked=folder/"speech-models.ini.tmp";std::filesystem::create_directory(blocked);
+  const auto exported=folder/"rime/voiceime_personal.txt";
+  const auto exports_before_failure=SendMessageW(frame,WM_APP+106,0,0);
+  HANDLE hold_export=CreateFileW(exported.c_str(),GENERIC_READ,FILE_SHARE_READ,nullptr,OPEN_EXISTING,0,nullptr);
+  Require(hold_export!=INVALID_HANDLE_VALUE,"isolate a failed atomic replacement of the pinyin table");
+  SendDlgItemMessageW(review,Speech,BM_CLICK,0,0);SendDlgItemMessageW(review,Save,BM_CLICK,0,0);
+  CloseHandle(hold_export);
+  Require(SendMessageW(frame,WM_APP+106,0,0)==exports_before_failure+1,
+          "saving a new word attempts to replace the locked pinyin table once");
+  preview();
+  client.Send(MsgType::Enter);client.Wait(MsgType::InsertText);client.Phase("4");
+  client.Send(MsgType::InsertResult,"ok");client.Phase("0");
+  // Idle is published after RecordTermUse completes. Opening the file earlier can deny replacement on Windows.
+  {
+    std::ifstream table(exported,std::ios::binary);
+    const std::string content((std::istreambuf_iterator<char>(table)),{});
+    Require(SendMessageW(frame,WM_APP+106,0,0)==exports_before_failure+2 && content.find("栖云\t")!=content.npos,
+            "the next successful ordinary input retries a failed pinyin table export");
+  }
+  Require(db.Search("栖云").size()==1 && db.PendingSpeechNames()==std::vector<std::string>{"栖云"},
+          "failure to write the model settings preserves both the personal word and the explicit hint request");
+  engine.Stop();
+  std::filesystem::remove(blocked);
+  Host restarted(host,folder,L"manual");Client next(restarted.Pipe());next.Phase("0");
+  Require(LoadModelSettings((folder/"speech-models.ini").wstring()).hotwords=="Codex, 栖云" && db.PendingSpeechNames().empty(),
+          "restarting completes exactly the selected pending hint without duplicating it");
+  restarted.Stop();
 }
 
 void DownloadFixture(const std::filesystem::path& program,bool complete) {
@@ -603,6 +737,7 @@ int ChildClient(const char* pipe_text, const char* mode_text, const char* window
 int main(int argc, char** argv) {
   try {
     if(argc==5 && std::string(argv[1])=="--ipc-child") return ChildClient(argv[2],argv[3],argv[4]);
+    CheckDataDirectory();
     wchar_t own[MAX_PATH]{};
     GetModuleFileNameW(nullptr, own, MAX_PATH);
     const auto host = std::filesystem::path(own).parent_path() / "voiceime_engine_testhost.exe";
@@ -617,9 +752,15 @@ int main(int argc, char** argv) {
       ColdCaptureReal(host,output,argv[3],false,Utf8ToWide(prefix));return 0;
     }
     if(argc>=3 && std::string(argv[2])=="--cold-capture-real") {
-      const bool live=argc==5 && std::string(argv[4])=="--through-load";
-      if(argc!=4 && !live) throw std::runtime_error("expected a 16 kHz mono PCM16 fixture file, optionally --through-load");
-      ColdCaptureReal(host,output,argv[3],!live);return 0;
+      const bool collect=argc>=5 && std::string(argv[4])=="--through-load-review";
+      const bool hints=argc>=5 && std::string(argv[4])=="--through-load-hints";
+      const bool live=argc>=5 && (collect || hints || std::string(argv[4])=="--through-load");
+      if(argc!=4 && (!live || argc>6)) throw std::runtime_error("expected a PCM16 fixture with optional --through-load[-review] and warm trial count");
+      ColdCaptureReal(host,output,argv[3],!live,L"",false,collect,argc==6?std::clamp(std::stoi(argv[5]),1,50):1,hints);return 0;
+    }
+    if(argc<3 || std::string(argv[2])=="--seven-day-review") {
+      SevenDayReview(host,output);
+      if(argc>=3) return 0;
     }
     if(argc<3 || std::string(argv[2])=="--cold-capture-only") {
       ColdCapture(host,output);
@@ -1102,6 +1243,25 @@ int main(int argc, char** argv) {
       Require(std::wstring(message).find(L"模型未能开始")!=std::wstring::npos,"model reset failure gives retry guidance without killing the engine");
       client.Send(MsgType::Enter);Require(client.Quiet(80),"model reset error is never inserted as user text");
       client.Send(MsgType::Cancel);client.Phase("0");engine.Stop();
+    }
+    for (const auto* fixture : {L"short-retry-warning", L"draft-only-warning"}) {
+      const bool draft_only=std::wstring(fixture)==L"draft-only-warning";
+      Host engine(host,output/fixture,fixture,L"核对这段文字。"); Client client(engine.Pipe());client.Phase("0");
+      client.Send(MsgType::StartListen);client.Phase("1");client.Send(MsgType::Enter);client.Phase("3");
+      wchar_t notice[2048]{}; GetWindowTextW(engine.Window(),notice,2048);
+      const std::wstring caption(notice);
+      Require(caption.find(L"核对这段文字。")!=caption.npos &&
+              caption.find(draft_only?L"仅保留草稿":L"首次识别为空")!=caption.npos,
+              "a recognition warning and the actual transcript remain separately readable");
+      client.Send(MsgType::Enter);
+      if (draft_only) {
+        Require(client.Quiet(100),"an uncalibrated draft cannot be inserted until it has been reviewed in the editor");
+        client.Send(MsgType::Cancel);
+      } else {
+        Require(client.Wait(MsgType::InsertText).text=="核对这段文字。","a fresh Enter inserts only the warned, calibrated preview");
+        client.Phase("4");client.Send(MsgType::InsertResult,"ok");
+      }
+      client.Phase("0");engine.Stop();
     }
     }
     if(argc<3 || std::string(argv[2])!="--practice-only") {

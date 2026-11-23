@@ -35,6 +35,7 @@ bool ReadView(std::string_view data, RimeView& view) {
   if (!take(next.preedit) || !take(next.commit)) return false;
   next.page.resize(count);
   for (auto& term : next.page) if (!take(term)) return false;
+  if (!data.empty() && !take(next.raw_input)) return false;
   if (!data.empty()) return false;
   view = std::move(next);
   return true;
@@ -58,7 +59,7 @@ bool ExchangeView(HANDLE pipe, const Message& request, RimeView& view, DWORD tim
 }
 }
 
-std::string EncodePinyinView(const RimeView& view) {
+std::string EncodePinyinView(const RimeView& view, bool include_raw) {
   std::string out;
   out.push_back((view.composing ? 1 : 0) | (view.ascii_punctuation ? 2 : 0));
   out.push_back(static_cast<char>(view.highlight));
@@ -68,6 +69,7 @@ std::string EncodePinyinView(const RimeView& view) {
   put(view.preedit);
   put(view.commit);
   for (const auto& term : view.page) put(term);
+  if (include_raw) put(view.raw_input);
   return out;
 }
 
@@ -103,7 +105,8 @@ DWORD WINAPI PinyinClient::ConnectThread(void* self) {
 }
 
 void PinyinClient::Connect() {
-  const auto until = GetTickCount64() + 650;
+  auto until = GetTickCount64() + 650;
+  auto hello_type = MsgType::PinyinHelloWithRaw;
   while (WaitForSingleObject(cancel_connect_, 0) == WAIT_TIMEOUT) {
     HANDLE handle = CreateFileW(name_.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING,
         FILE_FLAG_OVERLAPPED | SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION, nullptr);
@@ -111,10 +114,17 @@ void PinyinClient::Connect() {
       std::unique_ptr<void, decltype(&CloseHandle)> pipe(handle, CloseHandle);
       auto peer = PipeServerPeer(handle);
       if (!peer || !peer->is_image(engine_)) return;
-      Message hello{MsgType::PinyinHello};
+      Message hello{hello_type};
       hello.client_window = reinterpret_cast<std::uintptr_t>(window_);
-      if (ExchangeView(handle, hello, pending_view_, 8000, cancel_connect_)) pending_pipe_ = pipe.release();
-      return;
+      if (ExchangeView(handle, hello, pending_view_, 8000, cancel_connect_)) {
+        pending_pipe_ = pipe.release();
+        return;
+      }
+      if (hello_type == MsgType::PinyinHello) return;
+      // Existing engines close a connection for an unknown hello. Reconnect with their original format.
+      hello_type = MsgType::PinyinHello;
+      until = GetTickCount64() + 650;
+      continue;
     }
     const DWORD error = GetLastError();
     if ((error != ERROR_PIPE_BUSY && error != ERROR_FILE_NOT_FOUND) || GetTickCount64() >= until) return;
@@ -137,6 +147,7 @@ void PinyinClient::Shutdown() {
   if (cancel_connect_) CloseHandle(std::exchange(cancel_connect_, nullptr));
   if (pending_pipe_ != INVALID_HANDLE_VALUE) CloseHandle(std::exchange(pending_pipe_, INVALID_HANDLE_VALUE));
   pending_view_ = {};
+  interrupted_text_.clear();
   Disconnect();
   window_ = nullptr;
   retry_after_ = 0;
@@ -144,6 +155,8 @@ void PinyinClient::Shutdown() {
 
 bool PinyinClient::Exchange(const Message& request) {
   if (connected() && ExchangeView(pipe_, request, view_, kKeyTimeoutMs)) return true;
+  if (request.type == MsgType::PinyinKey && view_.composing)
+    interrupted_text_ = view_.raw_input.empty() ? view_.preedit : view_.raw_input;
   Disconnect();
   return false;
 }
@@ -158,6 +171,7 @@ RimeView PinyinClient::ProcessKeyWithModifiers(int vk, bool shift, bool ctrl, bo
   return view_;
 }
 void PinyinClient::Clear() {
+  interrupted_text_.clear();
   if (connected() && view_.composing) Exchange(Message{MsgType::PinyinClear});
   view_.commit.clear();
 }

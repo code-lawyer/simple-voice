@@ -1,5 +1,6 @@
 #include "worker_recognizer.hpp"
 #include "worker_protocol.hpp"
+#include "windows_paths.hpp"
 #include "utf8.hpp"
 #include <atomic>
 #include <filesystem>
@@ -184,9 +185,9 @@ std::unique_ptr<Recognizer> MakeWorkerRecognizer(const std::string& root,const M
   if(!ResolveModelFiles(absolute_utf8,normalized,files,message)) {if(error)*error=message;return nullptr;}
   std::wstring path=executable;
   if(path.empty()) {
-    wchar_t own[32768];const auto count=GetModuleFileNameW(nullptr,own,32768);
-    if(!count || count>=32768) {if(error)*error="无法定位模型进程。";return nullptr;}
-    path=(std::filesystem::path(std::wstring(own,count)).parent_path()/L"voiceime_model_worker.exe").wstring();
+    const auto directory=ExecutableDirectory();
+    if(directory.empty()) {if(error)*error="无法定位模型进程。";return nullptr;}
+    path=directory+L"\\voiceime_model_worker.exe";
   }
   auto worker=std::make_unique<WorkerRecognizer>();
   if(!worker->Start(path,absolute_utf8,normalized,timeout,message,cancel_loading,startup_mode)) {if(error)*error=message;return nullptr;}

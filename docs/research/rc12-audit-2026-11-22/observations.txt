@@ -1,0 +1,46 @@
+Simple Voice v0.2.0-rc.12 / 115cbf9 / 2026-11-22 (America/Los_Angeles)
+
+[CTest suite summaries]
+98 passed
+Test Passed.
+1186 engine integration checks passed (isolated pipe, synthetic capture)
+Test Passed.
+221 real TSF integration checks passed
+Test Passed.
+Test Passed.
+9 passed
+Test Passed.
+
+[Isolated TSF composition and graceful test-engine disconnect]
+PASS TSF prepares pinyin off the input thread
+PASS pinyin key handled by TSF
+PASS pinyin key handled by TSF
+PASS pinyin key handled by TSF
+PASS pinyin key handled by TSF
+PASS pinyin key handled by TSF
+preedit_before=[ni hao]
+after_key_dispatch=[]
+consumed=0
+with_host_fallback=[m]
+
+[Isolated restore journal / two separate launches]
+attempt-1.log
+restore recovery: 恢复已完成，但无法清理恢复记录
+attempt-2.log
+restore recovery: 恢复已完成，但无法清理恢复记录
+
+[Native transcript view / before and after one draft update]
+dpi=144 before_scroll=465 old_limit=465 after_scroll=0 new_limit=465
+
+[Qwen3 CPU smoke / fixed audio]
+model_load_ms=4759
+fixture=models/final/test_wavs/0.wav duration_s=5.61 inference_ms=2040 final_ms=1001
+fixture=models/final/test_wavs/1.wav duration_s=5.15 inference_ms=2083 final_ms=1064
+fixture=models/final/test_wavs/8k.wav duration_s=4.52 inference_ms=1540 final_ms=711
+host_working_set_mib=6.0 host_peak_working_set_mib=6.5 model_worker_peak_mib=1622.5
+3 real-model fixtures passed; recognizer has no personal-dictionary dependency
+
+[Native UI suite / each skin ran the same checks]
+titanium: 132 checks passed, 47 PNG files
+daylight: 132 checks passed, 47 PNG files
+deep-space: 132 checks passed, 47 PNG files

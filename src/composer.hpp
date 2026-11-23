@@ -13,6 +13,7 @@ struct RimeView {
   std::string commit;
   int caret = 0;  // UTF-8 byte offset into preedit, as supplied by librime.
   bool ascii_punctuation = false;
+  std::string raw_input;  // Original spelling before Rime inserts spaces or formats vowels.
 };
 
 class Composer {

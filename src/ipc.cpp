@@ -23,10 +23,14 @@ std::uint32_t ReadLe32(std::string_view bytes, std::size_t at) {
 }  // namespace
 
 namespace {
+bool IsHello(MsgType type) {
+  return type == MsgType::ClientHello || type == MsgType::PinyinHello || type == MsgType::PinyinHelloWithRaw;
+}
+
 bool ValidSize(MsgType type, std::size_t body) {
   switch (type) {
     case MsgType::StartListen: case MsgType::Cancel: case MsgType::Enter:
-    case MsgType::ClientHello: case MsgType::PinyinHello: return body == 8;
+    case MsgType::ClientHello: case MsgType::PinyinHello: case MsgType::PinyinHelloWithRaw: return body == 8;
     case MsgType::PinyinKey: return body == 2;
     case MsgType::PinyinClear: case MsgType::PinyinInserted: return body == 0;
     case MsgType::PinyinView: return body >= 9;
@@ -47,7 +51,7 @@ bool ValidSize(MsgType type, std::size_t body) {
 std::string Encode(const Message& message) {
   if (message.text.size() > kMaxFrameLength - 9) return {};
   std::string body;
-  const bool hello = message.type == MsgType::ClientHello || message.type == MsgType::PinyinHello;
+  const bool hello = IsHello(message.type);
   if (IsVoiceControl(message.type) || message.type == MsgType::Phase || hello) {
     const auto value = hello ? message.client_window : message.state_id;
     if (!value) return {};
@@ -92,7 +96,7 @@ DecodeStatus DecodeFrame(std::string_view bytes, Message* out, std::size_t* cons
   if (!ValidSize(message.type, length - 1)) return DecodeStatus::Invalid;
   if (bytes.size() - 4 < length) return DecodeStatus::Incomplete;
   const std::string_view body = bytes.substr(5, length - 1);
-  const bool hello = message.type == MsgType::ClientHello || message.type == MsgType::PinyinHello;
+  const bool hello = IsHello(message.type);
   if (IsVoiceControl(message.type) || message.type == MsgType::Phase || hello) {
     const auto value = ReadLe32(body, 0) | (static_cast<std::uint64_t>(ReadLe32(body, 4)) << 32);
     if (!value) return DecodeStatus::Invalid;

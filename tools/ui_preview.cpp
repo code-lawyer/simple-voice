@@ -206,6 +206,21 @@ int main(int argc, char** argv) {
     SendMessageW(bar.hwnd(),WM_SETTINGCHANGE,0,0);
     view.page = {"今天我们一起讨论接下来的开发计划", "今天我们一起讨论接下来的安排", "今天我们一起", "今天我们", "今天"};
     bar.Show({160,160,1,22}, {100,100,1000,700}, view, InputMode::Chinese);
+    GetClientRect(bar.hwnd(),&rect);
+    const UINT candidate_dpi=UiDpi(bar.hwnd());
+    HDC measure_dc=GetDC(bar.hwnd());
+    HFONT candidate_font=UiFont(16,candidate_dpi);
+    auto old_font=SelectObject(measure_dc,candidate_font);
+    int natural_width=UiPx(52,candidate_dpi)+2*UiPx(6,candidate_dpi);
+    for(size_t i=0;i<view.page.size();++i) {
+      std::wstring label=std::to_wstring(i+1)+L" "+Utf8ToWide(view.page[i]);
+      RECT bounds{};DrawTextW(measure_dc,label.c_str(),-1,&bounds,DT_CALCRECT|DT_SINGLELINE|DT_NOPREFIX);
+      natural_width+=bounds.right+UiPx(18,candidate_dpi);
+    }
+    SelectObject(measure_dc,old_font);DeleteObject(candidate_font);ReleaseDC(bar.hwnd(),measure_dc);
+    const auto workspace_width=UiWorkArea({160,160,1,22}).w;
+    check(rect.right>=std::min({natural_width,UiPx(960,candidate_dpi),workspace_width})-5,
+          "candidate bar uses available width for distinct long endings");
     ok = Save(bar.hwnd(), output / "candidate-long.png") && ok;
     view.page.assign(5, std::string(200,'W'));
     bar.Show({160,160,1,22}, {100,100,1000,700}, view, InputMode::Chinese);
@@ -248,7 +263,15 @@ int main(int argc, char** argv) {
     box.ShowText("明天下午三点，我们在会议室讨论新方案。", {160,200,1,22}, {100,100,1000,700}, Phase::Finalizing);
     ok = Save(box.hwnd(), output / "voice-finalizing.png") && ok;
     box.ShowText("未能打开麦克风。", {160,200,1,22}, {100,100,1000,700}, Phase::Listening, true);
+    check(box.HintText().find(L"设置")!=std::wstring::npos && box.HintText().find(L"编辑")==std::wstring::npos,
+          "device error offers the available settings action");
     ok = Save(box.hwnd(), output / "voice-error.png") && ok;
+    box.SetPreviewNotice(L"短录音经过重试，请核对写法。");
+    box.ShowText("明天下午三点。", {160,200,1,22}, {100,100,1000,700});
+    check(box.HintText().find(L"重试")!=std::wstring::npos && box.HintText().find(L"确认写入")!=std::wstring::npos,
+          "a usable final transcript keeps its warning and confirmation hint");
+    ok=Save(box.hwnd(),output/"voice-review-notice.png") && ok;
+    box.SetPreviewNotice({});
     std::string long_text;
     for (int n = 0; n < 50; ++n) long_text += "这是一段用于检查长文本边界的语音内容，必须能够完整查看并确认。";
     long_text += "全文结束：验收尾句。";
@@ -258,7 +281,13 @@ int main(int argc, char** argv) {
     check(box.ScrollLimit()>0, "long transcript is scrollable");
     SendMessageW(box.hwnd(),WM_MOUSEWHEEL,MAKEWPARAM(0,-WHEEL_DELTA),0);
     check(box.ScrollPosition()>0, "mouse wheel scrolls long transcript without taking focus");
+    const int reading_position=box.ScrollPosition();
+    long_text+="新的一行。";
+    box.ShowText(long_text,{160,200,1,22},{100,100,1000,700});
+    check(box.ScrollPosition()==reading_position,"new text preserves the current reading position");
     SendMessageW(box.hwnd(),WM_VSCROLL,SB_BOTTOM,0);
+    long_text+="\n补充在最后一行。";
+    box.ShowText(long_text,{160,200,1,22},{100,100,1000,700});
     check(box.ScrollPosition()==box.ScrollLimit(), "long transcript scroll reaches end");
     ok = Save(box.hwnd(), output / "voice-long-end.png") && ok;
     const auto saved_scroll=box.ScrollPosition();
@@ -346,6 +375,86 @@ int main(int argc, char** argv) {
     check(!IsWindow(old),"Esc closes hotkey dialog");
   }
   {
+    using namespace review_control;
+    Lexicon db(":memory:");
+    const auto now=std::time(nullptr);
+    PreferencesWindow preferences;PreferencesActions actions;
+    ModelSettings models;
+    actions.models=[&]{return models;};
+    actions.input_code=[](const std::string& word){return word=="岑宁"?"cenning":"qingyinshurufa";};
+    actions.accept_review=[&](const std::vector<ReviewChoice>& picks) {
+      db.AcceptReview(picks,std::time(nullptr));
+      for(const auto& name:db.PendingSpeechNames()) models.hotwords=NormalizeSpeechHints(models.hotwords+","+name);
+      db.CompleteSpeechNames(db.PendingSpeechNames());
+      return std::wstring(L"已保存所选词语。");
+    };
+    preferences.Open(&db,{},UiCurrentSkin(),actions,1);
+    auto prefs=preferences.hwnd();
+    SetWindowTextW(preference::Field(prefs,preference::ModelHints),L"草稿专名");
+    SendMessageW(preference::Field(prefs,preference::RecentReview),BM_CLICK,0,0);
+    const auto review=FindWindowW(L"SimpleVoiceWordReview",nullptr);
+    check(review && IsWindowVisible(review) && !db.ReviewSettings().enabled,"weekly review opens from vocabulary with collection initially off");
+    ShowWindow(review,SW_MINIMIZE);
+    SendMessageW(preference::Field(prefs,preference::RecentReview),BM_CLICK,0,0);
+    check(IsWindowVisible(review) && !IsIconic(review),"opening the weekly review restores its minimized window");
+    ok=::Save(review,output/"preferences-weekly-paused.png") && ok;
+    auto field=[&](int id){return GetDlgItem(review,id);};
+    check(IsWindowVisible(field(Empty)) && !IsWindowVisible(field(List)) && AccessibleName(field(Filter)).find(L"筛选")!=std::wstring::npos,
+          "weekly review exposes its empty state and a named filter to accessibility tools");
+    auto click=[&](int id){SendMessageW(field(id),BM_CLICK,0,0);};
+    auto find=[&](const wchar_t* text){SetWindowTextW(field(Query),text);};
+    auto filter=[&](int index){SendMessageW(field(Filter),CB_SETCURSEL,index,0);
+      SendMessageW(review,WM_COMMAND,MAKEWPARAM(Filter,CBN_SELCHANGE),0);};
+    click(Collect);
+    db.RecordReview({{"轻音输入法","明天把轻音输入法的设置发给我",2,0},{"岑宁","下午联系岑宁确认时间",1,UserEdited},
+                     {"Codex","正在用 Codex 整理文件",2,0}},WordSource::Voice,now-86400,db.ReviewEpoch());
+    db.RecordReview({{"轻音输入法","打开轻音输入法的设置",1,0},{"文稿","请校对这份文稿",1,0}},WordSource::Pinyin,now,db.ReviewEpoch());
+    click(Refresh); check(ListView_GetItemCount(field(List))==2,"frequent review shows only repeated words");
+    filter(2);check(ListView_GetItemCount(field(List))==4,"all weekly candidates include single-use terms");
+    ok=::Save(review,output/"preferences-weekly-review.png") && ok;
+    ListView_SetItemState(field(List),2,LVIS_SELECTED|LVIS_FOCUSED,LVIS_SELECTED|LVIS_FOCUSED);
+    wchar_t selected_word[128]{},refreshed_word[128]{};
+    GetWindowTextW(field(Word),selected_word,128);click(Refresh);GetWindowTextW(field(Word),refreshed_word,128);
+    check(*selected_word && std::wstring(selected_word)==refreshed_word,"refresh preserves the word being reviewed");
+    find(L"Codex");SetWindowTextW(field(review_control::Code),L"mycode");ListView_SetCheckState(field(List),0,FALSE);
+    find(L"");
+    filter(1); check(ListView_GetItemCount(field(List))==1,"uncertain filter exposes the edited name");
+    ListView_SetCheckState(field(List),0,TRUE);click(Speech);
+    ok=::Save(review,output/"preferences-weekly-selected.png") && ok;
+    filter(2);find(L"轻音");
+    ListView_SetCheckState(field(List),0,TRUE); click(review_control::Save);
+    check(db.Count()==2 && models.hotwords=="岑宁","cross-filter batch saves both words and only the chosen Qwen hint");
+    wchar_t hints[128]{};GetWindowTextW(preference::Field(prefs,preference::ModelHints),hints,128);
+    check(std::wstring(hints)==L"草稿专名, 岑宁","weekly save keeps unsaved text in the open model settings");
+    ok=::Save(review,output/"preferences-weekly-saved.png") && ok;
+    find(L"文稿");SendMessageW(field(Example),EM_SETSEL,1,3);click(FromExample);click(review_control::Save);
+    check(db.Search("校对").size()==1 && db.ReviewCandidateExists("文稿",now),"selecting a phrase from its short example preserves the original candidate");
+    find(L"Codex");wchar_t pending_code[128]{};GetWindowTextW(field(review_control::Code),pending_code,128);
+    check(std::wstring(pending_code)==L"mycode","saving other rows keeps an unchecked manual edit");
+    ListView_SetCheckState(field(List),0,TRUE);click(Skip);
+    check(!db.ReviewCandidateExists("Codex",now) && db.Search("Codex").empty(),"skipping a weekly candidate creates no personal word");
+    std::vector<ReviewWord> pages;
+    for(int i=0;i<41;++i) pages.push_back({"分页样例"+std::to_string(i),"仅用于测试",1,0});
+    db.RecordReview(pages,WordSource::Pinyin,now,db.ReviewEpoch());
+    find(L"分页样例");ListView_SetCheckState(field(List),0,TRUE);click(Next);
+    check(ListView_GetItemCount(field(List))==1 && IsWindowEnabled(field(Prev)),"weekly candidates remain reachable beyond the first forty");
+    ListView_SetCheckState(field(List),0,TRUE);
+    db.SkipReview({db.ReviewWords(ReviewFilter::All,"分页样例",1,0,now)[0].text});
+    click(Refresh);const auto before=db.Count();click(review_control::Save);
+    check(db.Count()==before+1,"refresh drops a processed cross-page selection and keeps the remaining word");
+    click(Collect);check(!db.ReviewSettings().enabled && db.ReviewCandidateExists("文稿",now),"pausing keeps still-recent material available for review");
+    SendMessageW(review,WM_SYSCOLORCHANGE,0,0);
+    check(ListView_GetTextColor(field(List))==GetSysColor(COLOR_WINDOWTEXT),"weekly list follows the current system foreground");
+    const UINT review_dpi=UiDpi(review);
+    SetWindowPos(review,nullptr,0,0,UiPx(460,review_dpi),UiPx(325,review_dpi),SWP_NOMOVE|SWP_NOZORDER);
+    SendMessageW(review,WM_VSCROLL,SB_BOTTOM,0);
+    RECT client{},button{};GetClientRect(review,&client);GetWindowRect(field(review_control::Close),&button);
+    MapWindowPoints(nullptr,review,reinterpret_cast<POINT*>(&button),2);
+    check(GetScrollPos(review,SB_VERT)>0 && button.bottom<=client.bottom && button.top>=0,
+          "all weekly actions remain reachable in a short high-DPI work area");
+    click(Close);preferences.Close();
+  }
+  {
     Lexicon lexicon(":memory:");
     for(int i=0;i<230;++i) lexicon.SaveTerm("示例术语"+std::to_string(i),(i<101?"page":"sample")+std::string(1,char('a'+i%26))+std::string(1,char('a'+i/26)),std::time(nullptr));
     PreferencesWindow preferences; PreferencesActions actions; InputPreferences saved;
@@ -373,7 +482,8 @@ int main(int argc, char** argv) {
       if(pending_model) { task=requested_task; return {L"正在验证模型。",true}; }
       selected=next; return {L"已启用选择的模型。"};
     };
-    actions.practice_status=[] {return L"测试预览";};
+    PracticeView practice{L"测试预览",true,false,false,false};
+    actions.practice_status=[&] {return practice;};
     preferences.Open(&lexicon,{},UiCurrentSkin(),actions,1);
     const HWND window=preferences.hwnd();
     auto field=[&](int id){return preference::Field(window,id);};
@@ -444,7 +554,20 @@ int main(int argc, char** argv) {
           !IsWindowVisible(field(preference::TermsEmpty)),"deleting the only term on the final page reveals the previous results");
     SendMessageW(field(preference::Undo),BM_CLICK,0,0);
     SetWindowTextW(field(30),L"没有这个匹配"); ok=Save(window,output/"preferences-empty-search.png") && ok;
-    for(int page:{0,2,3,4,5}) { preferences.Open(&lexicon,{},UiCurrentSkin(),actions,page); ok=Save(window,output/("preferences-page-"+std::to_string(page)+".png")) && ok; }
+    for(int page:{0,2,3,4,5}) {
+      preferences.Open(&lexicon,{},UiCurrentSkin(),actions,page);
+      ok=Save(window,output/("preferences-page-"+std::to_string(page)+".png")) && ok;
+      if(page!=3) continue;
+      check(IsWindowEnabled(field(preference::PracticeToggle)) && !IsWindowEnabled(field(preference::PracticeConfirm)) &&
+            !IsWindowEnabled(field(preference::PracticeCancel)),"idle practice only offers starting a recording");
+      practice={L"正在听",false,true,false,true};SendMessageW(window,WM_TIMER,1,0);
+      check(text(preference::PracticeToggle)==L"校准试用录音" && !IsWindowEnabled(field(preference::PracticeConfirm)),
+            "recording practice offers calibration before confirmation");
+      practice={L"最终预览",false,false,true,true};SendMessageW(window,WM_TIMER,1,0);
+      check(!IsWindowEnabled(field(preference::PracticeToggle)) && IsWindowEnabled(field(preference::PracticeConfirm)),
+            "final practice text can be confirmed or cancelled");
+      practice={L"测试预览",true,false,false,false};
+    }
     const auto dpi=UiDpi(window);
     const auto title_font=logical_font(preference::PageTitle),section_font=logical_font(115);
     check(title_font.lfWeight==FW_BOLD && title_font.lfHeight==-UiPx(24,dpi) &&

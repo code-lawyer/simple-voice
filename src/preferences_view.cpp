@@ -103,6 +103,7 @@ void DrawSystemButtonFace(const NMCUSTOMDRAW& item,bool checkbox,UINT dpi,RECT& 
 PreferencesWindow::~PreferencesWindow() { Close(); }
 
 void PreferencesWindow::Close() {
+  review_window_.Close();
   if(hwnd_ && actions_.practice) actions_.practice(2);
   if(hwnd_) DestroyWindow(hwnd_);
   hwnd_=pane_=nullptr;
@@ -213,7 +214,8 @@ void PreferencesWindow::BuildForm(const ModelSettings& models) {
   next(20); label(103,L"空格选词，Enter 保留原始输入，单按 Shift 切换中英文。\n方向键编辑拼音，Ctrl + Delete 遗忘选中的学习候选。",0,0,Face::Detail);
 
   page=1;
-  next(22); label(104,L"搜索词语或输入码(&F)");
+  next(22); button(RecentReview,L"最近七天(&R)",-116,116);
+  label(104,L"搜索词语或输入码(&F)",0,-126);
   next(6); edit(Query,0,0,28);
   next(8); Add(L"LISTBOX",L"",Terms,page,0,row,0,116,WS_TABSTOP|WS_BORDER|WS_VSCROLL|LBS_NOTIFY|LBS_NOINTEGRALHEIGHT);
   Add(L"STATIC",L"",TermsEmpty,page,0,row,0,116,WS_BORDER|SS_CENTER|SS_CENTERIMAGE,Face::Detail);
@@ -247,7 +249,7 @@ void PreferencesWindow::BuildForm(const ModelSettings& models) {
   page=3;
   next(22); label(123,L"语音试用",0,0,Face::Section);
   next(8); label(111,L"点击开始，等到「正在听」后说话。再次点击停录，核对后确认试用文字。");
-  next(12); button(PracticeToggle,L"开始 / 停止试用",0,126);
+  next(12); button(PracticeToggle,L"开始试用",0,126);
   button(PracticeConfirm,L"确认试用文字",134,106); button(PracticeCancel,L"取消试用",248,80);
   next(8); edit(PracticeText,0,0,56,true); Set(PracticeText,L"点击开始后才会打开麦克风。");
   next(9); label(130,L"日常输入时，按语音快捷键开始，按 Enter 停录并校准。\n核对后按 Enter 写入，按 Esc 取消。",0,0,Face::Detail);
@@ -274,8 +276,9 @@ void PreferencesWindow::BuildForm(const ModelSettings& models) {
   next(4); auto idle=button(ModelIdle,idle_label.c_str(),0,0,BS_AUTOCHECKBOX);
   SendMessageW(idle,BM_SETCHECK,models.idle_minutes?BST_CHECKED:BST_UNCHECKED,0);
   next(12); label(113,L"常用专名(&H)");
-  next(6); auto hints=edit(ModelHints,0,0,28); SetWindowTextW(hints,Utf8ToWide(models.hotwords).c_str());
-  SendMessageW(hints,EM_SETLIMITTEXT,256,0);
+  next(6); auto hints=edit(ModelHints,0,0,28); displayed_model_hints_=NormalizeSpeechHints(models.hotwords);
+  SetWindowTextW(hints,Utf8ToWide(displayed_model_hints_).c_str());
+  SendMessageW(hints,EM_SETLIMITTEXT,2048,0);
   next(6); label(129,L"仅 Qwen3-ASR 使用。多个专名用逗号分隔，可留空。",0,0,Face::Detail);
   next(14); button(ModelLocal,L"使用已有文件…",0,142); button(ModelDefault,L"恢复推荐模型",152,126);
 
@@ -289,7 +292,7 @@ void PreferencesWindow::BuildForm(const ModelSettings& models) {
   next(12); button(DataRestore,L"从备份恢复…",0,124);
   divider(1);
   next(16); label(127,L"备份范围",0,0,Face::Section);
-  next(8); label(128,L"模型文件、模型选择、录音和拼音自动学习统计不在备份中。",0,0,Face::Detail);
+  next(8); label(128,L"备份包含已确认的个人词语。最近七天的待审材料、语音模型及其配置、录音和拼音学习统计不进入备份。",0,0,Face::Detail);
 }
 
 void PreferencesWindow::UpdateAppearance() {
@@ -533,7 +536,7 @@ void PreferencesWindow::RefreshPage() {
   if(page_==0 && actions_.hotkey_label) Set(HotkeyValue,actions_.hotkey_label());
   if(page_==3) {
     if(actions_.diagnostics) Set(Diagnostics,actions_.diagnostics());
-    if(actions_.practice_status) Set(PracticeText,actions_.practice_status());
+    UpdatePractice();
   }
   if(page_==4) Models();
   else if(pending_model_feedback_ && pending_model_feedback_->completion.empty()) PollModelFeedback();
@@ -695,6 +698,7 @@ LRESULT PreferencesWindow::DrawButton(const NMCUSTOMDRAW& item) {
 }
 
 bool PreferencesWindow::Translate(MSG* message) {
+  if(review_window_.Translate(message)) return true;
   if(!hwnd_ || (message->hwnd!=hwnd_ && !IsChild(hwnd_,message->hwnd))) return false;
   if(message->message==WM_SYSCHAR || (message->message==WM_SYSKEYDOWN && message->wParam==VK_MENU))
     SendMessageW(hwnd_,WM_CHANGEUISTATE,MAKEWPARAM(UIS_CLEAR,UISF_HIDEACCEL),0);

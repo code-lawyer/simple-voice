@@ -19,6 +19,8 @@ class PinyinClient final : public Composer {
   RimeView ProcessKeyWithModifiers(int vk, bool shift, bool ctrl, bool alt) override;
   void Clear() override;
   void ConfirmInserted(const std::string& text);
+  const std::string& interrupted_text() const { return interrupted_text_; }
+  void ClearInterruptedText() { interrupted_text_.clear(); }
   const RimeView& view() const override { return view_; }
 
  private:
@@ -36,6 +38,7 @@ class PinyinClient final : public Composer {
   RimeView pending_view_;
   HANDLE pipe_ = INVALID_HANDLE_VALUE;
   RimeView view_;
+  std::string interrupted_text_;
 };
 
-std::string EncodePinyinView(const RimeView& view);
+std::string EncodePinyinView(const RimeView& view, bool include_raw = false);

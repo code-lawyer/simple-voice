@@ -2,9 +2,12 @@
 
 #include "cppjieba/MixSegment.hpp"
 #include "utf8.hpp"
+#include "sha256.hpp"
 
 #include <cstdlib>
 #include <fstream>
+#include <filesystem>
+#include <stdexcept>
 #include <mutex>
 #include <unordered_map>
 #include <utility>
@@ -184,7 +187,7 @@ std::string UntoneSyllable(const std::string& syllable) {
 }
 
 void LoadPinyin(const std::string& path, std::unordered_map<char32_t, std::string>& table) {
-  std::ifstream in(path);
+  std::ifstream in(std::filesystem::u8path(path));
   std::string line;
   while (std::getline(in, line)) {
     if (!line.empty() && line.back() == '\r') line.pop_back();
@@ -229,7 +232,26 @@ struct Segmenter::Impl {
   }
 };
 
-Segmenter::Segmenter(const std::string& dict_dir) : impl_(std::make_unique<Impl>(dict_dir)) {}
+Segmenter::Segmenter(const std::string& dict_dir) {
+  // cppjieba aborts on incomplete dictionaries. Validate the packaged assets
+  // before passing them to its constructor, including when recovering a damaged installation.
+  const std::pair<const char*,const char*> assets[]={{"jieba.dict.utf8",SHA_jieba_dict_utf8},
+    {"hmm_model.utf8",SHA_hmm_model_utf8},{"user.dict.utf8",SHA_user_dict_utf8},{"pinyin.txt",SHA_pinyin_txt}};
+  for(const auto& asset:assets) {
+    std::ifstream file(std::filesystem::u8path(JoinPath(dict_dir,asset.first)),std::ios::binary|std::ios::ate);
+    const auto size=file.tellg();
+    if(!file || size<0 || size>16*1024*1024) throw std::runtime_error("分词字典缺失或损坏，请修复安装文件");
+    std::string bytes(static_cast<std::size_t>(size),'\0');
+    file.seekg(0); file.read(bytes.data(),size);
+    std::string hex;
+    for(unsigned char byte:Sha256(bytes)) {
+      constexpr char digits[]="0123456789abcdef";
+      hex+=digits[byte>>4]; hex+=digits[byte&15];
+    }
+    if(!file || hex!=asset.second) throw std::runtime_error("分词字典校验失败，请修复安装文件");
+  }
+  impl_=std::make_unique<Impl>(dict_dir);
+}
 
 Segmenter::~Segmenter() = default;
 

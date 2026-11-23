@@ -5,6 +5,8 @@
 #include <string>
 
 enum class ModelStartup { Full, DraftFirst };
+inline constexpr char kShortRetryWarning[]="录音较短，首次识别为空，请核对重试得到的文字。";
+inline constexpr char kDraftOnlyWarning[]="最终识别没有得到文字。当前仅保留草稿，请编辑后确认。";
 
 class Recognizer {
  public:

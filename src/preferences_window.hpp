@@ -3,6 +3,7 @@
 #include "lexicon.hpp"
 #include "ui_theme.hpp"
 #include "model_settings.hpp"
+#include "review_window.hpp"
 #include <commctrl.h>
 #include <functional>
 #include <optional>
@@ -14,6 +15,10 @@ bool CopyUserText(HWND owner,const std::wstring& text);
 
 enum class ModelTaskState { Idle, Running, Queued };
 struct ModelActionResult { std::wstring message; bool pending=false; };
+struct PracticeView {
+  std::wstring text;
+  bool can_start=false,can_finalize=false,can_confirm=false,can_cancel=false;
+};
 
 struct PreferencesActions {
   std::function<bool(const InputPreferences&)> save;
@@ -24,6 +29,8 @@ struct PreferencesActions {
   std::function<std::wstring()> diagnostics;
   std::function<std::string(const std::string&)> input_code;
   std::function<bool()> terms_changed;
+  std::function<std::wstring(const std::vector<ReviewChoice>&)> accept_review;
+  std::function<bool()> review_failed;
   std::function<ModelSettings()> models;
   std::function<bool(bool)> save_model_idle_release;
   bool preload_on_activate = true;
@@ -35,7 +42,7 @@ struct PreferencesActions {
   std::function<std::wstring(const std::wstring&)> backup;
   std::function<std::wstring(const std::wstring&)> restore;
   std::function<std::wstring(int)> practice;
-  std::function<std::wstring()> practice_status;
+  std::function<PracticeView()> practice_status;
 };
 
 class PreferencesWindow {
@@ -64,12 +71,14 @@ class PreferencesWindow {
   InputPreferences preferences_;
   PreferencesActions actions_;
   Lexicon* lexicon_=nullptr;
+  WordReviewWindow review_window_;
   std::vector<Control> controls_;
   std::vector<FormRow> rows_;
   std::vector<Entry> entries_;
   std::vector<AudioDevice> devices_;
   std::wstring terms_error_;
   std::string editing_;
+  std::string displayed_model_hints_;
   Entry deleted_{};
   std::optional<ModelFeedback> pending_model_feedback_;
   bool have_undo_=false,changing_=false;
@@ -95,6 +104,8 @@ class PreferencesWindow {
   const AudioDevice* SelectedDevice() const;
   void Devices(bool preserve_selection=false);
   void Models();
+  void UpdatePractice();
+  void SyncModelHints();
   void PollModelFeedback();
   ModelSettings SelectedModel() const;
   void Command(int id,int notification);

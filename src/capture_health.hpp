@@ -11,11 +11,12 @@ class CaptureHealth {
   explicit CaptureHealth(std::uint64_t started):last_frame_(started) {}
   void Push(const std::int16_t* samples,std::size_t count,std::uint64_t now) {
     if(!samples || !count) return;
-    received_=true; last_frame_=now; samples_+=count;
+    received_=true; last_frame_=now;
     double energy=0;
-    for(std::size_t i=0;i<count;++i) { const double sample=samples[i]; energy+=sample*sample; if(samples[i]!=0) nonzero_=true; }
+    for(std::size_t i=0;i<count;++i) { const double sample=samples[i]; energy+=sample*sample; }
     const double rms=std::sqrt(energy/count);
-    signal_=signal_ || rms>=80;
+    zero_samples_=energy==0 ? zero_samples_+count : 0;
+    quiet_samples_=rms<80 ? quiet_samples_+count : 0;
     level_=std::clamp(static_cast<int>(rms/32768.0*400),0,100);
   }
   const char* Error(std::uint64_t now) const {
@@ -23,11 +24,11 @@ class CaptureHealth {
     return nullptr;
   }
   // Live silent samples are a hint, not a device failure or a stop command.
-  bool quiet() const { return (samples_>=16000*8 && !nonzero_) || (samples_>=16000*12 && !signal_); }
+  bool quiet() const { return zero_samples_>=16000*8 || quiet_samples_>=16000*12; }
   bool received() const { return received_; }
   int level() const { return level_; }
  private:
-  std::uint64_t last_frame_,samples_=0;
-  bool received_=false,nonzero_=false,signal_=false;
+  std::uint64_t last_frame_,zero_samples_=0,quiet_samples_=0;
+  bool received_=false;
   int level_=0;
 };

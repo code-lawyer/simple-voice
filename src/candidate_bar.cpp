@@ -204,17 +204,30 @@ void CandidateBar::Layout() {
   const int height = UiPx(40,dpi_);
   const int count = std::min(5,static_cast<int>(view_.page.size()));
   int remaining = std::max(count,std::min(work.w,UiPx(960,dpi_)) - 2*pad-settings);
-  int x=pad;
+  std::vector<int> widths;
   std::wstring accessible=L"拼音候选：";
   for (int i=0;i<count;++i) {
     labels_.push_back(std::to_wstring(i+1)+L" "+Utf8ToWide(view_.page[i]));
     RECT measure{};
     DrawTextW(dc,labels_.back().c_str(),-1,&measure,DT_CALCRECT | DT_SINGLELINE | DT_NOPREFIX);
-    const int width=std::min(static_cast<int>(measure.right)+UiPx(18,dpi_),remaining/(count-i));
+    widths.push_back(static_cast<int>(measure.right)+UiPx(18,dpi_));
+    accessible+=labels_.back()+L"；";
+  }
+  // Small candidates only need their measured width. Share the remaining
+  // space between long candidates, independently of their position on the bar.
+  auto ordered=widths;
+  std::sort(ordered.begin(),ordered.end());
+  int cap=0;
+  for(int i=0;i<count;++i) {
+    cap=remaining/(count-i);
+    if(ordered[i]>cap) break;
+    remaining-=ordered[i];
+  }
+  int x=pad;
+  for(const int natural:widths) {
+    const int width=std::min(natural,cap);
     items_.push_back(RECT{x,pad,x+width,height-pad});
     x+=width;
-    remaining-=width;
-    accessible+=labels_.back()+L"；";
   }
   SelectObject(dc,old); DeleteObject(font); ReleaseDC(hwnd_,dc);
   const auto placed=PlacePopup(caret_,window_,work,x+pad+settings,height,UiPx(5,dpi_),UiPx(16,dpi_));

@@ -1,8 +1,8 @@
 #pragma once
 
 // Public branding is separate from the stable TSF, pipe and user-data IDs.
-#define SIMPLE_VOICE_VERSION "0.2.0-rc.12"
-#define SIMPLE_VOICE_FILE_VERSION 0,2,0,12
+#define SIMPLE_VOICE_VERSION "0.2.0-rc.14"
+#define SIMPLE_VOICE_FILE_VERSION 0,2,0,14
 
 #ifndef RC_INVOKED
 inline constexpr char kProductName[] = "Simple Voice";

@@ -114,37 +114,43 @@ foreach ($pack in $manifest.artifacts) {
     Write-DownloadStep "Archive verified; extracting: $($pack.Id)"
     $stage = Get-ChildPath ('.downloads/extract-' + [Guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $stage | Out-Null
-    Set-DownloadStatus '正在解压并校验模型文件…'
-    $innerTar = $null
-    if ($Use7Zip) {
-      # The hosted Server 2022 tar stalls on this verified bz2 payload. CI uses
-      # its preinstalled extractor explicitly; desktop installs need no 7-Zip.
-      & $sevenZip x -y "-o$stage" $archive
-      if ($LASTEXITCODE -ne 0) { throw "Cannot decompress $archive" }
-      $innerTar = Join-Path $stage ([IO.Path]::GetFileNameWithoutExtension($archive))
-      & $sevenZip x -y "-o$stage" $innerTar
-      if ($LASTEXITCODE -ne 0) { throw "Cannot extract $innerTar" }
-    } else {
-      & $nativeTar -xjf $archive -C $stage
-      if ($LASTEXITCODE -ne 0) { throw "Cannot extract $archive" }
-    }
-    Write-DownloadStep "Extraction finished; checking installed payload: $($pack.Id)"
-    $extracted = Join-Path $stage $pack.Folder
-    if (-not (Test-Files $extracted $pack.Files)) { throw "Extracted files failed verification: $($pack.Id)" }
-    if ($innerTar) { Remove-Item -LiteralPath $innerTar }
-    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $destination) | Out-Null
-    # Keep an existing incomplete/older directory recoverable. Never delete user data.
-    $backup = $null
-    if (Test-Path -LiteralPath $destination) {
-      $backup = Get-ChildPath ($pack.Destination + '.previous-' + [Guid]::NewGuid().ToString('N'))
-      Move-Item -LiteralPath $destination -Destination $backup
-    }
-    try { Move-Item -LiteralPath $extracted -Destination $destination }
-    catch {
-      if ($backup -and -not (Test-Path -LiteralPath $destination)) {
-        Move-Item -LiteralPath $backup -Destination $destination
+    try {
+      Set-DownloadStatus '正在解压并校验模型文件…'
+      if ($Use7Zip) {
+        # Hosted Server 2022 uses 7-Zip for this verified bz2 payload.
+        & $sevenZip x -y "-o$stage" $archive
+        if ($LASTEXITCODE -ne 0) { throw "Cannot decompress $archive" }
+        $innerTar = Join-Path $stage ([IO.Path]::GetFileNameWithoutExtension($archive))
+        & $sevenZip x -y "-o$stage" $innerTar
+        if ($LASTEXITCODE -ne 0) { throw "Cannot extract $innerTar" }
+      } else {
+        & $nativeTar -xjf $archive -C $stage
+        if ($LASTEXITCODE -ne 0) { throw "Cannot extract $archive" }
       }
-      throw
+      Write-DownloadStep "Extraction finished; checking installed payload: $($pack.Id)"
+      $extracted = Join-Path $stage $pack.Folder
+      if (-not (Test-Files $extracted $pack.Files)) { throw "Extracted files failed verification: $($pack.Id)" }
+      New-Item -ItemType Directory -Force -Path (Split-Path -Parent $destination) | Out-Null
+      $backup = $null
+      if (Test-Path -LiteralPath $destination) {
+        $backup = Get-ChildPath ($pack.Destination + '.previous-' + [Guid]::NewGuid().ToString('N'))
+        Move-Item -LiteralPath $destination -Destination $backup
+      }
+      try { Move-Item -LiteralPath $extracted -Destination $destination }
+      catch {
+        if ($backup -and -not (Test-Path -LiteralPath $destination)) {
+          Move-Item -LiteralPath $backup -Destination $destination
+        }
+        throw
+      }
+    } finally {
+      $staging = Get-Item -LiteralPath $stage -Force -ErrorAction Stop
+      if ($staging.FullName -ne $stage -or $staging.Parent.FullName -ne $cache -or
+          $staging.Name -notmatch '^extract-[a-f0-9]{32}$' -or ($staging.Attributes -band [IO.FileAttributes]::ReparsePoint) -or
+          @(Get-ChildItem -LiteralPath $stage -Force -Recurse -Attributes ReparsePoint -ErrorAction Stop).Count) {
+        throw 'Unexpected extraction directory during cleanup.'
+      }
+      Remove-Item -LiteralPath $staging.FullName -Recurse -Force
     }
   }
   Write-Host "Verified: $($pack.Id)"

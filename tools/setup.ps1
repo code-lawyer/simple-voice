@@ -15,20 +15,9 @@ try {
   $engine = Join-Path $root 'voiceime_engine.exe'
   $registrar = Join-Path $root 'voiceime_register.exe'
   $dll = Join-Path $root 'voiceime_tsf.dll'
-  & (Join-Path $PSScriptRoot 'verify_package.ps1') -Root $root
-  . (Join-Path $PSScriptRoot 'upgrade_status.ps1')
-  $upgrade = Get-SimpleVoiceUpgradeState $root
-  if ($upgrade.OldComponents.Count) {
-    Write-Host 'Older components are still loaded. Save your work and restart Windows after the upgrade.' -ForegroundColor Yellow
-    $upgrade.OldComponents | Format-Table Pid,Process,Kind,Path -AutoSize | Out-Host
-  }
-  if ($upgrade.UnreadableProcesses) { Write-Host "Some processes could not be inspected ($($upgrade.UnreadableProcesses))." }
-  foreach ($file in @($engine, $registrar, $dll)) {
-    if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw "Extract the complete release ZIP first. Missing: $file" }
-  }
+  & (Join-Path $PSScriptRoot 'verify_package.ps1') -Root $root -ForUninstall:($Action -eq 'Uninstall')
 
   if ($Action -ne 'Uninstall') {
-    & (Join-Path $PSScriptRoot 'download_models.ps1') -Root $root -ForPackage -Offline:$Offline
     # The official sherpa runtime uses Microsoft's VC++ runtime; do not copy
     # arbitrary system DLLs into the package or silently install extra software.
     foreach ($name in @('msvcp140.dll','msvcp140_1.dll','vcruntime140.dll','vcruntime140_1.dll')) {
@@ -36,6 +25,7 @@ try {
         throw 'Install Microsoft Visual C++ x64 Redistributable, then run install.cmd again: https://aka.ms/vc14/vc_redist.x64.exe'
       }
     }
+    & (Join-Path $PSScriptRoot 'download_models.ps1') -Root $root -ForPackage -Offline:$Offline
     & $engine --check
     if ($LASTEXITCODE -ne 0) { throw 'Local model initialization failed. Check the message above and the Visual C++ x64 runtime.' }
     & $engine --check-chinese
@@ -44,6 +34,13 @@ try {
       Write-Host 'Check complete. No microphone or system registration was used.'
       exit 0
     }
+    . (Join-Path $PSScriptRoot 'upgrade_status.ps1')
+    $upgrade = Get-SimpleVoiceUpgradeState $root
+    if ($upgrade.OldComponents.Count) {
+      Write-Host 'Older components are still loaded. Save your work and restart Windows after the upgrade.' -ForegroundColor Yellow
+      $upgrade.OldComponents | Format-Table Pid,Process,Kind,Path -AutoSize | Out-Host
+    }
+    if ($upgrade.UnreadableProcesses) { Write-Host "Some processes could not be inspected ($($upgrade.UnreadableProcesses))." }
   }
 
   $key = "Registry::HKEY_LOCAL_MACHINE\Software\Classes\CLSID\$clsid\InProcServer32"

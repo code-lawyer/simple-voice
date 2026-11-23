@@ -1,0 +1,5 @@
+terms,mode,observations,p50_ms,p95_ms,max_ms,export_bytes
+0,commit,80,0.0734,0.1000,0.1115,79
+0,commit+export,80,0.2569,0.3137,0.3407,79
+10000,commit,80,0.5090,0.7812,1.1446,290079
+10000,commit+export,80,10.2817,15.5986,17.5300,290079

@@ -110,8 +110,32 @@ ModelSettings PreferencesWindow::SelectedModel() const {
   next.model=static_cast<SpeechModel>(std::clamp<int>(static_cast<int>(SendMessageW(Field(hwnd_,ModelChoice),CB_GETCURSEL,0,0)),0,3));
   next.hotwords=WideToUtf8(Text(ModelHints));return next;
 }
+void PreferencesWindow::SyncModelHints() {
+  if(!actions_.models) return;
+  const auto persisted=NormalizeSpeechHints(actions_.models().hotwords);
+  if(persisted==displayed_model_hints_) return;
+  auto edited=NormalizeSpeechHints(WideToUtf8(Text(ModelHints)));
+  if(edited==displayed_model_hints_) edited=persisted;
+  else {
+    // Merge names saved by weekly review without dropping unsaved edits or
+    // restoring old names that the user removed in the still-open model page.
+    const auto previous=", "+displayed_model_hints_+", ";
+    for(std::size_t begin=0;begin<persisted.size();) {
+      const auto end=persisted.find(", ",begin);
+      const auto name=persisted.substr(begin,end==persisted.npos?end:end-begin);
+      if(previous.find(", "+name+", ")==previous.npos) edited+=","+name;
+      if(end==persisted.npos) break;
+      begin=end+2;
+    }
+    edited=NormalizeSpeechHints(edited);
+  }
+  displayed_model_hints_=persisted;
+  Set(ModelHints,Utf8ToWide(edited));
+}
 void PreferencesWindow::Models() {
+  SyncModelHints();
   const auto selected=SelectedModel();
+  const auto active=actions_.models?actions_.models():ModelSettings{};
   const auto task=actions_.model_task?actions_.model_task():ModelTaskState::Idle;
   const bool busy=task==ModelTaskState::Running;
   const auto focus=GetFocus();
@@ -121,12 +145,24 @@ void PreferencesWindow::Models() {
   EnableWindow(Field(hwnd_,ModelHints),!busy && selected.model==SpeechModel::Qwen3);
   if(page_==4 && focus && IsChild(hwnd_,focus) && !IsWindowEnabled(focus))
     SetFocus(Field(hwnd_,busy?ModelCancel:ModelUse));
-  Set(ModelUse,busy?L"正在处理…":L"启用所选模型(&A)");
+  const wchar_t* action=L"启用所选模型(&A)";
+  if(selected.model==active.model) action=L"重新验证模型(&A)";
+  if(selected.model==active.model && selected.model==SpeechModel::Qwen3 &&
+     NormalizeSpeechHints(selected.hotwords)!=NormalizeSpeechHints(active.hotwords)) action=L"应用专名修改(&A)";
+  Set(ModelUse,busy?L"正在处理…":action);
   if(actions_.model_status) {
-    const auto active=actions_.models?actions_.models():ModelSettings{};
     Set(ModelState,std::wstring(L"当前模型：")+SpeechModelLabel(active.model)+L"\r\n"+actions_.model_status(selected.model));
   }
   PollModelFeedback();
+}
+void PreferencesWindow::UpdatePractice() {
+  if(!actions_.practice_status) return;
+  const auto view=actions_.practice_status();
+  Set(PracticeText,view.text);
+  Set(PracticeToggle,view.can_finalize?L"校准试用录音":L"开始试用");
+  EnableWindow(Field(hwnd_,PracticeToggle),view.can_start || view.can_finalize);
+  EnableWindow(Field(hwnd_,PracticeConfirm),view.can_confirm);
+  EnableWindow(Field(hwnd_,PracticeCancel),view.can_cancel);
 }
 void PreferencesWindow::PollModelFeedback() {
   if(!pending_model_feedback_) return;
@@ -226,6 +262,17 @@ void PreferencesWindow::RefreshTerms(const wchar_t* success,const wchar_t* expor
 }
 void PreferencesWindow::Command(int id,int notification) {
   try {
+  if(id==RecentReview && notification==BN_CLICKED) {
+    if(!lexicon_) {Status(L"个人词库暂时不可用。");return;}
+    review_window_.Open(hwnd_,*lexicon_,actions_.input_code,[this](const std::vector<ReviewChoice>& choices) {
+      if(!actions_.accept_review) throw std::runtime_error("当前无法保存待审词语");
+      auto message=actions_.accept_review(choices);
+      Search();
+      SyncModelHints();
+      return message;
+    },actions_.review_failed);
+    return;
+  }
   if((id==Navigation && notification==LBN_SELCHANGE) || (id==CompactNavigation && notification==CBN_SELCHANGE)) {
     const int page=static_cast<int>(SendMessageW(Field(hwnd_,id),id==Navigation?LB_GETCURSEL:CB_GETCURSEL,0,0));
     if(page>=0) Page(page);
@@ -237,7 +284,7 @@ void PreferencesWindow::Command(int id,int notification) {
   }
   if(id>=PracticeToggle && id<=PracticeCancel) {
     if(actions_.practice)Status(actions_.practice(id-PracticeToggle));
-    if(actions_.practice_status)Set(PracticeText,actions_.practice_status());return;
+    UpdatePractice();return;
   }
   if(id==ModelChoice && notification==CBN_SELCHANGE) {Models();return;}
   if(id==ModelPreload && notification==BN_CLICKED) {
@@ -270,6 +317,7 @@ void PreferencesWindow::Command(int id,int notification) {
     Status(L"已请求取消，模型选择保持不变。"); Models(); return;
   }
   if(id==ModelUse || id==ModelLocal || id==ModelDefault) {
+    SyncModelHints();
     auto next=SelectedModel();
     if(id==ModelDefault) {next.model=SpeechModel::Qwen3;next.directories[0].clear();next.hotwords.clear();}
     if(id==ModelLocal) {

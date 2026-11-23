@@ -28,6 +28,7 @@ enum class MsgType : std::uint8_t {
   PinyinClear = 24,
   PinyinView = 25,
   PinyinInserted = 26,
+  PinyinHelloWithRaw = 27,  // Request the original spelling alongside the formatted preedit.
 };
 
 struct Message {

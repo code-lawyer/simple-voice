@@ -3,6 +3,7 @@
 #include "brand_icon.hpp"
 #include "ui_theme.hpp"
 #include "lexicon.hpp"
+#include "review_collector.hpp"
 #include "recognizer.hpp"
 #include "resample.hpp"
 #include "segmenter.hpp"
@@ -180,17 +181,8 @@ Rect ForegroundClient() {
   return Rect{origin.x, origin.y, rect.right, rect.bottom};
 }
 
-std::wstring ExecutableDir() {
-  wchar_t exe[MAX_PATH];
-  const DWORD size = GetModuleFileNameW(nullptr, exe, MAX_PATH);
-  if (!size || size >= MAX_PATH) return L"";
-  std::wstring path(exe, size);
-  const auto slash = path.find_last_of(L"\\/");
-  return slash == std::wstring::npos ? L"" : path.substr(0, slash);
-}
-
 std::string ResourceDir(const wchar_t* relative, const wchar_t* marker) {
-  const auto exe = ExecutableDir();
+  const auto exe = ExecutableDirectory();
   // Packaged assets win over the host application's working directory.
   // The parent fallback preserves the source-tree development layout.
   for (const auto& root : {exe, exe + L"\\..", std::wstring(L".")}) {
@@ -214,7 +206,7 @@ int CheckInstallation(bool chinese_only=false) {
       return 2;
     }
   }
-  if (GetFileAttributesW((ExecutableDir() + L"\\rime-data\\voiceime.schema.yaml").c_str()) == INVALID_FILE_ATTRIBUTES) {
+  if (GetFileAttributesW((ExecutableDirectory() + L"\\rime-data\\voiceime.schema.yaml").c_str()) == INVALID_FILE_ATTRIBUTES) {
     std::fprintf(stderr, "Missing rime-data/voiceime.schema.yaml\n");
     return 2;
   }
@@ -250,6 +242,14 @@ class FakeRecognizer : public Recognizer {
 #endif
     return Partial() + "。";
   }
+#ifdef VOICEIME_TESTING
+  std::string TakeWarning() override {
+    const auto fixture=TestEnvironment(L"VOICEIME_TEST_CAPTURE");
+    if(fixture==L"short-retry-warning") return kShortRetryWarning;
+    if(fixture==L"draft-only-warning") return kDraftOnlyWarning;
+    return {};
+  }
+#endif
   void Reset() override {
 #ifdef VOICEIME_TESTING
     if(TestEnvironment(L"VOICEIME_TEST_CAPTURE")==L"reset-error")throw std::runtime_error("测试：模型重置失败");
@@ -305,7 +305,7 @@ class Engine {
   bool ForegroundClientAllowed(ClientId sender) const;
   void ResumeQueuedStart();
   Message StateMessage();
-  void ShowMenu(HWND hwnd);
+  void ShowMenu(HWND hwnd, POINT point, bool from_tray);
   void OpenPreferences(int page=0);
   void BeginPrepare(const ModelSettings* requested=nullptr,bool activate=false,bool for_capture=false);
   void PreloadModelIfIdle();
@@ -316,6 +316,7 @@ class Engine {
   std::wstring DownloadChoice(const ModelSettings& settings);
   std::wstring ModelStatus(SpeechModel model) const;
   bool ExportTerms();
+  void RecordTermUse(const std::string& text);
   std::wstring Diagnostics() const;
   std::wstring Practice(int action);
   std::wstring PracticeStatus() const;
@@ -351,6 +352,8 @@ class Engine {
   void RequestCaret();
   void PublishCommit();
   void StoreLexicon();
+  bool FlushReviewHints();
+  void IncludeWaitingSpeechNames(ModelSettings& settings);
   void BeginFinalize();
   void StartFinalizer();
   void PublishFinal(const std::string& final_text);
@@ -359,6 +362,11 @@ class Engine {
   Session session_;
   std::unique_ptr<Recognizer> recognizer_;
   std::unique_ptr<Lexicon> lexicon_;
+  std::unique_ptr<ReviewCollector> review_collector_;
+  std::string review_draft_,review_recognized_;
+  std::uint64_t review_preview_epoch_=0;
+  bool review_short_retry_=false;
+  ULONGLONG review_cleanup_at_=0;
   std::thread capture_thread_;
   std::thread buffered_decode_thread_;
   std::shared_ptr<CaptureBuffer> buffered_audio_;
@@ -384,6 +392,7 @@ class Engine {
   ULONGLONG prepare_started_=0,model_last_used_=0,final_started_=0,last_load_ms_=0,last_final_ms_=0;
 #ifdef VOICEIME_TESTING
   int prepare_attempts_=0;
+  int term_export_attempts_=0;
   std::atomic<DWORD> test_foreground_{0};
 #endif
   std::string model_error_;
@@ -412,6 +421,7 @@ class Engine {
   Phase published_phase_ = Phase::Idle;
   std::string published_preview_;
   std::string lexicon_warning_;
+  bool terms_need_export_ = false;
   std::atomic<bool> stop_capture_{false};
   std::atomic<bool> finish_capture_{false};
   std::atomic<bool> stop_pipe_{false};
@@ -436,6 +446,7 @@ class Engine {
   Rect caret_{0, 0, 0, 0};
   Rect window_rect_{0, 0, 0, 0};
   std::string mic_error_;
+  std::string preview_warning_;
   std::atomic<bool> partial_posted_{false};
   bool practice_=false;
   std::wstring practice_result_;
@@ -454,11 +465,14 @@ int Engine::Run(bool fake) {
 #else
   const auto registered=RegisteredVoiceDll();
   if(!registered.empty() && !SameFile(registered,ExecutableDirectory()+L"\\voiceime_tsf.dll")) {
-    MessageBoxW(nullptr,L"此文件夹不是当前安装版本。请从当前安装目录启动，或运行新版本的 install.cmd 完成升级后注销并重新登录。",L"轻音输入法 · 版本已更换",MB_OK|MB_ICONINFORMATION);
+    MessageBoxW(nullptr,L"此文件夹不是当前安装版本。请从当前安装目录启动，或运行新版本的 install.cmd，再按安装提示完成升级。",L"轻音输入法 · 版本已更换",MB_OK|MB_ICONINFORMATION);
     return 5;
   }
   if(LegacyVoiceEngineRunning()) {
-    MessageBoxW(nullptr,L"旧版本仍在本次 Windows 会话中运行。请保存工作，注销 Windows 后重新登录，以完成升级并避免重复托盘图标。",L"轻音输入法 · 需要重新登录",MB_OK|MB_ICONINFORMATION);
+    MessageBoxW(nullptr,PinyinWaitingForRestart() ?
+        L"旧版本仍在运行。请保存工作并重启 Windows，完成拼音交接。" :
+        L"旧版本仍在本次 Windows 会话中运行。请保存工作，注销 Windows 后重新登录以完成升级。",
+        L"轻音输入法 · 完成升级",MB_OK|MB_ICONINFORMATION);
     return 6;
   }
 #endif
@@ -467,18 +481,17 @@ int Engine::Run(bool fake) {
     std::fprintf(stderr, "voiceime_engine already running\n");
     return 0;
   }
-  const std::wstring data = [] {
 #ifdef VOICEIME_TESTING
-    const auto dir = TestEnvironment(L"VOICEIME_TEST_DATA");
+  const auto data = TestEnvironment(L"VOICEIME_TEST_DATA");
 #else
-    wchar_t buffer[MAX_PATH];
-    const DWORD count = GetEnvironmentVariableW(L"LOCALAPPDATA", buffer, MAX_PATH);
-    std::wstring dir = count > 0 ? std::wstring(buffer, count) : L".";
-    dir += L"\\VoiceIme";
+  const auto data = VoiceUserDataDirectory();
 #endif
-    CreateDirectoryW(dir.c_str(), nullptr);
-    return dir;
-  }();
+  if (data.empty()) {
+    MessageBoxW(nullptr,L"无法找到 Windows 本地应用数据目录。请检查 LOCALAPPDATA 后重新启动轻音。",
+                L"轻音输入法 · 数据目录不可用",MB_OK|MB_ICONERROR);
+    return 4;
+  }
+  CreateDirectoryW(data.c_str(), nullptr);
   try { lexicon_ = std::make_unique<Lexicon>(WideToUtf8(data + L"\\lexicon.sqlite")); }
   catch (const std::exception& e) { LexiconWarning(e.what()); }
   try {if(lexicon_)RecoverDataRestore(*lexicon_,data);}
@@ -487,6 +500,10 @@ int Engine::Run(bool fake) {
   preferences_=LoadInputPreferences(preferences_path_);
   model_settings_path_=data+L"\\speech-models.ini";
   models_=LoadModelSettings(model_settings_path_,preferences_.chinese_only);
+  if(lexicon_) {
+    review_collector_=std::make_unique<ReviewCollector>(*lexicon_,DictDir());
+    try { FlushReviewHints(); } catch(const std::exception& e) {LexiconWarning(e.what());}
+  }
   // The existing model file is also the strict worker wire format used by rc.9.
   speech_startup_path_=data+L"\\speech-startup.ini";
   preload_on_activate_=GetPrivateProfileIntW(L"speech",L"preload_on_activate",1,speech_startup_path_.c_str())!=0;
@@ -555,13 +572,17 @@ void Engine::AddTray() {
   icon.cbSize = sizeof(icon);
   icon.hWnd = box_.hwnd();
   icon.uID = 1;
-  icon.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
+  icon.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_SHOWTIP;
   icon.uCallbackMessage = kTrayMessage;
   icon.hIcon = LoadProductIcon(GetModuleHandleW(nullptr),
       ShellUsesLightIcons() ? IDI_SOUND_CORE_DARK : IDI_SOUND_CORE_LIGHT,ShellIconPixels());
   const std::wstring tip = std::wstring(kProductDisplayName) + L" · Simple Voice";
   wcsncpy(icon.szTip, tip.c_str(), 127);
   const bool updated = Shell_NotifyIconW(tray_added_ ? NIM_MODIFY : NIM_ADD, &icon) == TRUE;
+  if (!tray_added_ && updated) {
+    icon.uVersion = NOTIFYICON_VERSION_4;
+    Shell_NotifyIconW(NIM_SETVERSION, &icon);
+  }
   tray_added_ = tray_added_ || updated;
   if(icon.hIcon)DestroyIcon(icon.hIcon);
 }
@@ -614,7 +635,10 @@ void Engine::UpdateBox() {
       L"已停录 · 等待语音模型":L"正在收音 · 模型准备中";
   box_.SetActivity(std::move(activity));
   box_.SetRecordingProgress(static_cast<int>(recorded_samples_/kRecordingSampleRate),quiet_capture_);
-  std::string text=mic_error_.empty()?session_.box_text():mic_error_;
+  const bool has_preview = session_.phase() == Phase::Pending && !session_.box_text().empty();
+  const bool show_notice = has_preview && !insert_uncertain_;
+  box_.SetPreviewNotice(show_notice ? Utf8ToWide(mic_error_.empty() ? preview_warning_ : mic_error_) : L"");
+  std::string text=mic_error_.empty() || has_preview ? session_.box_text() : mic_error_;
   if (text.empty() && session_.phase()==Phase::Listening) {
     if (!capture_ready_) text="收到采样后即可开始说话";
     else if (waiting_for_model_) text="可以继续说话，模型就绪后会识别已收到的语音。";
@@ -629,7 +653,7 @@ void Engine::UpdateBox() {
       window = window_rect_;
     }
   }
-  box_.ShowText(text, caret, window, session_.phase(), !mic_error_.empty(), insert_uncertain_);
+  box_.ShowText(text, caret, window, session_.phase(), !mic_error_.empty(), insert_uncertain_, has_preview);
 }
 
 bool Engine::WriteClient(const Message& message, ClientId target) {
@@ -682,9 +706,13 @@ void Engine::StoreLexicon() {
   std::string stored;
   if (!session_.TakeLexiconWrite(&stored) || !lexicon_) return;
   try {
-  lexicon_->Commit(stored, static_cast<std::int64_t>(std::time(nullptr)));
-  ExportTerms();
-  lexicon_warning_.clear();
+    if(review_collector_) {
+      if(review_preview_epoch_==lexicon_->ReviewEpoch())
+        review_collector_->Submit(WordSource::Voice,stored,review_recognized_,review_draft_,review_short_retry_);
+      else review_collector_->Submit(WordSource::Voice,stored);
+    }
+    review_recognized_.clear(); review_draft_.clear();
+    RecordTermUse(stored);
   } catch (const std::exception& e) { LexiconWarning(e.what()); }
 }
 
@@ -765,20 +793,35 @@ void Engine::StartFinalizer() {
 }
 
 void Engine::PublishFinal(const std::string& final_text) {
+  review_preview_epoch_=lexicon_ && !practice_?lexicon_->ReviewEpoch():0;
+  if(review_preview_epoch_) {
+    review_draft_=session_.box_text(); review_recognized_=final_text;
+  }
   original_text_=recognizer_?recognizer_->Original():final_text;
   if(original_text_.empty()) original_text_=final_text;
   session_.OnFinal(final_text);
-  if(recognizer_) { const auto warning=recognizer_->TakeWarning(); if(!warning.empty()) mic_error_=warning; }
-  if(final_text.empty()) mic_error_="没有识别到文字。检查麦克风后重新录音。";
+  const auto warning=recognizer_?recognizer_->TakeWarning():std::string{};
+  review_short_retry_=warning==kShortRetryWarning;
+  preview_warning_=warning;
+  if(final_text.empty()) mic_error_=warning.empty()?"没有识别到文字。检查麦克风后重新录音。":warning;
   else if(HasUnknownSpeech(final_text)) mic_error_="有内容无法识别。右键打开编辑预览，补全后再写入。";
+  else if(warning==kDraftOnlyWarning) mic_error_=warning;
   if(session_.phase()!=Phase::Idle) RequestCaret(); UpdateBox(); PublishPhase();
 }
 
 void Engine::StartRecording(ClientId origin) {
+  review_draft_.clear(); review_recognized_.clear();
+  review_preview_epoch_=0; review_short_retry_=false;
+  preview_warning_.clear(); original_text_.clear();
   StopCapture();
   const bool need_model=preparing_ || deferred_models_ || !recognizer_ || !recognizer_->Healthy() ||
       !SameModelRuntime(active_models_,models_);
   requested_capture_model_=deferred_models_;
+  if (preparing_ && !requested_capture_model_) {
+    auto next = loading_models_;
+    IncludeWaitingSpeechNames(next);
+    if (!SameModelRuntime(next, loading_models_)) requested_capture_model_ = std::move(next);
+  }
   waiting_for_model_=need_model;
   retry_cancelled_load_=preparing_ && prepare_cancel_;
   buffering_client_=need_model?origin:0;
@@ -838,6 +881,7 @@ void Engine::DiscardCapture() {
 }
 
 void Engine::CancelRecording() {
+  review_draft_.clear(); review_recognized_.clear(); review_preview_epoch_=0;
   ++capture_generation_; ++finalize_generation_; ++utterance_generation_;
   if(waiting_for_model_ && !preloading_ && !activating_model_) prepare_cancel_=true;
   DiscardCapture();
@@ -874,7 +918,7 @@ void Engine::OnCaptureLimit() {
   UpdateBox(); PublishPhase();
 }
 
-void Engine::ShowMenu(HWND hwnd) {
+void Engine::ShowMenu(HWND hwnd, POINT point, bool from_tray) {
   HMENU menu=CreatePopupMenu();
   if(session_.phase()==Phase::Pending && !session_.box_text().empty()) {
     AppendMenuW(menu,MF_STRING,kEditCommand,L"编辑预览…");
@@ -890,13 +934,33 @@ void Engine::ShowMenu(HWND hwnd) {
   if(!lexicon_warning_.empty()) AppendMenuW(menu,MF_STRING|MF_GRAYED,0,Utf8ToWide(lexicon_warning_).c_str());
   AppendMenuW(menu,MF_SEPARATOR,0,nullptr);
   AppendMenuW(menu,MF_STRING,kQuitCommand,L"退出轻音输入法");
-  POINT point{}; GetCursorPos(&point); SetForegroundWindow(hwnd);
-  TrackPopupMenu(menu,TPM_RIGHTBUTTON,point.x,point.y,0,hwnd,nullptr); DestroyMenu(menu);
+  SetForegroundWindow(hwnd);
+  const auto selected=TrackPopupMenu(menu,TPM_RIGHTBUTTON|TPM_RETURNCMD|TPM_NONOTIFY,point.x,point.y,0,hwnd,nullptr);
+  DestroyMenu(menu);
+  if(selected) SendMessageW(hwnd,WM_COMMAND,selected,0);
+  else if(from_tray && tray_added_) {
+    NOTIFYICONDATAW icon{}; icon.cbSize=sizeof(icon); icon.hWnd=hwnd; icon.uID=1;
+    Shell_NotifyIconW(NIM_SETFOCUS,&icon);
+  }
 }
 
 bool Engine::ExportTerms() {
-  try { return lexicon_ && lexicon_->ExportTerms(data_path_+L"\\rime\\voiceime_personal.txt"); }
-  catch(...) { return false; }
+#ifdef VOICEIME_TESTING
+  ++term_export_attempts_;
+#endif
+  terms_need_export_ = true;
+  try { if (lexicon_) terms_need_export_ = !lexicon_->ExportTerms(data_path_+L"\\rime\\voiceime_personal.txt"); }
+  catch (const std::exception& error) { LexiconWarning(error.what()); }
+  return !terms_need_export_;
+}
+
+void Engine::RecordTermUse(const std::string& text) {
+  const bool changed = lexicon_->Commit(text, std::time(nullptr));
+  if ((changed || terms_need_export_) && !ExportTerms()) {
+    LexiconWarning("personal terms export failed");
+    return;
+  }
+  lexicon_warning_.clear();
 }
 std::wstring Engine::Diagnostics() const {
   return L"Simple Voice "+Utf8ToWide(SIMPLE_VOICE_VERSION)+L" · Windows x64\r\n"+
@@ -907,7 +971,7 @@ std::wstring Engine::Diagnostics() const {
     L"\r\n麦克风："+(capture_ready_?L"已收到采样":L"未录音 / 等待采样")+
     L"  输入电平："+std::to_wstring(input_level_.load())+L"%\r\n拼音学习："+(preferences_.learning?L"开启":L"暂停")+
     L"\r\n上次模型可用耗时："+std::to_wstring(last_load_ms_)+L" ms；停录后校准："+std::to_wstring(last_final_ms_)+L" ms"+
-    L"\r\n"+model_notice_+
+    L"\r\n"+model_notice_+(review_collector_ && review_collector_->Failed()?L"\r\n本机待审词语收集失败，请检查词库文件。":L"")+
     L"\r\n音频只在内存中处理；诊断不包含输入正文或提示词。";
 }
 void Engine::OpenPreferences(int page) {
@@ -962,7 +1026,13 @@ void Engine::OpenPreferences(int page) {
   };
   actions.diagnostics=[this]{return Diagnostics();};
   actions.practice=[this](int action){return Practice(action);};
-  actions.practice_status=[this]{return PracticeStatus();};
+  actions.practice_status=[this] {
+    return PracticeView{PracticeStatus(),
+        !practice_ && session_.phase()==Phase::Idle && !finalize_thread_.joinable(),
+        practice_ && session_.can_finalize(),
+        practice_ && session_.phase()==Phase::Pending && !session_.box_text().empty() && mic_error_.empty(),
+        practice_};
+  };
   actions.backup=[this](const std::wstring& folder)->std::wstring {
     if(!lexicon_)return L"个人词库不可用，暂时无法创建备份。";
     try {return L"备份已保存："+CreateDataBackup(*lexicon_,data_path_,folder);}
@@ -970,20 +1040,63 @@ void Engine::OpenPreferences(int page) {
   };
   actions.restore=[this](const std::wstring& folder){return RestoreBackup(folder);};
   actions.terms_changed=[this]{return ExportTerms();};
+  actions.review_failed=[this]{return review_collector_ && review_collector_->Failed();};
+  actions.accept_review=[this](const std::vector<ReviewChoice>& choices)->std::wstring {
+    std::vector<std::string> names;
+    for(const auto& pick:choices) if(pick.speech) names.push_back(pick.word);
+    if(!names.empty()) {
+      auto settings=deferred_models_.value_or(downloading_?downloading_models_:preparing_?loading_models_:models_);
+      for(const auto& name:lexicon_->PendingSpeechNames()) settings.hotwords+=","+name;
+      for(const auto& name:names) settings.hotwords+=","+name;
+      settings.hotwords=NormalizeSpeechHints(settings.hotwords);
+      if(SerializeModelSettings(settings).empty()) throw std::runtime_error("语音专名过多，请减少勾选或先整理模型页的专名");
+    }
+    lexicon_->AcceptReview(choices,std::time(nullptr));
+    const bool exported=ExportTerms();
+    if(!names.empty()) try {
+      if(!FlushReviewHints()) return L"拼音词语已保存，语音专名等待本机重试。";
+    } catch(const std::exception&) {return L"拼音词语已保存，语音专名等待本机重试。";}
+    if(!exported) return L"词语已保存，拼音候选表尚未刷新。";
+    return names.empty()?L"已加入个人拼音词库。":L"已加入个人拼音词库，勾选的语音专名在下次使用 Qwen3 时生效。";
+  };
   // Reuse Jieba while editing terms. The settings window owns this callback.
-  actions.input_code=[segmenter=std::shared_ptr<Segmenter>{}](const std::string& text) mutable {
-    if (!segmenter && !text.empty()) {
+  actions.input_code=[segmenter=std::shared_ptr<Segmenter>{},unavailable=false](const std::string& text) mutable {
+    if (!segmenter && !unavailable && !text.empty()) {
       const auto dict = DictDir();
-      if (!dict.empty()) segmenter = std::make_shared<Segmenter>(dict);
+      try {segmenter=std::make_shared<Segmenter>(dict);}
+      catch(const std::exception&) {unavailable=true;}
     }
     std::string code;
-    if(segmenter) for(const auto& token:segmenter->Cut(text)) code+=token.pinyin;
+    if(segmenter) for(const auto& token:segmenter->Cut(text)) code+=token.pinyin.empty()?token.text:token.pinyin;
     if(code.empty()) code=text;
     std::string clean;
     for(unsigned char c:code) if(c>='A'&&c<='Z') clean+=char(c+32); else if(c>='a'&&c<='z') clean+=char(c);
     return clean;
   };
   preferences_window_.Open(lexicon_.get(),preferences_,box_.skin(),std::move(actions),page);
+}
+bool Engine::FlushReviewHints() {
+  if(!lexicon_ || preparing_ || downloading_ || deferred_models_) return false;
+  const auto names=lexicon_->PendingSpeechNames();
+  if(names.empty()) return true;
+  auto pending=models_;
+  for(const auto& name:names) pending.hotwords+=","+name;
+  pending.hotwords=NormalizeSpeechHints(pending.hotwords);
+  if(!SaveModelSettings(model_settings_path_,pending)) return false;
+  models_=pending;
+  lexicon_->CompleteSpeechNames(names);
+  return true;
+}
+void Engine::IncludeWaitingSpeechNames(ModelSettings& settings) {
+  if (!lexicon_) return;
+  try {
+    const auto names = lexicon_->PendingSpeechNames();
+    if (names.empty()) return;
+    auto next = settings;
+    for (const auto& name : names) next.hotwords += "," + name;
+    next.hotwords = NormalizeSpeechHints(next.hotwords);
+    if (!SerializeModelSettings(next).empty()) settings.hotwords = std::move(next.hotwords);
+  } catch (const std::exception& error) { LexiconWarning(error.what()); }
 }
 std::wstring Engine::RestoreBackup(const std::wstring& folder) {
     if(!lexicon_)return L"个人词库不可用，暂时无法恢复。";
@@ -1010,7 +1123,9 @@ void Engine::EditPreview() {
   preview_editor_.Open(session_.box_text(),original_text_,[this,generation](std::string text){
     if(session_.phase()!=Phase::Pending || queued_start_ || generation!=utterance_generation_) return;
     // Editing cannot prove whether a previous insertion reached its document.
-    session_.RestorePending(text); mic_error_.clear(); UpdateBox(); PublishPhase();
+    session_.RestorePending(text); preview_warning_.clear();
+    mic_error_=HasUnknownSpeech(text)?"请补全无法识别的内容，再确认写入。":"";
+    UpdateBox(); PublishPhase();
   },insert_uncertain_);
 }
 std::string Engine::ModelRoot(const ModelSettings& settings) const {
@@ -1060,7 +1175,8 @@ std::wstring Engine::PracticeStatus() const {
   if(session_.phase()==Phase::Listening) return (!capture_ready_?L"正在连接麦克风…\r\n":
       waiting_for_model_?L"正在收音 · 模型准备中\r\n":L"正在听…\r\n")+text;
   if(session_.phase()==Phase::Finalizing)return (waiting_for_model_?L"已停录 · 等待语音模型\r\n":L"正在校准，请稍候…\r\n")+text;
-  if(session_.phase()==Phase::Stopped)return (stopped_notice_.empty()?L"已达到 10 分钟上限":stopped_notice_)+L"。点击“开始 / 停止试用”后校准。\r\n"+text;
+  if(session_.phase()==Phase::Stopped)return (stopped_notice_.empty()?L"已达到 10 分钟上限":stopped_notice_)+L"。点击“校准试用录音”。\r\n"+text;
+  if(!preview_warning_.empty()) return Utf8ToWide(preview_warning_)+L"\r\n"+text;
   return L"最终预览；确认后只显示在本页：\r\n"+text;
 }
 ModelActionResult Engine::UseModel(const ModelSettings& choice,bool allow_download) {
@@ -1130,7 +1246,8 @@ std::wstring Engine::DownloadChoice(const ModelSettings& settings) {
 }
 void Engine::PreloadModelIfIdle() {
   if (!preload_on_activate_ || preparing_ || downloading_ || deferred_models_ ||
-      session_.phase()!=Phase::Idle || (recognizer_ && recognizer_->Healthy())) return;
+      session_.phase()!=Phase::Idle ||
+      (recognizer_ && recognizer_->Healthy() && SameModelRuntime(active_models_,models_))) return;
   // Switching hosts repeatedly should not continually retry a missing model.
   // An explicit voice hotkey can always retry immediately.
   if (!model_error_.empty() && GetTickCount64()-prepare_started_<30000) return;
@@ -1144,6 +1261,7 @@ void Engine::BeginPrepare(const ModelSettings* requested,bool activate,bool for_
   if(prepare_thread_.joinable()) prepare_thread_.join();
   preparing_=true; model_error_.clear();prepared_error_.clear();prepare_cancel_=false;
   loading_models_=ModelChoice(requested?*requested:models_);activating_model_=activate;
+  IncludeWaitingSpeechNames(loading_models_);
   notice_model_=loading_models_.model;deferred_models_.reset();
   prepare_started_=GetTickCount64();
   if(recognizer_ && !recognizer_->Healthy())recognizer_.reset();
@@ -1241,7 +1359,11 @@ void Engine::OnPipe(ClientId sender, const Message& message, bool resumed) {
     if (!follows_start && !cancels_same_utterance && !stops_at_limit) { WriteClient(StateMessage(), sender); return; }
   }
   if(message.type==MsgType::PersonalTermUsed || message.type==MsgType::PinyinInserted) {
-    if(lexicon_) try { lexicon_->Commit(message.text,std::time(nullptr)); ExportTerms(); }
+    if(lexicon_) try {
+      if(message.type==MsgType::PinyinInserted && review_collector_)
+        review_collector_->Submit(WordSource::Pinyin,message.text);
+      RecordTermUse(message.text);
+    }
       catch(const std::exception& error) { LexiconWarning(error.what()); }
     return;
   }
@@ -1339,6 +1461,7 @@ LRESULT Engine::OnMessage(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
   if (message == WM_APP + 103) return recognizer_ && recognizer_->FinalReady();
   if (message == WM_APP + 104) return prepare_attempts_;
   if (message == WM_APP + 105) return static_cast<LRESULT>(recorded_samples_.load());
+  if (message == WM_APP + 106) return term_export_attempts_;
 #endif
   static const UINT taskbar_created=RegisterWindowMessageW(L"TaskbarCreated");
   if(taskbar_created && message==taskbar_created) { tray_added_=false;AddTray();return 0; }
@@ -1360,6 +1483,12 @@ LRESULT Engine::OnMessage(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
     return 0;
   }
   if(message==WM_TIMER && wparam==kModelIdleTimer) {
+    const auto now=GetTickCount64();
+    if(lexicon_ && now>=review_cleanup_at_) {
+      review_cleanup_at_=now+60000;
+      try {lexicon_->ExpireReview(std::time(nullptr)); FlushReviewHints();}
+      catch(const std::exception& e) {LexiconWarning(e.what());}
+    }
     if(!fake_) ReleaseIdleModel(GetTickCount64());
     return 0;
   }
@@ -1417,6 +1546,7 @@ LRESULT Engine::OnMessage(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
          (!recognizer_ || !recognizer_->Healthy()))mic_error_=model_error_;
     }
     activating_model_=false;
+    try { FlushReviewHints(); } catch (const std::exception& error) { LexiconWarning(error.what()); }
     if(waiting_for_model_) {
       if(buffering_client_ && !ForegroundClientAllowed(buffering_client_)) {
         CancelRecording();
@@ -1499,8 +1629,28 @@ LRESULT Engine::OnMessage(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
     }
     return 0;
   }
-  if (message == WM_CONTEXTMENU || (message == kTrayMessage && (lparam == WM_RBUTTONUP || lparam == WM_LBUTTONUP))) {
-    ShowMenu(hwnd);
+  if (message == WM_CONTEXTMENU) {
+    POINT point{static_cast<short>(LOWORD(lparam)),static_cast<short>(HIWORD(lparam))};
+    if(point.x==-1 && point.y==-1) { RECT rect{};GetWindowRect(hwnd,&rect);point={rect.left,rect.bottom}; }
+    ShowMenu(hwnd,point,false);
+    return 0;
+  }
+  if (message == kTrayMessage) {
+    const UINT event=LOWORD(lparam);
+    const bool modern=HIWORD(lparam)==1;
+    if (modern ? event==NIN_SELECT || event==NIN_KEYSELECT || event==WM_CONTEXTMENU
+               : event==WM_LBUTTONUP || event==WM_RBUTTONUP) {
+      POINT point{};
+      if (modern && event!=WM_CONTEXTMENU)
+        point={static_cast<short>(LOWORD(wparam)),static_cast<short>(HIWORD(wparam))};
+      else {
+        NOTIFYICONIDENTIFIER icon{}; icon.cbSize=sizeof(icon); icon.hWnd=hwnd; icon.uID=1;
+        RECT rect{};
+        if(modern && SUCCEEDED(Shell_NotifyIconGetRect(&icon,&rect))) point={rect.left,rect.top};
+        else GetCursorPos(&point);
+      }
+      ShowMenu(hwnd,point,true);
+    }
     return 0;
   }
   if (message == WM_COMMAND) {
@@ -1539,6 +1689,7 @@ LRESULT Engine::OnMessage(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
     if(id==kCopyCommand) { CopyUserText(hwnd,Utf8ToWide(session_.box_text())); return 0; }
     if(id==kRestoreCommand && session_.phase()==Phase::Pending && !original_text_.empty()) {
       session_.RestorePending(original_text_); mic_error_=HasUnknownSpeech(original_text_)?"请编辑无法识别的内容，再确认写入。":"";
+      if (mic_error_.empty() && preview_warning_ == kDraftOnlyWarning) mic_error_=preview_warning_;
       UpdateBox(); PublishPhase(); return 0;
     }
 
@@ -1553,6 +1704,7 @@ LRESULT Engine::OnMessage(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
 
 void Engine::ClientLoop(ClientId id, HANDLE pipe, std::shared_ptr<IpcPeer> peer) {
   bool authenticated = false;
+  bool include_raw = false;
   std::unique_ptr<RimeSession> pinyin;
   HWND pinyin_window = nullptr;
   std::string awaiting_insert;
@@ -1587,11 +1739,13 @@ void Engine::ClientLoop(ClientId id, HANDLE pipe, std::shared_ptr<IpcPeer> peer)
       if (status == DecodeStatus::Incomplete) return true;
       pending.erase(0, used);
       if (!authenticated) {
-        const bool wants_pinyin = decoded.type == MsgType::PinyinHello;
+        include_raw = decoded.type == MsgType::PinyinHelloWithRaw;
+        const bool wants_pinyin = include_raw || decoded.type == MsgType::PinyinHello;
         if (!wants_pinyin && decoded.type != MsgType::ClientHello) return false;
         const auto window = reinterpret_cast<HWND>(static_cast<std::uintptr_t>(decoded.client_window));
         auto expected = module;
 #ifdef VOICEIME_TESTING
+        if (include_raw && TestEnvironment(L"VOICEIME_TEST_LEGACY_PINYIN")==L"1") return false;
         if (wants_pinyin) expected = ExecutableDirectory() + L"\\voiceime_tsf_integration.exe";
 #endif
         if (!peer->owns_window(window, expected)) return false;
@@ -1601,7 +1755,7 @@ void Engine::ClientLoop(ClientId id, HANDLE pipe, std::shared_ptr<IpcPeer> peer)
           pinyin_window = window;
           pinyin = std::make_unique<RimeSession>();
           if (!pinyin->Start(ExecutableDirectory() + L"\\rime-data", data_path_ + L"\\rime")) return false;
-          if (!WritePipeBytes(pipe, Encode({MsgType::PinyinView, EncodePinyinView(pinyin->view())}), stop_event_)) return false;
+          if (!WritePipeBytes(pipe, Encode({MsgType::PinyinView, EncodePinyinView(pinyin->view(), include_raw)}), stop_event_)) return false;
           continue;
         }
         PostMessageW(box_.hwnd(), kAnnounceMessage, id, reinterpret_cast<LPARAM>(window));
@@ -1628,7 +1782,7 @@ void Engine::ClientLoop(ClientId id, HANDLE pipe, std::shared_ptr<IpcPeer> peer)
           pinyin->ProcessKeyWithModifiers(vk, modifiers & 1, modifiers & 2, modifiers & 4);
         } else return false;
         awaiting_insert = pinyin->view().commit;
-        const auto frame = Encode({MsgType::PinyinView, EncodePinyinView(pinyin->view())});
+        const auto frame = Encode({MsgType::PinyinView, EncodePinyinView(pinyin->view(), include_raw)});
         if (frame.empty() || !WritePipeBytes(pipe, frame, stop_event_)) return false;
         continue;
       }

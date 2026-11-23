@@ -53,26 +53,20 @@ constexpr UINT kEngineConnectedMessage = WM_APP + 4;
 constexpr UINT_PTR kTrackingTimer = 1;
 struct IncomingCommit {
   std::wstring text;
-  std::uint64_t id = 0, connection = 0;
+  std::uint64_t id = 0, connection = 0, preview = 0;
 };
 
+IUnknown* ContextIdentity(ITfContext* context) {
+  IUnknown* identity = nullptr;
+  if (context) context->QueryInterface(IID_IUnknown, reinterpret_cast<void**>(&identity));
+  return identity;
+}
+
 std::wstring ConfiguredHotkeyPath() {
-  wchar_t local[MAX_PATH];
-  const DWORD count = GetEnvironmentVariableW(L"LOCALAPPDATA", local, MAX_PATH);
-  if (count == 0 || count >= MAX_PATH) return {};
-  return std::wstring(local, count) + L"\\VoiceIme\\config.json";
+  const auto directory = VoiceUserDataDirectory();
+  return directory.empty() ? std::wstring{} : directory + L"\\config.json";
 }
 enum class CompositionEdit { SetPreedit, Commit, Cancel };
-
-std::wstring ModuleDirectory() {
-  wchar_t module_path[MAX_PATH];
-  const DWORD count = GetModuleFileNameW(VoiceImeModule(), module_path, MAX_PATH);
-  if (count == 0 || count >= MAX_PATH) return L"";
-  std::wstring path(module_path, count);
-  const auto slash = path.find_last_of(L"\\/");
-  if (slash == std::wstring::npos) return L"";
-  return path.substr(0, slash);
-}
 
 bool EatsKey(KeyAction action) {
   return action != KeyAction::Pass && action != KeyAction::PassAfterClear;
@@ -86,7 +80,8 @@ bool IsInputMethodEditor(HWND focus) {
   HWND root=focus?GetAncestor(focus,GA_ROOT):nullptr;
   if(!root) return false;
   wchar_t name[80]{}; GetClassNameW(root,name,80);
-  return lstrcmpW(name,L"SimpleVoicePreviewEditor")==0 || lstrcmpW(name,L"SimpleVoicePreferences")==0;
+  return lstrcmpW(name,L"SimpleVoicePreviewEditor")==0 || lstrcmpW(name,L"SimpleVoicePreferences")==0 ||
+         lstrcmpW(name,L"SimpleVoiceWordReview")==0;
 }
 
 bool CanUseDesktopRuntime() {
@@ -322,6 +317,7 @@ class VoiceService : public ITfTextInputProcessor {
   HRESULT OnKey(ITfContext* context, WPARAM vk, LPARAM lparam, WINBOOL* eaten, bool down);
 #ifdef VOICEIME_TESTING
   void SetVoiceActiveForTest(bool active) { active_=active; }
+  std::uint64_t PendingPreviewForTest() const { return pending_preview_.load(); }
   HWND IndicatorMessageWindowForTest() const { return host_; }
   Hotkey CachedHotkeyForTest() const { return hotkey_cache_.value(); }
   bool PinyinReadyForTest() { return rime_.EnsureConnected(); }
@@ -335,7 +331,7 @@ class VoiceService : public ITfTextInputProcessor {
       WarmPinyin();
       RequestModelPreload();
     }
-    else preload_connection_ = 0;
+    else { preload_connection_ = 0; ReleaseConfirmedTarget(); }
   }
   void OnForeground(bool foreground) {
     foreground_ = foreground;
@@ -346,6 +342,7 @@ class VoiceService : public ITfTextInputProcessor {
     }
     else {
       preload_connection_ = 0;
+      ReleaseConfirmedTarget();
       bar_.Hide();
     }
     UpdateTracking();
@@ -493,6 +490,7 @@ class VoiceService : public ITfTextInputProcessor {
   struct InsertSession : StackSession {
     ITfContext* context = nullptr;
     std::wstring text;
+    bool inserted_text = false;
     HRESULT STDMETHODCALLTYPE DoEditSession(TfEditCookie cookie) override {
       if (text.empty() || context == nullptr) return S_OK;
       ITfInsertAtSelection* insert = nullptr;
@@ -503,6 +501,7 @@ class VoiceService : public ITfTextInputProcessor {
       ITfRange* inserted = nullptr;
       const HRESULT hr = insert->InsertTextAtSelection(cookie, 0, text.c_str(),
                                                         static_cast<LONG>(text.size()), &inserted);
+      inserted_text = hr == S_OK;
       if (SUCCEEDED(hr) && inserted != nullptr) MoveCaretToEnd(cookie, context, inserted);
       if (inserted != nullptr) inserted->Release();
       insert->Release();
@@ -599,7 +598,9 @@ class VoiceService : public ITfTextInputProcessor {
   void WarmPinyin();
   bool PipeConnected();
   KeyState MakeKeyState(ITfContext* context, WPARAM vk, LPARAM lparam);
-  void SendVoice(MsgType type, WPARAM vk, WINBOOL* eaten);
+  void SendVoice(MsgType type, ITfContext* context, WPARAM vk, WINBOOL* eaten);
+  void ObservePhase(const Message& phase);
+  void ReleaseConfirmedTarget();
   bool RunComposition(ITfContext* context, CompositionEdit op, const std::wstring& text);
   void DropUncommitted(ITfContext* context, const KeyState& state, const Hotkey& hotkey);
   bool EditComposition(TfEditCookie cookie, ITfContext* context, CompositionEdit op, const std::wstring& text);
@@ -611,6 +612,7 @@ class VoiceService : public ITfTextInputProcessor {
   void OnCompositionTerminated(TfEditCookie cookie, ITfComposition* composition);
   void ShowCandidates(ITfContext* context);
   void SyncAfterRime(ITfContext* context);
+  void RecoverInterruptedPinyin(ITfContext* context);
   void CancelFocusComposition();
   void OnDocumentFocus(ITfDocumentMgr* current, ITfDocumentMgr* previous);
   void LaunchEngine();
@@ -642,6 +644,11 @@ class VoiceService : public ITfTextInputProcessor {
   std::uint64_t preload_connection_ = 0;  // Last notified during this keyboard focus.
   std::atomic<bool> active_{false};
   std::atomic<std::uint64_t> state_id_{0};
+  std::atomic<std::uint64_t> pending_preview_{0};
+  // Only the TSF apartment owns these COM/window references.
+  IUnknown* confirmed_context_ = nullptr;
+  HWND confirmed_focus_ = nullptr;
+  std::uint64_t confirmed_connection_ = 0, confirmed_preview_ = 0;
   HotkeyCache hotkey_cache_;
   std::atomic<std::uint64_t> connection_generation_{0}, cancelled_commit_{0};
   std::uint64_t handled_connection_ = ~std::uint64_t{0}, handled_id_ = 0;
@@ -689,9 +696,7 @@ bool VoiceService::WriteClient(const Message& message, std::uint64_t connection)
   std::lock_guard<std::mutex> lock(write_mu_);
   if (connection != 0 && connection != connection_generation_.load()) return false;
   if (pipe_ == INVALID_HANDLE_VALUE || write_event_ == nullptr) return false;
-  Message current = message;
-  if (IsVoiceControl(current.type)) current.state_id = state_id_.load();
-  auto bytes = Encode(current);
+  auto bytes = Encode(message);
   if (bytes.empty()) return false;
   outgoing_.push_back(std::move(bytes));
   SetEvent(write_event_);
@@ -773,7 +778,7 @@ void VoiceService::CandidateClicked(void* self, int index) {
   auto* service = static_cast<VoiceService*>(self);
   if (index < 0 || index >= static_cast<int>(service->pinyin_.view().page.size())) return;
   ITfContext* context = service->FocusContext();
-  if (context != nullptr && service->DocumentAcceptsText(context)) {
+  if (context != nullptr && context == service->composition_context_ && service->DocumentAcceptsText(context)) {
     service->rime_.ProcessKey(0x31 + index, false);
     service->SyncAfterRime(context);
   }
@@ -790,10 +795,8 @@ void VoiceService::LaunchEngine() {
   const bool running = mutex != nullptr;
   if (mutex != nullptr) CloseHandle(mutex);
   if (!ShouldLaunchEngine(running)) return;
-  wchar_t module_path[MAX_PATH];
-  const DWORD count = GetModuleFileNameW(VoiceImeModule(), module_path, MAX_PATH);
-  if (count == 0 || count >= MAX_PATH) return;
-  std::wstring path(module_path, count);
+  const auto path=ModuleFilePath(VoiceImeModule());
+  if(path.empty()) return;
   const auto registered=RegisteredVoiceDll();
   if((!registered.empty() && !SameFile(registered,path)) || LegacyVoiceEngineRunning())return;
   const auto slash = path.find_last_of(L"\\/");
@@ -852,6 +855,7 @@ LRESULT CALLBACK VoiceService::WindowProc(HWND hwnd, UINT message, WPARAM wparam
     return 0;
   }
   if (message == kTrackingMessage) {
+    if (self->confirmed_connection_ != self->connection_generation_.load()) self->ReleaseConfirmedTarget();
     self->UpdateInputIndicator();self->UpdateTracking();self->TrackCaret();return 0;
   }
   if (message == WM_TIMER && wparam == kTrackingTimer) { self->TrackCaret(); return 0; }
@@ -885,17 +889,22 @@ void VoiceService::HandleCommit(const IncomingCommit& request) {
     WriteClient(ack, request.connection); return;
   }
   bool inserted = false;
-  ITfContext* context = request.id > cancelled_commit_.load() && !request.text.empty() ? FocusContext() : nullptr;
-  if (context != nullptr) {
-    if (DocumentAcceptsText(context)) {
-    InsertSession session;
-    session.context = context;
-    session.text = request.text;
-    HRESULT session_hr = E_FAIL;
-    const auto request_hr = context->RequestEditSession(client_id_, &session, TF_ES_SYNC | TF_ES_READWRITE, &session_hr);
-    inserted = SUCCEEDED(request_hr) && SUCCEEDED(session_hr);
+  if (request.preview && request.preview == confirmed_preview_ && request.connection == confirmed_connection_) {
+    ITfContext* context = FocusContext();
+    IUnknown* identity = ContextIdentity(context);
+    const bool same_target = identity && identity == confirmed_context_ && GetFocus() == confirmed_focus_;
+    ReleaseConfirmedTarget();
+    if (identity) identity->Release();
+    if (same_target && OwnsForeground() && profile_selected_ && request.id > cancelled_commit_.load() &&
+        !request.text.empty() && DocumentAcceptsText(context)) {
+      InsertSession session;
+      session.context = context;
+      session.text = request.text;
+      HRESULT session_hr = E_FAIL;
+      const auto request_hr = context->RequestEditSession(client_id_, &session, TF_ES_SYNC | TF_ES_READWRITE, &session_hr);
+      inserted = SUCCEEDED(request_hr) && SUCCEEDED(session_hr) && session.inserted_text;
     }
-    context->Release();
+    if (context) context->Release();
   }
   handled_id_ = request.id; handled_success_ = inserted;
   if (inserted) {active_=false;UpdateInputIndicator();}
@@ -970,13 +979,14 @@ void VoiceService::ReadLoop() {
       if (status == DecodeStatus::Incomplete) return true;
       pending.erase(0, used);
       if (message.type == MsgType::InsertText && host_ != nullptr) {
-        auto* text = new IncomingCommit{Utf8ToWide(message.text), message.request_id, connection_generation_.load()};
+        // The engine sends InsertText before the phase change to Committing on this pipe.
+        auto* text = new IncomingCommit{Utf8ToWide(message.text), message.request_id,
+                                        connection_generation_.load(), pending_preview_.load()};
         if (!PostMessageW(host_, kCommitMessage, 0, reinterpret_cast<LPARAM>(text))) delete text;
       } else if (message.type == MsgType::CancelInsert) {
         cancelled_commit_.store(std::max(cancelled_commit_.load(), message.request_id));
       } else if (message.type == MsgType::Phase) {
-        state_id_ = message.state_id;
-        active_ = !message.text.empty() && message.text != "0";
+        ObservePhase(message);
         if (host_) PostMessageW(host_, kTrackingMessage, 0, 0);
       } else if (message.type == MsgType::QueryCaret && host_ != nullptr && foreground_) {
         PostMessageW(host_, kCaretMessage, 0, 0);
@@ -1000,9 +1010,9 @@ void VoiceService::ReadLoop() {
     }
     auto server = PipeServerPeer(pipe);
 #ifdef VOICEIME_TESTING
-    const auto expected_engine = ModuleDirectory() + L"\\voiceime_tsf_integration.exe";
+    const auto expected_engine = ExecutableDirectory(VoiceImeModule()) + L"\\voiceime_tsf_integration.exe";
 #else
-    const auto expected_engine = ModuleDirectory() + L"\\voiceime_engine.exe";
+    const auto expected_engine = ExecutableDirectory(VoiceImeModule()) + L"\\voiceime_engine.exe";
 #endif
     Message initial;
     std::string buffer;
@@ -1015,8 +1025,7 @@ void VoiceService::ReadLoop() {
       std::lock_guard<std::mutex> lock(write_mu_);
       ++connection_generation_;
       cancelled_commit_ = 0;
-      state_id_ = initial.state_id;
-      active_ = initial.text != "0";
+      ObservePhase(initial);
       pipe_ = pipe;
     }
     if (host_) PostMessageW(host_, kEngineConnectedMessage, 0, 0);
@@ -1051,6 +1060,7 @@ void VoiceService::ReadLoop() {
     }
     active_ = false;
     state_id_ = 0;
+    pending_preview_ = 0;
     if (host_) PostMessageW(host_, kTrackingMessage, 0, 0);
     if (stopping) return;
   }
@@ -1073,7 +1083,7 @@ HRESULT VoiceService::Activate(ITfThreadMgr* manager, TfClientId client_id) {
   thread_mgr_->AddRef();
   client_id_ = client_id;
   EnsureWindow();
-  const auto directory = ModuleDirectory();
+  const auto directory = ExecutableDirectory(VoiceImeModule());
   if (!directory.empty()) {
 #ifdef VOICEIME_TESTING
     wchar_t id[100]{};
@@ -1112,6 +1122,8 @@ HRESULT VoiceService::Activate(ITfThreadMgr* manager, TfClientId client_id) {
 }
 
 HRESULT VoiceService::Deactivate() {
+  ReleaseConfirmedTarget();
+  confirmed_connection_ = confirmed_preview_ = 0;
   if(input_indicator_) {
     input_indicator_->Detach();input_indicator_->Release();input_indicator_=nullptr;
   }
@@ -1242,13 +1254,37 @@ KeyState VoiceService::MakeKeyState(ITfContext* context, WPARAM vk, LPARAM lpara
   return state;
 }
 
-void VoiceService::SendVoice(MsgType type, WPARAM vk, WINBOOL* eaten) {
+void VoiceService::ObservePhase(const Message& phase) {
+  pending_preview_ = phase.text == "3" ? phase.state_id : 0;
+  state_id_ = phase.state_id;
+  active_ = !phase.text.empty() && phase.text != "0";
+}
+
+void VoiceService::ReleaseConfirmedTarget() {
+  if (confirmed_context_) confirmed_context_->Release();
+  confirmed_context_ = nullptr;
+  confirmed_focus_ = nullptr;
+  // Keep the preview ID so a second key in another field cannot redirect this request.
+}
+
+void VoiceService::SendVoice(MsgType type, ITfContext* context, WPARAM vk, WINBOOL* eaten) {
+  const auto connection = connection_generation_.load();
   Message message;
   message.type = type;
-  if (!WriteClient(message)) {
+  message.state_id = state_id_.load();
+  const bool confirms = type == MsgType::Enter && message.state_id && message.state_id == pending_preview_.load();
+  if (!connection || !message.state_id || !WriteClient(message, connection)) {
     if (type == MsgType::Enter || type == MsgType::Cancel) {active_=false;UpdateInputIndicator();}
     return;
   }
+  if (confirms && (connection != confirmed_connection_ || message.state_id != confirmed_preview_)) {
+    ReleaseConfirmedTarget();
+    confirmed_connection_ = connection;
+    confirmed_preview_ = message.state_id;
+    confirmed_focus_ = GetFocus();
+    confirmed_context_ = ContextIdentity(context);
+  }
+  if (type == MsgType::Cancel) ReleaseConfirmedTarget();
   if (type == MsgType::StartListen) active_ = true;
   if (type == MsgType::Cancel) active_ = false;
   UpdateInputIndicator();
@@ -1438,13 +1474,19 @@ void VoiceService::ShowCandidates(ITfContext* context) {
 }
 
 void VoiceService::SyncAfterRime(ITfContext* context) {
+  if (!rime_.interrupted_text().empty()) {
+    RecoverInterruptedPinyin(context);
+    return;
+  }
   const RimeView& view = pinyin_.view();
   if (input_indicator_) input_indicator_->SetMode(pinyin_.mode(), view.ascii_punctuation);
   UpdateTracking();
   if (!view.composing) candidate_anchor_known_ = false;
   if (!view.commit.empty()) {
     const auto commit = view.commit;
-    if (RunComposition(context, CompositionEdit::Commit, Utf8ToWide(commit))) rime_.ConfirmInserted(commit);
+    const bool document_input=!IsInputMethodEditor(GetFocus());
+    if (RunComposition(context, CompositionEdit::Commit, Utf8ToWide(commit)) && document_input)
+      rime_.ConfirmInserted(commit);
     if (view.composing && !view.preedit.empty()) {
       RunComposition(context, CompositionEdit::SetPreedit, Utf8ToWide(view.preedit));
       ShowCandidates(context);
@@ -1462,6 +1504,15 @@ void VoiceService::SyncAfterRime(ITfContext* context) {
   ShowCandidates(context);
 }
 
+void VoiceService::RecoverInterruptedPinyin(ITfContext* context) {
+  // This raw text was already visible before the failed key. The host still receives that key once.
+  if (!composition_ || composition_context_ != context ||
+      RunComposition(context, CompositionEdit::Commit, Utf8ToWide(rime_.interrupted_text())))
+    rime_.ClearInterruptedText();
+  bar_.Hide();
+  UpdateTracking();
+}
+
 void VoiceService::CancelFocusComposition() {
   ITfContext* context = composition_context_;
   if (context != nullptr) {
@@ -1475,6 +1526,7 @@ void VoiceService::CancelFocusComposition() {
 void VoiceService::OnDocumentFocus(ITfDocumentMgr* current, ITfDocumentMgr* previous) {
   if (current) RequestModelPreload();
   if (current != previous) {
+    ReleaseConfirmedTarget();
     candidate_anchor_known_ = false;
     last_caret_sent_.clear();
     last_key_was_digit_ = false;
@@ -1504,6 +1556,10 @@ HRESULT VoiceService::OnKey(ITfContext* context, WPARAM vk, LPARAM lparam, WINBO
     rime_.Clear();
     bar_.Hide();
     pending_toggle_ = false;
+  }
+  if (!rime_.interrupted_text().empty()) {
+    RecoverInterruptedPinyin(context);
+    if (!rime_.interrupted_text().empty()) return S_OK;
   }
   const KeyState state = MakeKeyState(context, vk, lparam);
   const Hotkey hotkey = hotkey_cache_.value();
@@ -1577,13 +1633,13 @@ HRESULT VoiceService::OnKey(ITfContext* context, WPARAM vk, LPARAM lparam, WINBO
     case KeyAction::OpenVoice:
       RunComposition(context, CompositionEdit::Cancel, L"");
       bar_.Hide();
-      SendVoice(MsgType::StartListen, vk, eaten);
+      SendVoice(MsgType::StartListen, context, vk, eaten);
       break;
     case KeyAction::VoiceEnter:
-      SendVoice(MsgType::Enter, vk, eaten);
+      SendVoice(MsgType::Enter, context, vk, eaten);
       break;
     case KeyAction::VoiceEscape:
-      SendVoice(MsgType::Cancel, vk, eaten);
+      SendVoice(MsgType::Cancel, context, vk, eaten);
       break;
     case KeyAction::Consume:
       eaten_vk_ = static_cast<int>(vk);

@@ -12,6 +12,7 @@ struct AudioSegment { std::size_t offset,count; bool forced; };
 class SpeechPause {
  public:
   static constexpr std::size_t rate=16000,frame=rate/50,tail=rate/5;
+  static constexpr std::size_t short_limit=6*rate;
 
   static bool Quiet(const std::int16_t* data,std::size_t count) {
     std::int64_t energy=0;
@@ -28,7 +29,7 @@ class SpeechPause {
       if(!Quiet(pcm.data()+cursor_,frame)) {
         // A resumed phrase confirms the earlier pause. Give short phrases and
         // brief hesitations their full joint context until the actual stop.
-        if(!pending_cut_ && last_sound_>=6*rate && cursor_-last_sound_>=rate*3/5) {
+        if(!pending_cut_ && last_sound_>=short_limit && cursor_-last_sound_>=rate*3/5) {
           pending_cut_=last_sound_+tail;
           resumed_at_=cursor_;
         }
@@ -42,6 +43,13 @@ class SpeechPause {
   std::size_t PendingCut() const { return pending_cut_; }
   std::size_t PreviewEnd() const {
     return !pending_cut_ && last_sound_ && last_sound_+tail>=rate && cursor_>=last_sound_+tail ? last_sound_+tail : 0;
+  }
+  // A short utterance can start a provisional decode before the regular
+  // 200 ms pause. Its boundary moves as soon as any later frame carries sound.
+  std::size_t ShortPreviewEnd() const {
+    constexpr auto quiet=4*frame;
+    return !pending_cut_ && last_sound_>=rate*5/2 && last_sound_<short_limit &&
+           cursor_>=last_sound_+quiet ? last_sound_+quiet : 0;
   }
   bool QuietRemainder(const std::vector<std::int16_t>& pcm) const {
     return cursor_==pcm.size() || Quiet(pcm.data()+cursor_,pcm.size()-cursor_);

@@ -54,6 +54,16 @@ try {
   foreach ($file in @('README.md','LICENSE','NOTICE','THIRD_PARTY_NOTICES.md',"docs/releases/v$version.md", "docs/releases/v$version-validation.md",'docs/design/brand/windows-taskbar.png')) {
     Copy-PackageFile (Join-Path $source $file) $file
   }
+  # Ship the local exhibits linked by this release. Scratch captures in the
+  # documentation directory are not package inputs.
+  $evidencePattern = '\]\(v' + [regex]::Escape($version) + '/([A-Za-z0-9_.-]+\.(?:png|csv))\)'
+  $releaseText = (Get-Content -LiteralPath (Join-Path $source "docs/releases/v$version.md") -Raw) +
+                 (Get-Content -LiteralPath (Join-Path $source "docs/releases/v$version-validation.md") -Raw)
+  $evidenceFiles = [regex]::Matches($releaseText,$evidencePattern) | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique
+  foreach ($file in $evidenceFiles) {
+    $relative = "docs/releases/v$version/$file"
+    Copy-PackageFile (Join-Path $source $relative) $relative
+  }
   foreach ($file in @('install.cmd','uninstall.cmd','check.cmd','START-HERE.txt','qwen-cpu.conf')) {
     Copy-PackageFile (Join-Path $source "packaging/$file") $file
   }

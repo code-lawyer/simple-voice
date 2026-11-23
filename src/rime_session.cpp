@@ -440,4 +440,7 @@ void RimeSession::Refresh() {
   } else {
     view_.composing = !view_.preedit.empty() || !view_.page.empty();
   }
+  if (view_.composing && api->get_input) {
+    if (const char* input = api->get_input(session_)) view_.raw_input = input;
+  }
 }

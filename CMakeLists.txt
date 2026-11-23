@@ -34,8 +34,10 @@ target_link_libraries(voiceime_protocol PUBLIC advapi32 psapi user32)
 
 add_library(voiceime_core STATIC
   src/lexicon.cpp
+  src/review_collector.cpp
   src/recognition_text.cpp
   src/segmenter.cpp
+  src/sha256.cpp
   src/worker_recognizer.cpp
   src/model_download.cpp
   src/data_backup.cpp
@@ -47,6 +49,13 @@ target_include_directories(voiceime_core PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/third_party/sqlite
   ${CMAKE_CURRENT_SOURCE_DIR}/third_party/cppjieba/include)
 target_link_libraries(voiceime_core PUBLIC voiceime_protocol bcrypt)
+foreach(dict IN ITEMS jieba.dict.utf8 hmm_model.utf8 user.dict.utf8 pinyin.txt)
+  set(asset "${CMAKE_CURRENT_SOURCE_DIR}/third_party/cppjieba/dict/${dict}")
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${asset}")
+  file(SHA256 "${asset}" digest)
+  string(MAKE_C_IDENTIFIER "${dict}" identifier)
+  set_property(SOURCE src/segmenter.cpp APPEND PROPERTY COMPILE_DEFINITIONS "SHA_${identifier}=\"${digest}\"")
+endforeach()
 target_compile_definitions(voiceime_core PRIVATE SQLITE_THREADSAFE=1 SQLITE_OMIT_LOAD_EXTENSION _WIN32_WINNT=0x0601)
 set_source_files_properties(third_party/sqlite/sqlite3.c PROPERTIES COMPILE_OPTIONS -w)
 
@@ -54,7 +63,7 @@ add_executable(voiceime_tests tests/main.cpp tests/utf8_test.cpp tests/lexicon_t
 target_link_libraries(voiceime_tests PRIVATE voiceime_core)
 target_sources(voiceime_tests PRIVATE tests/pipe_io_test.cpp tests/ipc_security_test.cpp tests/concurrency_test.cpp tests/hardening_test.cpp tests/text_safety_test.cpp)
 target_sources(voiceime_tests PRIVATE tests/model_settings_test.cpp)
-target_sources(voiceime_tests PRIVATE tests/data_backup_test.cpp)
+target_sources(voiceime_tests PRIVATE tests/data_backup_test.cpp tests/word_review_test.cpp)
 target_sources(voiceime_tests PRIVATE tests/model_download_test.cpp)
 enable_testing()
 add_test(NAME voiceime.unit COMMAND voiceime_tests)
@@ -65,6 +74,7 @@ target_compile_definitions(voiceime_tests PRIVATE "VOICEIME_SOURCE_DIR=\"${VOICE
 
 add_executable(voiceime_engine src/engine_main.cpp src/confirm_box.cpp src/hotkey_dialog.cpp src/preferences_window.cpp src/voiceime_engine.rc src/version.rc)
 set_source_files_properties(src/voiceime_engine.rc PROPERTIES OBJECT_DEPENDS "${CMAKE_SOURCE_DIR}/src/voiceime_engine.manifest")
+set_source_files_properties(src/version.rc PROPERTIES OBJECT_DEPENDS "${CMAKE_SOURCE_DIR}/src/product.hpp")
 target_link_options(voiceime_engine PRIVATE "-specs=${CMAKE_SOURCE_DIR}/cmake/no-default-manifest.specs")
 target_link_libraries(voiceime_engine PRIVATE voiceime_core ole32 uuid user32 gdi32 shell32 comctl32)
 target_compile_definitions(voiceime_engine PRIVATE _WIN32_WINNT=0x0601)
@@ -207,7 +217,7 @@ foreach(target voiceime_engine voiceime_tsf voiceime_register voiceime_engine_te
   target_sources(${target} PRIVATE src/brand.rc)
 endforeach()
 foreach(target voiceime_engine voiceime_engine_testhost voiceime_ui_check)
-  target_sources(${target} PRIVATE src/preferences_view.cpp)
+  target_sources(${target} PRIVATE src/preferences_view.cpp src/review_window.cpp)
   target_link_libraries(${target} PRIVATE uxtheme)
 endforeach()
 set_source_files_properties(src/brand.rc PROPERTIES OBJECT_DEPENDS

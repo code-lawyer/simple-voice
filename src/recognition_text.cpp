@@ -1,29 +1,46 @@
 #include "recognition_text.hpp"
 #include "utf8.hpp"
 #include <cwctype>
+#include <string_view>
 #include <vector>
 
 bool HasUnknownSpeech(const std::string& text) {
   return text.find("<unk>")!=std::string::npos || text.find("< unk >")!=std::string::npos;
 }
 namespace {
-std::wstring Content(const std::string& text) {
+std::wstring Content(const std::wstring& text) {
   std::wstring result;
   const std::wstring punctuation=L"，。！？；：、,.!?;:\"“”‘’（）()[]【】…—";
-  for(wchar_t ch:Utf8ToWide(text)) {
+  for(wchar_t ch:text) {
     if(iswspace(ch) || punctuation.find(ch)!=std::wstring::npos) continue;
     result.push_back(ch);
   }
   return result;
 }
-std::vector<std::string> AsciiWords(const std::string& text) {
-  std::vector<std::string> result; std::string current;
-  for(unsigned char ch:text) {
-    if((ch>='a'&&ch<='z') || (ch>='A'&&ch<='Z') || (ch>='0'&&ch<='9') || ch=='_') current+=char(ch);
-    else if(!current.empty()) { result.push_back(current); current.clear(); }
+bool Digit(wchar_t ch) { return ch>=L'0' && ch<=L'9'; }
+bool AsciiWord(wchar_t ch) {
+  return Digit(ch) || (ch>=L'A' && ch<=L'Z') || (ch>=L'a' && ch<=L'z') || ch==L'_';
+}
+// Preserve whole identifiers and numbers in order. Punctuation between digits
+// belongs to the number, while an ordinary sentence-ending period does not.
+std::vector<std::wstring> ProtectedWords(const std::wstring& text) {
+  std::vector<std::wstring> words;
+  for(size_t i=0;i<text.size();) {
+    const bool leading_decimal=(text[i]==L'.' || text[i]==L'．') && i+1<text.size() && Digit(text[i+1]);
+    if(!AsciiWord(text[i]) && !leading_decimal) { ++i; continue; }
+    const auto first=i++;
+    while(i<text.size()) {
+      if(AsciiWord(text[i])) { ++i; continue; }
+      if(i+1>=text.size() || !AsciiWord(text[i+1])) break;
+      const wchar_t ch=text[i];
+      const bool numeric=Digit(text[i-1]) && Digit(text[i+1]);
+      if(std::wstring_view(L".:'-/").find(ch)==std::wstring_view::npos &&
+         !(numeric && std::wstring_view(L",，．：").find(ch)!=std::wstring_view::npos)) break;
+      ++i;
+    }
+    words.emplace_back(text.substr(first,i-first));
   }
-  if(!current.empty()) result.push_back(current);
-  return result;
+  return words;
 }
 }
 bool SameShortRecognition(const std::string& first,const std::string& second) {
@@ -45,23 +62,8 @@ bool SameShortRecognition(const std::string& first,const std::string& second) {
   return !a.empty() && a==key(second);
 }
 std::string PreserveRecognizedContent(const std::string& raw,const std::string& formatted) {
-  if(formatted.empty() || HasUnknownSpeech(raw) || Content(raw)!=Content(formatted) || AsciiWords(raw)!=AsciiWords(formatted)) return raw;
-  // Numeric punctuation is semantically significant (1.5, 1,000, 10:30).
-  // Keep a raw numeric run intact, even if a formatter changes its separators.
-  std::string run;
-  auto flush=[&] { const bool ok=run.empty() || formatted.find(run)!=std::string::npos; run.clear(); return ok; };
-  for(unsigned char ch:raw) {
-    if((ch>='0'&&ch<='9') || (!run.empty() && (ch=='.'||ch==','||ch==':'||ch=='/'||ch=='-'||ch=='%'))) run+=char(ch);
-    else if(!flush()) return raw;
-  }
-  if(!flush()) return raw;
-  // A formatter must not split identifiers, insert spaces in English words, or
-  // remove apostrophes/hyphens inside them. Case is already checked above.
-  for(unsigned char ch:raw) {
-    if((ch>='a'&&ch<='z') || (ch>='A'&&ch<='Z') || (ch>='0'&&ch<='9') ||
-       (!run.empty() && (ch=='_'||ch=='\''||ch=='-'||ch=='.'||ch=='/'||ch==':'))) run+=char(ch);
-    else if(!flush()) return raw;
-  }
-  if(!flush()) return raw;
+  if(formatted.empty() || HasUnknownSpeech(raw)) return raw;
+  const auto before=Utf8ToWide(raw),after=Utf8ToWide(formatted);
+  if(Content(before)!=Content(after) || ProtectedWords(before)!=ProtectedWords(after)) return raw;
   return formatted;
 }

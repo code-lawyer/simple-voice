@@ -1,7 +1,7 @@
 #include "data_backup.hpp"
+#include "sha256.hpp"
 #include "utf8.hpp"
 #include <windows.h>
-#include <bcrypt.h>
 #include <filesystem>
 #include <fstream>
 #include <array>
@@ -21,16 +21,6 @@ void Number(std::string& out,uint32_t value){for(int i=0;i<4;++i)out.push_back(s
 uint32_t Number(std::string_view& in){Require(in.size()>=4,"备份文件不完整");uint32_t value=0;for(int i=0;i<4;++i)value|=uint32_t(static_cast<unsigned char>(in[i]))<<(i*8);in.remove_prefix(4);return value;}
 void Field(std::string& out,const std::string& value){Number(out,static_cast<uint32_t>(value.size()));out+=value;}
 std::string Field(std::string_view& in,size_t limit){const auto n=Number(in);Require(n<=limit && n<=in.size(),"备份字段长度无效");std::string result(in.substr(0,n));in.remove_prefix(n);return result;}
-std::string Hash(const std::string& value) {
-  BCRYPT_ALG_HANDLE algorithm=nullptr;BCRYPT_HASH_HANDLE hash=nullptr;
-  Require(BCryptOpenAlgorithmProvider(&algorithm,BCRYPT_SHA256_ALGORITHM,nullptr,0)>=0,"无法校验备份");
-  DWORD bytes=0,size=0;bool ok=BCryptGetProperty(algorithm,BCRYPT_OBJECT_LENGTH,reinterpret_cast<PUCHAR>(&size),sizeof(size),&bytes,0)>=0;
-  std::vector<unsigned char> object(size);std::string digest(32,'\0');
-  if(ok)ok=BCryptCreateHash(algorithm,&hash,object.data(),size,nullptr,0,0)>=0;
-  if(ok)ok=BCryptHashData(hash,reinterpret_cast<PUCHAR>(const_cast<char*>(value.data())),static_cast<ULONG>(value.size()),0)>=0;
-  if(ok)ok=BCryptFinishHash(hash,reinterpret_cast<PUCHAR>(digest.data()),32,0)>=0;
-  if(hash)BCryptDestroyHash(hash);BCryptCloseAlgorithmProvider(algorithm,0);Require(ok,"无法校验备份");return digest;
-}
 std::string Read(const fs::path& path,size_t limit) {
   const auto attr=GetFileAttributesW(path.c_str());
   Require(attr!=INVALID_FILE_ATTRIBUTES && !(attr&FILE_ATTRIBUTE_REPARSE_POINT) && !(attr&FILE_ATTRIBUTE_DIRECTORY),"备份文件不存在或不是普通文件");
@@ -57,12 +47,12 @@ std::string Encode(const Snapshot& s) {
   for(size_t i=0;i<names.size();++i){Number(out,s.exists[i]?1:0);Field(out,s.files[i]);}
   Number(out,static_cast<uint32_t>(s.terms.size()));
   for(const auto& row:s.terms){Field(out,row.text);Field(out,row.pinyin);Number(out,row.count);Field(out,std::to_string(row.last_commit_unix));}
-  Require(out.size()<=kLimit-32,"备份内容过大");return out+Hash(out);
+  Require(out.size()<=kLimit-32,"备份内容过大");return out+Sha256(out);
 }
 Snapshot Decode(const std::string& bytes) {
   const std::string magic="SimpleVoiceBackup\n1\n";
   Require(bytes.size()>magic.size()+32 && bytes.compare(0,magic.size(),magic)==0,"不是支持的轻音备份格式");
-  const auto body=bytes.substr(0,bytes.size()-32);Require(Hash(body)==bytes.substr(bytes.size()-32),"备份校验失败，文件可能损坏；未修改当前数据");
+  const auto body=bytes.substr(0,bytes.size()-32);Require(Sha256(body)==bytes.substr(bytes.size()-32),"备份校验失败，文件可能损坏；未修改当前数据");
   std::string_view in(body);in.remove_prefix(magic.size());Snapshot s;
   for(size_t i=0;i<names.size();++i){const auto exists=Number(in);Require(exists<=1,"备份字段无效");s.exists[i]=exists!=0;s.files[i]=Field(in,16384);Require(exists || s.files[i].empty(),"备份字段无效");}
   const auto count=Number(in);Require(count<=10000,"备份词语过多");
@@ -78,6 +68,18 @@ void Files(const Snapshot& s,const fs::path& data) {
   }
 }
 fs::path Journal(const fs::path& data){return data/L"restore-recovery.backup";}
+fs::path Receipt(const fs::path& data){return data/L"restore-finished.sha256";}
+void RetireJournal(const fs::path& data,const std::string& bytes) {
+  const auto journal=Journal(data);
+  if(DeleteFileW(journal.c_str())) {
+    DeleteFileW(Receipt(data).c_str());
+    return;
+  }
+  // A reader or read-only attribute may prevent deletion after the SQLite
+  // transaction has committed. Mark this exact journal consumed before
+  // permitting fresh writes, so the next launch cannot roll them back.
+  Write(Receipt(data),Sha256(bytes));
+}
 }
 std::wstring CreateDataBackup(Lexicon& lexicon,const std::wstring& data,const std::wstring& parent) {
   const auto bytes=Encode(Current(lexicon,fs::path(data)));
@@ -88,22 +90,36 @@ std::wstring CreateDataBackup(Lexicon& lexicon,const std::wstring& data,const st
 }
 bool RecoverDataRestore(Lexicon& lexicon,const std::wstring& data) {
   const auto journal=Journal(data);if(!fs::exists(journal))return false;
-  const auto old=Decode(Read(journal,kLimit));
+  const auto bytes=Read(journal,kLimit);
+  if(fs::exists(Receipt(data)) && Read(Receipt(data),32)==Sha256(bytes)) {
+    RetireJournal(data,bytes);
+    return false;
+  }
+  const auto old=Decode(bytes);
   lexicon.ReplaceTerms(old.terms,[&]{Files(old,data);});
-  Require(DeleteFileW(journal.c_str())!=FALSE,"恢复已完成，但无法清理恢复记录");return true;
+  RetireJournal(data,bytes);
+  return true;
 }
 void RestoreDataBackup(Lexicon& lexicon,const std::wstring& data,const std::wstring& backup) {
   const auto next=Decode(Read(fs::path(backup)/L"SimpleVoice.backup",kLimit));
   // Validation in a disposable in-memory database leaves the live database untouched.
   {Lexicon validation(":memory:");validation.ReplaceTerms(next.terms);}
-  Require(!fs::exists(Journal(data)),"上次恢复尚未完成，请重启轻音后再试");
+  if(fs::exists(Journal(data))) {
+    const auto pending=Read(Journal(data),kLimit);
+    Require(fs::exists(Receipt(data)) && Read(Receipt(data),32)==Sha256(pending),
+            "上次恢复尚未完成，请重启轻音后再试");
+    Require(DeleteFileW(Journal(data).c_str())!=FALSE,"上次恢复已完成。开始新的恢复前，请解除恢复记录的只读或占用状态。");
+  }
+  if(fs::exists(Receipt(data))) Require(DeleteFileW(Receipt(data).c_str())!=FALSE,"请解除恢复状态文件的占用后重试");
   CreateDataBackup(lexicon,data,(fs::path(data)/L"backups").wstring());
-  const auto old=Current(lexicon,data);Write(Journal(data),Encode(old));
+  const auto old=Current(lexicon,data);
+  const auto bytes=Encode(old);
+  Write(Journal(data),bytes);
   try {
     lexicon.ReplaceTerms(next.terms,[&]{Files(next,data);});
-    Require(DeleteFileW(Journal(data).c_str())!=FALSE,"无法完成恢复记录");
+    RetireJournal(data,bytes);
   } catch(...) {
-    try {lexicon.ReplaceTerms(old.terms,[&]{Files(old,data);});DeleteFileW(Journal(data).c_str());}
+    try {lexicon.ReplaceTerms(old.terms,[&]{Files(old,data);});RetireJournal(data,bytes);}
     catch(...) {throw std::runtime_error("恢复未完成。旧数据已备份，请关闭轻音并重启以恢复原数据。");}
     throw;
   }

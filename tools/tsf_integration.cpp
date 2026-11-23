@@ -8,6 +8,7 @@
 #include <cwchar>
 #include <filesystem>
 #include <functional>
+#include <memory>
 #include <utility>
 #include <stdexcept>
 #include <olectl.h>
@@ -180,6 +181,7 @@ class TextStore final : public ITextStoreACP, public ITfContextOwnerCompositionS
   HRESULT STDMETHODCALLTYPE OnStartComposition(ITfCompositionView*,BOOL* ok) override { *ok=TRUE;return S_OK; }
   HRESULT STDMETHODCALLTYPE OnUpdateComposition(ITfCompositionView*,ITfRange*) override { return S_OK; }
   HRESULT STDMETHODCALLTYPE OnEndComposition(ITfCompositionView*) override { return S_OK; }
+  void SetReadOnly(bool readonly) { readonly_=readonly; }
   void EditFromHost(LONG erase_before, const std::wstring& inserted) {
     const LONG start=std::max(0L,selection_.acpStart-erase_before);
     const LONG end=selection_.acpEnd;
@@ -374,6 +376,14 @@ class PipeServer {
   }
   void Phase(const char* value) {
     Message message; message.type=MsgType::Phase; message.text=value; message.state_id=++state_id_; Raw(Encode(message));
+  }
+  void Confirm(VoiceService& service, ITfContext* context) {
+    Phase("3");
+    Check(WaitForPinyin([&] { return service.PendingPreviewForTest() == state_id_; }, 3000),
+          "client receives the pending preview before confirmation");
+    Check(Key(service, context, VK_RETURN), "confirmation Enter belongs to the pending voice preview");
+    const auto control = Control();
+    Check(control.type == MsgType::Enter && control.state_id == state_id_, "Enter confirms this exact preview");
   }
   void QueryCaret() { Message message; message.type=MsgType::QueryCaret; Raw(Encode(message)); }
   Message Control() {
@@ -687,12 +697,37 @@ int main(int argc,char** argv) {
       Check(GetTickCount64() - started < 350, "missing pinyin engine does not stall typing or shutdown");
     }
     CheckPinyinHandover(thread, id, data / "pinyin-handover");
+    Lexicon weekly((data/"VoiceIme"/"lexicon.sqlite").u8string());
+    weekly.SetReviewEnabled(true);
+    std::unique_ptr<LearningEngine> engine;
     {
-      LearningEngine first(data / "VoiceIme");
-      CrossAppLearning(thread, id, data, false, false);
+      Document doc(thread,id);
+      VoiceService service;
+      {
+        LearningEngine first(data / "VoiceIme");
+        CrossAppLearning(thread,id,data,false,false);
+        Hr(thread->SetFocus(doc.manager),"focus a document for interrupted pinyin");
+        Hr(service.Activate(thread,id),"activate the client before the engine stops");
+        WaitForServicePinyin(service);
+        Type(service,doc.context,"nihaonv");
+        Check(!doc.store->text.empty(),"interrupted composition is visible before disconnect");
+      }
+      Check(!Key(service,doc.context,'M'),"the failed pinyin key passes through exactly once");
+      doc.store->EditFromHost(0,L"m");
+      Check(doc.store->text==L"nihaonvm","disconnect preserves every original letter despite formatted preedit");
+      SetEnvironmentVariableW(L"VOICEIME_TEST_LEGACY_PINYIN",L"1");
+      engine=std::make_unique<LearningEngine>(data/"VoiceIme");
+      SetEnvironmentVariableW(L"VOICEIME_TEST_LEGACY_PINYIN",nullptr);
+      WaitForServicePinyin(service);
+      Type(service,doc.context,"nihao"); Key(service,doc.context,VK_SPACE);
+      Check(doc.store->text==L"nihaonvm你好","reconnection to a legacy engine starts fresh without replaying old input");
+      service.Deactivate();
     }
-    LearningEngine engine(data / "VoiceIme");
     CrossAppLearning(thread, id, data, false, true);
+    Check(WaitForPinyin([&]{
+      const auto terms=weekly.ReviewWords(ReviewFilter::All,"时",10,0,std::time(nullptr));
+      return terms.size()==1 && terms[0].count==6 && terms[0].sources==static_cast<int>(WordSource::Pinyin);
+    }),"six pinyin selections count six times in review despite duplicated success receipts");
     BYTE keyboard[256]{},clear[256]{};
     GetKeyboardState(keyboard);SetKeyboardState(clear);
     CheckPunctuation(thread,id);
@@ -780,11 +815,9 @@ int main(int argc,char** argv) {
       Key(service,doc.context,VK_RETURN);
       Check(doc.store->text==L"你好。nihao","Enter preserves raw input after switching back to Chinese");
       service.HandleCommit({L"语音定稿。",1,0});
-      Check(doc.store->text==L"你好。nihao语音定稿。","voice commit inserts at the real TSF selection");
-      service.HandleCommit({L"语音定稿。",1,0});
-      Check(doc.store->text==L"你好。nihao语音定稿。","duplicate commit cannot insert twice");
+      Check(doc.store->text==L"你好。nihao","voice cannot insert before any preview was confirmed");
       service.HandleCommit({L"过期连接",2,99});
-      Check(doc.store->text==L"你好。nihao语音定稿。","stale connection cannot insert queued text");
+      Check(doc.store->text==L"你好。nihao","stale connection cannot insert queued text");
       const auto before=doc.store->text;
       Type(service,doc.context,"ni");
       Hr(thread->SetFocus(second.manager),"switch document focus");
@@ -794,19 +827,25 @@ int main(int argc,char** argv) {
       Key(service,second.context,VK_SPACE);
       Check(doc.store->text==before,"focus switch cancels the previous document preedit");
       Check(second.store->text==L"你好","new document receives its own composition");
-      {
+      for(const auto* own_editor:{L"SimpleVoicePreviewEditor",L"SimpleVoiceWordReview",L"SimpleVoicePreferences"}) {
         WNDCLASSW klass{}; klass.lpfnWndProc=DefWindowProcW; klass.hInstance=GetModuleHandleW(nullptr);
-        klass.lpszClassName=L"SimpleVoicePreviewEditor"; RegisterClassW(&klass);
+        klass.lpszClassName=own_editor; RegisterClassW(&klass);
         HWND editor=CreateWindowExW(0,klass.lpszClassName,L"Isolated preview editor",WS_OVERLAPPED,0,0,600,400,nullptr,nullptr,klass.hInstance,nullptr);
         HWND field=CreateWindowExW(0,L"EDIT",L"",WS_CHILD|WS_VISIBLE|ES_MULTILINE,0,0,400,200,editor,nullptr,klass.hInstance,nullptr);
         const HWND old_focus=SetFocus(field);
         Check(IsInputMethodEditor(GetFocus()),"preview editor is an independent editable context");
         service.SetVoiceActiveForTest(true);
-        Type(service,second.context,"nihao"); Key(service,second.context,VK_SPACE);
-        Check(second.store->text==L"你好你好","pending voice preview still permits pinyin editing in its own window");
+        const auto before_editor=second.store->text;
+        Type(service,second.context,"neibubianji"); Key(service,second.context,VK_RETURN);
+        Check(second.store->text==before_editor+L"neibubianji","pending voice preview permits ordinary pinyin editing in each internal window");
         Check(!Key(service,second.context,VK_RETURN),"editor Enter is not intercepted as a voice insertion");
         service.SetVoiceActiveForTest(false); SetFocus(old_focus); DestroyWindow(editor);
       }
+      Type(service,second.context,"huizhijieshu"); Key(service,second.context,VK_RETURN);
+      Check(WaitForPinyin([&]{return weekly.ReviewCandidateExists("huizhijieshu",std::time(nullptr));}),
+            "confirmed external text passes through the background review queue");
+      Check(!weekly.ReviewCandidateExists("neibubianji",std::time(nullptr)),
+            "internal preview and settings edits never enter the seven-day vocabulary");
       Hr(thread->SetFocus(readonly.manager),"focus readonly document");
       Check(!Key(service,readonly.context,'N'),"readonly document does not consume pinyin");
       DWORD mode_status=0;Hr(mode_button->GetStatus(&mode_status),"read disabled mode status");
@@ -831,6 +870,7 @@ int main(int argc,char** argv) {
         Check(!server.Receives(MsgType::PreloadModel,75),"other profiles and focus changes while deselected do not preload");
         service.OnProfileActivation(CLSID_VoiceIme,GUID_VoiceImeProfile,TRUE);
         Check(server.Receives(MsgType::PreloadModel,1000),"reselecting the active language profile preloads without reconnecting");
+        server.Confirm(service,doc.context);
         Message insert; insert.type=MsgType::InsertText; insert.request_id=10; insert.text="管道写入。";
         const auto bytes=Encode(insert);
         server.Raw(bytes.substr(0,2)); Sleep(20); server.Raw(bytes.substr(2));
@@ -841,33 +881,55 @@ int main(int argc,char** argv) {
         server.Send(10,"管道写入。"); queued=QueuedInsert(10); DispatchMessageW(&queued);
         Check(doc.store->text==written,"duplicate wire request does not duplicate document text");
         server.Result(10,"ok");
+        server.Confirm(service,doc.context);
         insert.request_id=11; insert.text="已取消的写入";
         Message cancel; cancel.type=MsgType::CancelInsert; cancel.request_id=11;
-        Message next=insert; next.request_id=12; next.text="下一次。";
-        server.Raw(Encode(insert)+Encode(cancel)+Encode(next));
+        server.Raw(Encode(insert)+Encode(cancel));
         auto cancelled=QueuedInsert(11);
-        auto following=QueuedInsert(12); // Posting this is a barrier after cancellation was read.
+        server.Confirm(service,doc.context);
+        server.Send(12,"下一次。");
+        auto following=QueuedInsert(12);
         DispatchMessageW(&cancelled);
         Check(doc.store->text==written,"cancellation suppresses an insert already queued for the UI");
         server.Result(11,"fail");
         DispatchMessageW(&following);
         Check(doc.store->text==written+L"下一次。","cancellation does not suppress a newer request");
         server.Result(12,"ok");
+        server.Confirm(service,doc.context);
         server.Send(13,"断连后的旧消息"); stale=QueuedInsert(13);
       }
       {
         PipeServer server;
         const auto written=doc.store->text;
+        server.Confirm(service,doc.context);
         server.Send(1,"重连新消息。"); auto current=QueuedInsert(1);
         DispatchMessageW(&stale);
         Check(doc.store->text==written,"queued request from disconnected pipe cannot insert after reconnection");
         DispatchMessageW(&current);
         Check(doc.store->text==written+L"重连新消息。","reconnection accepts a new request sequence");
         server.Result(1,"ok");
-        Hr(thread->SetFocus(readonly.manager),"focus readonly document for wire test");
+        server.Confirm(service,doc.context);
+        doc.store->SetReadOnly(true);
         server.Send(2,"不可写入"); auto rejected=QueuedInsert(2); DispatchMessageW(&rejected);
-        Check(readonly.store->text.empty(),"wire insertion respects readonly TSF documents");
+        Check(doc.store->text==written+L"重连新消息。","a confirmed field becoming readonly rejects the actual edit");
         server.Result(2,"fail");
+        doc.store->SetReadOnly(false);
+        Hr(thread->SetFocus(doc.manager),"confirm voice in the first writable field");
+        server.Confirm(service,doc.context);
+        server.Send(3,"第一处确认"); auto delayed=QueuedInsert(3);
+        const auto original=doc.store->text, other=second.store->text;
+        Hr(thread->SetFocus(second.manager),"move to the other writable field before insertion");
+        Check(Key(service,second.context,VK_RETURN) && server.Control().type==MsgType::Enter,
+              "another Enter can arrive while the same preview request is outstanding");
+        DispatchMessageW(&delayed); server.Result(3,"fail");
+        Check(doc.store->text==original && second.store->text==other,
+              "changing editable fields after confirmation writes into neither document");
+        server.Confirm(service,second.context);
+        server.Send(4,"第二处确认"); auto retried=QueuedInsert(4); DispatchMessageW(&retried);
+        Hr(thread->SetFocus(doc.manager),"move away after the document has accepted the text");
+        server.Result(4,"ok");
+        Check(doc.store->text==original && second.store->text==other+L"第二处确认",
+              "fresh confirmation targets the new field and a later focus change preserves success");
         server.Raw(std::string("\xff\xff\xff\xff\x02",5));
         Check(server.Closed(),"TSF reader disconnects malformed length frames promptly");
       }

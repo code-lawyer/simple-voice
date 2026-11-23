@@ -50,4 +50,14 @@ void InterruptedRestoreRecoversBeforeLoadingPreferences() {
   lexicon.ReplaceTerms({});CHECK(SaveSkin((data/L"appearance.json").wstring(),UiSkin::DeepSpace));
   CHECK(RecoverDataRestore(lexicon,data.wstring()));CHECK(lexicon.Count()==1);
   CHECK(!fs::exists(data/L"appearance.json"));CHECK(!RecoverDataRestore(lexicon,data.wstring()));
+  const auto journal=data/L"restore-recovery.backup";
+  fs::copy_file(fs::path(backup)/L"SimpleVoice.backup",journal);
+  CHECK(SetFileAttributesW(journal.c_str(),FILE_ATTRIBUTE_READONLY));
+  lexicon.ReplaceTerms({});
+  CHECK(RecoverDataRestore(lexicon,data.wstring()));
+  lexicon.SaveTerm("重启后写入","chongqihouxieru",std::time(nullptr));
+  CHECK(!RecoverDataRestore(lexicon,data.wstring()) && lexicon.Count()==2);
+  CHECK(SetFileAttributesW(journal.c_str(),FILE_ATTRIBUTE_NORMAL));
+  CHECK(!RecoverDataRestore(lexicon,data.wstring()));
+  CHECK(!fs::exists(journal) && !fs::exists(data/L"restore-finished.sha256") && lexicon.Count()==2);
 }

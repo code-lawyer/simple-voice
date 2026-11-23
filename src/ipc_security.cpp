@@ -74,14 +74,6 @@ bool LegacyVoiceEngineRunning() {
   HANDLE old=OpenMutexW(SYNCHRONIZE,FALSE,L"Local\\VoiceImeEngine");
   if(old){CloseHandle(old);return true;}return GetLastError()==ERROR_ACCESS_DENIED;
 }
-std::wstring ExecutableDirectory() {
-  std::vector<wchar_t> path(32768);
-  const DWORD size = GetModuleFileNameW(nullptr, path.data(), static_cast<DWORD>(path.size()));
-  if (!size || size >= path.size()) return {};
-  const std::wstring file(path.data(), size);
-  const auto slash = file.find_last_of(L"\\/");
-  return slash == std::wstring::npos ? L"" : file.substr(0, slash);
-}
 bool SameFile(const std::wstring& first, const std::wstring& second) {
   if (first.empty() || second.empty()) return false;
   Handle a{CreateFileW(first.c_str(), FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,

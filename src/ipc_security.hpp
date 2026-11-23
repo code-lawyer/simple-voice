@@ -1,12 +1,12 @@
 #pragma once
 #include "pipe_io.hpp"
 #include "ipc.hpp"
+#include "windows_paths.hpp"
 #include <memory>
 
 // Logon-scoped desktop IPC. This cannot isolate code injected into a trusted host.
 std::wstring VoicePipeName();
 std::wstring VoiceMutexName();
-std::wstring ExecutableDirectory();
 bool SameFile(const std::wstring& first, const std::wstring& second);
 std::wstring RegisteredVoiceDll();
 bool LegacyVoiceEngineRunning();
